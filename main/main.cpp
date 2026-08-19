@@ -8,7 +8,7 @@
 using namespace std::chrono_literals;
 
 extern "C" void app_main(void) {
-  espp::Logger logger({.tag = "Template", .level = espp::Logger::Verbosity::DEBUG});
+  espp::Logger logger({.tag = "Omega Stick", .level = espp::Logger::Verbosity::DEBUG});
 
   logger.info("Bootup");
 
