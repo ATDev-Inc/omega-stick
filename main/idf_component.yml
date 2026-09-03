@@ -15,3 +15,13 @@ dependencies:
   #   # All dependencies of `main` are public by default.
   #   public: true
   espp/task: '>=1.0'
+  espp/i2c: '>=1.0'
+  espp/joystick: '>=1.0'
+  espp/hid-rp: '>=1.0'
+  espp/math: '>=1.0'
+  espp/qtpy: '>=1.0'
+  espp/timer: '>=1.0'
+  espp/usb_device: '>=0.1'
+  espp/base_component: '>=1.0'
+  espressif/tinyusb: '>=0.15'
+  espp/base_peripheral: '>=1.0'

@@ -11,7 +11,7 @@ set(EXTRA_COMPONENT_DIRS
   #       `components/` folder within this repository and update the line below
   #       to point to it.
   #
-  # "components/"
+  "components/"
 
   # NOTE: if we didn't use the idf-component-manager to get the espp
   #       dependencies, we could instead have ESPP be a submodule within our
@@ -38,7 +38,7 @@ set(
   # e.g.
   #
   # `idf.py add-dependency "espp/task>=1.0"`
-  "main esptool_py"
+  "main esptool_py freertos tmag5273 usb_device logger i2c base_component"
   CACHE STRING
   "List of components to include"
   )

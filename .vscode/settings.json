@@ -9,9 +9,10 @@
     "--query-driver=**",
     "--compile-commands-dir=c:\\Users\\Marshall Saltz\\Documents\\GitHub\\omega-stick\\build"
   ],
-  "idf.portWin": "COM3",
+  "idf.portWin": "COM12",
   "idf.openOcdConfigs": [
     "board/esp32s3-builtin.cfg"
   ],
-  "idf.flashType": "JTAG"
+  "idf.flashType": "JTAG",
+  "C_Cpp.default.compilerPath": "cl.exe"
 }
