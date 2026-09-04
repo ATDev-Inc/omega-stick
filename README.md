@@ -1,8 +1,8 @@
 # Omega Stick
 
 **A low-force joystick for people with disabilities.** Omega Stick is an
-accessible input device that needs under 10 grams of force to actuate, for
-computer control and gaming.
+accessible input device for computer control and gaming. Actuation force is
+adjustable across roughly 5 to 25 grams and defaults to under 10.
 
 [![Build and Package Main](https://github.com/ATDev-Inc/omega-stick/actions/workflows/package_main.yml/badge.svg)](https://github.com/ATDev-Inc/omega-stick/actions/workflows/package_main.yml)
 [![Static analysis](https://github.com/ATDev-Inc/omega-stick/actions/workflows/static_analysis.yml/badge.svg)](https://github.com/ATDev-Inc/omega-stick/actions/workflows/static_analysis.yml)
@@ -16,6 +16,7 @@ component library.
 
 - [Why low force](#why-low-force)
 - [Project status](#project-status)
+- [Documentation](#documentation)
 - [Hardware](#hardware)
 - [Getting started](#getting-started)
   - [Prerequisites](#prerequisites)
@@ -38,7 +39,19 @@ Omega Stick removes the mechanical resistance from the sensing path. It uses a
 **contactless 3-axis Hall-effect sensor** (TI TMAG5273) that measures the
 position of a small magnet, so nothing has to be depressed, wiped, or deflected
 against a spring to register movement. The actuation force is set by the return
-mechanism alone, targeting **under 10 grams**.
+mechanism alone, and is **adjustable from roughly 5 to 25 grams, defaulting
+below 10**.
+
+Adjustability matters as much as the floor. Vendors at the low-force frontier
+report that a stick can be *too* light to control well, so the usable range
+matters more than the minimum, and which point in it works is a property of the
+person rather than the device. See D12 in [docs/decisions.md](docs/decisions.md).
+
+Low force on its own is not what makes this project unusual: several sub-10 gram
+sticks already ship. They are closed, mostly dealer-gated, and often unpriced.
+The gap is the combination of low force with an open design, a plain USB HID
+interface, a published price, and a published method for measuring the force
+claim. See [docs/PRD.md](docs/PRD.md).
 
 Because the sensing is contactless there is also nothing in the signal path to
 wear out, which matters for a device someone may rely on daily.
@@ -66,6 +79,21 @@ in [main/idf_component.yml](main/idf_component.yml) in preparation for that work
 
 If you are looking for somewhere to help, those are the open areas. See
 [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+## Documentation
+
+Product and planning documents live in [docs/](docs/):
+
+| Document | Contents |
+| --- | --- |
+| [PRD.md](docs/PRD.md) | What v1 is, who it is for, scope, and success metrics |
+| [requirements.md](docs/requirements.md) | Functional and non-functional specification |
+| [decisions.md](docs/decisions.md) | Product decisions with rationale, and what is still open |
+| [compliance.md](docs/compliance.md) | What the project may and may not claim about itself |
+| [status.md](docs/status.md) | Current working status |
+| [research/](docs/research/) | Background research these were built from |
+
+Research documents are point-in-time snapshots and are not maintained.
 
 ## Hardware
 
