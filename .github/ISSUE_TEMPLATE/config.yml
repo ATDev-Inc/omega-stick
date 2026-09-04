@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and discussion
+    url: https://github.com/ATDev-Inc/omega-stick/discussions
+    about: "For general questions, ideas, and discussion. Note: GitHub Discussions may need to be enabled for this repository before this link works."
+  - name: Report a security vulnerability
+    url: https://github.com/ATDev-Inc/omega-stick/security/advisories/new
+    about: Please report security vulnerabilities privately here instead of opening a public issue.

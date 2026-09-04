@@ -1,6 +1,6 @@
 name: Build
 
-# TODO: update if you want to allow from forked repositories
+# Runs on PRs from forks too, with a read-only token.
 on: [pull_request]
 
 permissions:
@@ -8,7 +8,7 @@ permissions:
   pull-requests: write
 
 env:
-  # TODO: Update the below variables for your project
+  # Project build settings.
   APP_NAME: "Omega Stick"
   IDF_TARGET: 'esp32s3'
   IDF_VERSION: 'v6.0'
@@ -23,7 +23,7 @@ jobs:
     steps:
     - name: Checkout repo
       uses: actions/checkout@v7
-      # TODO: update this if you have submodules
+      # No submodules in this repository.
 
     - name: Build main
       uses: espressif/esp-idf-ci-action@v1

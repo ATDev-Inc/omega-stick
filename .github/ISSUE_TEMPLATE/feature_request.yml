@@ -1,0 +1,45 @@
+name: Feature request
+description: Suggest an idea or improvement for Omega Stick.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the need or difficulty you run into. Focus on the situation, not a specific implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed solution
+      description: What would you like to see happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any other approaches or workarounds you have thought about or tried.
+    validations:
+      required: false
+
+  - type: textarea
+    id: who-this-helps
+    attributes:
+      label: Who this helps
+      description: If you are comfortable sharing, tell us about your accessibility needs or how you use the device. This helps us understand the real-world impact of the request.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Anything else that would help us understand the request (sketches, links, related issues, etc.).
+    validations:
+      required: false
