@@ -17,9 +17,9 @@
 
 Omega Stick is a joystick whose actuation force is adjustable across roughly 5
 to 25 grams and defaults to under 10, intended for people who cannot operate a
-conventional spring-centred joystick. It connects
-by USB, presents as a standard input device requiring no installed software, and
-works across computers, tablets, and games consoles.
+conventional spring-centred joystick. It connects by USB, presents as a standard
+input device requiring no installed software, and works across computers,
+tablets, and games consoles.
 
 The device is open source and **designed to be 3D printed**, so that it can be
 produced locally by users, families, schools, and maker networks rather than
