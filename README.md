@@ -1,5 +1,7 @@
 # Omega Stick
 
+<img src="assets/logo/lockup.svg" alt="Omega Stick" width="360">
+
 **A low-force joystick for people with disabilities.** Omega Stick is an
 accessible input device for computer control and gaming. Actuation force is
 adjustable across roughly 5 to 25 grams and defaults to under 10.
@@ -92,6 +94,7 @@ Product and planning documents live in [docs/](docs/):
 | [compliance.md](docs/compliance.md) | What the project may and may not claim about itself |
 | [status.md](docs/status.md) | Current working status |
 | [research/](docs/research/) | Background research these were built from |
+| [assets/logo/](assets/logo/) | Brand marks, wordmark and usage notes |
 
 Research documents are point-in-time snapshots and are not maintained.
 
