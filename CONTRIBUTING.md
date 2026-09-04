@@ -46,9 +46,13 @@ If you are looking for a place to start, the open areas are listed under
 Keep these in mind when proposing changes. They are the reason the project
 exists.
 
-1. **Force stays low.** Under 10 grams of actuation force is the point of the
-   device. A change that adds mechanical resistance to the input path is not an
-   acceptable tradeoff for anything else.
+1. **Force stays low and adjustable.** The device must reach under 10 gf, and
+   must let the user choose a higher force if that works better for them. A
+   change that raises the *minimum* achievable force is not an acceptable
+   tradeoff for anything else. Note this principle originally forbade adding any
+   mechanical resistance at all, which would have ruled out the adjustment
+   mechanism the evidence supports. See D12 in
+   [docs/decisions.md](./docs/decisions.md).
 2. **No required host software.** The stick enumerates as a standard USB HID
    device so it works on a locked-down school or work machine, on a console, and
    on a tablet, with nothing installed. Do not make core functionality depend on

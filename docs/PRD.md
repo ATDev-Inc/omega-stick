@@ -6,7 +6,7 @@
 | **Date** | 2026-09-04 |
 | **Status** | Draft for review |
 | **Product** | Low-force accessible joystick for computer control and gaming |
-| **Repository** | `ATDev-Inc/omega-stick` (firmware) |
+| **Repository** | `ATDev-Inc/omega-stick` |
 
 **Supporting documents:** [requirements](requirements.md) (full specification) ·
 [decisions](decisions.md) · [compliance](compliance.md) · [research](research/)
@@ -15,8 +15,9 @@
 
 ## 1. Product summary
 
-Omega Stick is a joystick requiring under 10 grams of actuation force, intended
-for people who cannot operate a conventional spring-centred joystick. It connects
+Omega Stick is a joystick whose actuation force is adjustable across roughly 5
+to 25 grams and defaults to under 10, intended for people who cannot operate a
+conventional spring-centred joystick. It connects
 by USB, presents as a standard input device requiring no installed software, and
 works across computers, tablets, and games consoles.
 

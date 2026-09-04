@@ -151,18 +151,10 @@ at no cost and with no endorsement implied. pid.codes is the fallback.
 
 ---
 
-## Open decision: design principle 1
+## D12: Actuation force is adjustable, defaulting below 10 gf
 
-[CONTRIBUTING.md](../CONTRIBUTING.md) states:
-
-> **Force stays low.** Under 10 grams of actuation force is the point of the
-> device. A change that adds mechanical resistance to the input path is not an
-> acceptable tradeoff for anything else.
-
-**Proposed amendment:**
-
-> **Force stays low and adjustable.** The device must reach under 10 gf, and must
-> let the user choose a higher force if that works better for them.
+The device must reach **under 10 gf** and must let the user select a higher
+force. Target range **5 to 25 gf**, defaulting below 10.
 
 **Why.** Two independent vendors at the low-force frontier report that too-light
 is a real failure mode:
@@ -173,12 +165,17 @@ is a real failure mode:
 - mo-vis warns its 5 gf adapted Micro requires *"special attention to mounting,
   shielding and testing."*
 
-As currently worded, principle 1 forbids the adjustment mechanism that the
-evidence supports, because an adjustment that raises force adds mechanical
-resistance to the input path.
+Minimum force is therefore the wrong thing to optimise on its own. The usable
+range matters more, and which point in it works is a property of the individual
+user, not of the device.
 
-> **This needs a decision before the mechanical design is frozen.** It is the
-> only open item upstream of hardware.
+**Consequence.** Design principle 1 in [CONTRIBUTING.md](../CONTRIBUTING.md) was
+amended. As originally worded it forbade adding mechanical resistance to the
+input path, which would have ruled out the adjustment mechanism this decision
+depends on. It now constrains the *minimum* achievable force instead.
+
+**Consequence.** The README no longer presents "under 10 grams" as the
+differentiator on its own, which matches section 5 of [PRD.md](PRD.md).
 
 ---
 
