@@ -1,0 +1,39 @@
+name: Size Delta
+
+on: [pull_request]
+
+# Reporting only. This workflow is intentionally NOT a required status check:
+# a problem producing the size report should never block a merge.
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  APP_NAME: "Omega Stick"
+  IDF_TARGET: 'esp32s3'
+  IDF_VERSION: 'v6.0'
+  IDF_COMPONENT_MANAGER: "1" # whether to enable the component manager or not
+  FLASH_TOTAL_OVERRIDE: '8000000' # number of bytes of total flash (for percentage calculations)
+
+jobs:
+  size_delta:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    # This action does its own checkout and builds both HEAD and the base ref,
+    # so no checkout step is needed here.
+    - name: Determine Size Delta
+      uses: esp-cpp/esp-idf-size-delta@v1
+      with:
+        app_name: ${{ env.APP_NAME }}
+        app_path: "."
+        idf_target: ${{ env.IDF_TARGET }}
+        idf_version: ${{ env.IDF_VERSION }}
+        idf_component_manager: ${{ env.IDF_COMPONENT_MANAGER }}
+        flash_total_override: ${{ env.FLASH_TOTAL_OVERRIDE }}
+        # Pull requests from forks get a read-only token, so posting a comment
+        # would fail with a 403 and take the whole job down with it. The action
+        # always writes the same report to the workflow run summary, so nothing
+        # is lost by skipping the comment for forks.
+        post_comment: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
