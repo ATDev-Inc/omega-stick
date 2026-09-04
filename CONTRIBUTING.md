@@ -111,6 +111,25 @@ pre-commit run --all-files
 Please do not send formatting-only changes to files you are not otherwise
 touching; they make review harder.
 
+### Line endings
+
+[.gitattributes](./.gitattributes) normalizes every text file to LF, so you
+should not need to configure anything. If you cloned before that was added and
+see a diff touching whole files you did not edit, refresh your working tree:
+
+```console
+git rm --cached -r .
+git reset --hard
+```
+
+The line-ending normalization commit is listed in
+[.git-blame-ignore-revs](./.git-blame-ignore-revs). GitHub skips it in blame
+automatically; to get the same locally, run:
+
+```console
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
+
 Beyond formatting, match the surrounding code. Notable conventions in this
 tree:
 
