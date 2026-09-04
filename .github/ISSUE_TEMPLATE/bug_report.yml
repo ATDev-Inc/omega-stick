@@ -1,0 +1,91 @@
+name: Bug report
+description: Report a problem with Omega Stick firmware or hardware behavior.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the problem you ran into.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to reproduce
+      description: List the steps needed to reproduce the issue.
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware
+      description: Board and revision, and the sensor in use (e.g. TMAG5273 module and any variant/revision info).
+    validations:
+      required: true
+
+  - type: input
+    id: firmware-version
+    attributes:
+      label: Firmware version or git commit
+      description: The firmware version, tag, or git commit hash you are running.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: idf-version
+    attributes:
+      label: ESP-IDF version
+      options:
+        - v5.5.1
+        - v6.0
+        - other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: host-os
+    attributes:
+      label: Host OS the stick was plugged into
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Android
+        - iOS/iPadOS
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: console-output
+    attributes:
+      label: Serial monitor / console output
+      description: Paste any relevant serial monitor or console output. This will be rendered as a shell code block.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: existing-issues
+    attributes:
+      label: Existing issues
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true

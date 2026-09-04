@@ -1,0 +1,42 @@
+name: Accessibility feedback
+description: Tell us about your experience using Omega Stick. You do not need to know anything about code or electronics to fill this out.
+title: "[Feedback]: "
+labels:
+  - accessibility
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to share your experience with us. This form is for anyone using Omega Stick, and you do not need any technical or coding knowledge to fill it out. Just tell us in your own words what happened. Every question below is optional except the first two.
+
+  - type: textarea
+    id: what-you-were-trying-to-do
+    attributes:
+      label: What were you trying to do?
+      description: Tell us what you were doing with your Omega Stick, in your own words.
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-got-in-the-way
+    attributes:
+      label: What got in the way?
+      description: What happened that made things difficult, confusing, or didn't work the way you hoped?
+    validations:
+      required: true
+
+  - type: textarea
+    id: your-setup
+    attributes:
+      label: How do you use your joystick?
+      description: If you're comfortable, tell us a bit about your setup, such as any assistive technology you use, how the joystick is mounted or positioned, or what device you're plugging it into. Share only what you're comfortable sharing.
+    validations:
+      required: false
+
+  - type: textarea
+    id: what-would-help
+    attributes:
+      label: What would make it work better for you?
+      description: Any ideas, wishes, or changes that would make Omega Stick easier or better for you to use.
+    validations:
+      required: false

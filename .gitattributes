@@ -1,0 +1,24 @@
+# Normalize line endings.
+#
+# Anything Git detects as text is stored with LF in the repository and checked
+# out with LF on every platform. Before this file existed the tree was mixed:
+# LICENSE, .gitignore and main/CMakeLists.txt were LF, while README.md,
+# CMakeLists.txt, sdkconfig.defaults, main/main.cpp and the workflows were
+# CRLF. That produced whole-file diffs whenever a Windows contributor and a
+# Linux or macOS contributor touched the same file.
+* text=auto eol=lf
+
+# Shell scripts must keep LF or they fail to run under bash.
+*.sh text eol=lf
+
+# Binary artifacts: never rewrite their bytes.
+*.bin  binary
+*.elf  binary
+*.map  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.zip  binary

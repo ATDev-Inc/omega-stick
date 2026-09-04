@@ -1,0 +1,11 @@
+# Revisions listed here are skipped by `git blame`.
+#
+# GitHub honours this file automatically. To get the same behaviour locally:
+#
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Only add commits that provably change no code, such as a pure reformat or a
+# line-ending normalization.
+
+# Normalize line endings to LF across the tree (whitespace only).
+55e7cf33a0340dd611757888778a66e81b3106c6
