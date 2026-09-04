@@ -14,9 +14,13 @@ name: Static analysis
 #   - use_cmake stays false, so no CMake configure step runs on PR code.
 #   - no init_script is set, since that would execute a script from the PR.
 on:
+  # "**" not "*": GitHub branch globs treat "*" as matching any characters
+  # EXCEPT "/", so a filter of "*" silently skips every pull request whose base
+  # branch contains a slash (feat/..., chore/...). That is a silent skip rather
+  # than a failure, which is the dangerous kind.
   pull_request_target:
     branches:
-      - "*"
+      - "**"
 
 jobs:
   static_analysis:
