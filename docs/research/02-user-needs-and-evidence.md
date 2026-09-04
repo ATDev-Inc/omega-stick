@@ -166,8 +166,8 @@ effort**.
 
 > The strongest documented predictor is that the user's opinion was not
 > considered during selection. A project cannot retrofit that after shipping.
-> This is why PRD metric M7 is a process metric requiring feedback from real AT
-> users before the v1 tag.
+> This is why the PRD carries a process metric requiring feedback from real AT
+> users before the v1 tag, rather than only product metrics.
 
 ---
 

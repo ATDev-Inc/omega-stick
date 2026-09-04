@@ -4,8 +4,12 @@ Supporting document to [PRD.md](PRD.md). These are constraints on **what the
 project may say**, which is why they belong alongside the product spec rather
 than in a separate legal file.
 
-**Not legal advice.** Full sourcing in
-[research/04](research/04-regulatory-funding-compliance.md).
+**Not legal advice, and not a regulatory analysis.** This records what the
+project will and will not claim about itself. Supporting research on funding and
+product compliance is in [research/04](research/04-funding-and-compliance.md).
+
+**Point-in-time snapshot.** Compiled during v1 planning and not actively
+maintained. Re-check anything here before relying on it.
 
 ---
 
@@ -18,33 +22,28 @@ peripheral for accessibility. Specifically prohibited:
 - Any claim positioning it as a **communication device for people with medical
   impairments**.
 - Any **wheelchair drive-control** capability.
-- **"ADA compliant."** The ADA creates obligations for covered entities, not a
-  product certification. There is no such mark for a peripheral.
+- **"ADA compliant."** The ADA creates obligations for covered entities rather
+  than a product certification, so there is no such mark for a peripheral to
+  carry. (Inference from how the statute is structured, UNVERIFIED.)
 
 ### Why this is a hard constraint, not a style preference
 
-The closest FDA classification for a medically-claimed device of this type is
-**21 CFR 890.3710, "Powered communication system," product code ILQ, Class II**.
+Medical, therapeutic, and communication-device claims carry obligations that a
+general-purpose input peripheral does not. How a product describes itself is
+what determines which category it lands in, so the wording is a product
+constraint rather than a matter of marketing taste.
 
-| Attribute | Value |
-| --- | --- |
-| 510(k) | **EXEMPT** |
-| GMP / 21 CFR 820 | **NOT exempt** |
+This project has taken no regulatory advice and nothing here substitutes for it.
+If the scope ever moves toward a medical or communication device, that needs
+qualified counsel before anything ships.
 
-> The exposure is therefore **not** a premarket submission. It is establishment
-> registration, device listing, a **21 CFR 820 quality system**, MDR reporting,
-> and controlled labeling.
-
-**Intended use as expressed in marketing is what triggers this.** A single
-therapeutic claim on a product page changes the regulatory posture of the whole
-project. Maintain a documented prohibited-claims list subject to marketing
-review.
+Keep a documented prohibited-claims list and review published copy against it.
 
 ### The wheelchair line
 
-Powered wheelchairs are Class II under **21 CFR 890.3860 and are 510(k)-
-REQUIRED**. A drive-control input is a safety-critical component of that system.
-This is why wheelchair drive control is a hard non-goal, not a deferred feature.
+Wheelchair drive control is a hard non-goal, not a deferred feature. A drive
+input is a safety-critical part of a mobility system, which is a different
+product category carrying a different set of obligations.
 
 ---
 
@@ -107,13 +106,12 @@ closed.
   is satisfiable. It is a credible trust signal to AT funders and the disability
   community, and the nearest competitor (Willow) already holds one.
 
-**No conflict** was found between open sourcing and the FDA, FCC, or CE regimes
-as v1 is scoped. Two friction points only:
+**No conflict** was found between open sourcing and the compliance regimes that
+apply to v1 as scoped. Two friction points only:
 
 1. If BLE ships, RF parameters must not be user-modifiable.
-2. If the product ever became an FDA-listed Class II device, 21 CFR 820 design
-   controls would require documented change control and a design history file,
-   so community pull requests would need a gated release process feeding a
+2. If the product scope ever changed such that a formal quality system applied,
+   community pull requests would need a gated release process feeding a
    controlled build.
 
 ---

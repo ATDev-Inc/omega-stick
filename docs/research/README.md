@@ -17,7 +17,7 @@ and the things that could not be verified.
 | [01: Competitive landscape](01-competitive-landscape.md) | Adaptive and clinical joysticks, force and price spectrum, the unoccupied gap |
 | [02: User needs and evidence](02-user-needs-and-evidence.md) | Populations and prevalence, force and fatigue literature, AT abandonment, mounting |
 | [03: HID and platform compatibility](03-hid-platform-compatibility.md) | HID class choice, console paths, ESP32-S3 constraints, espp capabilities, latency budget |
-| [04: Regulatory, funding, compliance](04-regulatory-funding-compliance.md) | FDA status, reimbursement, FCC/CE, accessibility standards, open source |
+| [04: Funding and compliance](04-funding-and-compliance.md) | Reimbursement, FCC/CE, accessibility standards, open source |
 
 ## How to read these
 
@@ -46,9 +46,9 @@ published measurement protocol a requirement.
   prices. Figures shown for those vendors come from resellers or third-party
   comparison charts where available, and are marked accordingly.
 - **TMAG5273 RMS noise figures** were not extractable from the datasheet during
-  this pass. This is an open item (PRD risk R10) requiring bench measurement.
+  this pass. This is an open item requiring bench measurement.
 - **Sustained 1 kHz HID throughput on ESP32-S3 + TinyUSB**: no published
-  benchmark exists. Open item (PRD risk R2).
+  benchmark exists. Open item.
 - **Analog stick actuation force for mainstream gamepads** is published by no
   vendor, including Microsoft, Sony, Nintendo, GuliKit, 8BitDo, Hori, and
   Logitech. Community measurements exist but are UNVERIFIED.

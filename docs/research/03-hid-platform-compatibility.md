@@ -172,7 +172,7 @@ TinyUSB over the built-in USB-C with no eFuse burn.
 
 > **Treat "no eFuse burn required" as high confidence but UNVERIFIED. Bench-
 > verify on the QT Py before committing hardware.** If wrong, every unit needs an
-> irreversible eFuse burn. Recorded as PRD risk R3.
+> irreversible eFuse burn. Open item, to be resolved before a hardware commit.
 
 ### Consequences either way
 
@@ -266,7 +266,7 @@ Source: [ti.com/product/TMAG5273](https://www.ti.com/product/TMAG5273)
 Averaging trades rate for noise: 4x ≈ 3.1 kSPS 3-axis, 32x ≈ 0.4 kSPS.
 
 **RMS noise figures: UNVERIFIED**, not extractable from the PDF this session.
-Recorded as PRD risk R10.
+Open item requiring bench measurement.
 
 At ±40 mT, one LSB ≈ **19.5 µT** (computed). The x1 part at ±40 mT is the right
 choice for a small magnet over a few millimeters.

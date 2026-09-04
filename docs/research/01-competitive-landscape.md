@@ -152,7 +152,7 @@ directly informed the proposed amendment to design principle 1 in the PRD.
 7. **Cost and insurance.** A working XAC setup runs *"upwards of $270"*.
    QuadStick runs ~$600 plus a $105 to $229 mount. Gaming devices are rarely
    funded as medically necessary (see
-   [document 04](04-regulatory-funding-compliance.md)).
+   [document 04](04-funding-and-compliance.md)).
 
 8. **Fatigue is the real complaint, not capability.** A gamer with cerebral
    palsy reports that 30 minutes of play leaves them *"exhausted for at least a

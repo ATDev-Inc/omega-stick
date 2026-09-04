@@ -1,92 +1,21 @@
-# 04: Regulatory, funding, and compliance
+# 04: Funding and compliance
 
 Captured 2026-09-04. See [README](README.md) for method and caveats.
 
 **Not legal advice.** This records what primary sources say. Inferences are
 marked UNVERIFIED.
 
-**Question asked:** Is this a regulated medical device? How does it get funded?
-What compliance obligations attach to selling it? What accessibility standards
-will buyers cite? Does open sourcing conflict with any of it?
+**Question asked:** How does this get funded? What compliance obligations attach
+to selling it? What accessibility standards will buyers cite? Does open sourcing
+conflict with any of it?
+
+**Scope note:** medical-device regulatory analysis was removed from this
+document. The project's position is simply that Omega Stick is a general-purpose
+input peripheral and makes no medical claims. See [compliance.md](../compliance.md).
 
 ---
 
-## 1. FDA and medical device status
-
-### The trigger is intended use, not technology
-
-A device is regulated if its labeling or marketing presents it for diagnosis,
-cure, mitigation, treatment, or prevention of disease, or to affect structure or
-function. **Technology choice does not determine this. Marketing language does.**
-
-### The closest classification if medical claims are made
-
-**21 CFR 890.3710, "Powered communication system"**: an AC- or battery-powered
-device intended for medical purposes, used by persons unable to use normal
-communication methods because of physical impairment.
-
-| Attribute | Value |
-| --- | --- |
-| Product code | **ILQ** |
-| Class | **II** |
-| 510(k) | **EXEMPT** |
-| GMP / 21 CFR 820 | **NOT exempt** |
-
-Sources:
-[FDA classification database, ILQ](https://www.accessdata.fda.gov/scripts/cdrh/cfdocs/cfpcd/classification.cfm?start_search=1&productcode=ILQ),
-[21 CFR 890.3710](https://www.law.cornell.edu/cfr/text/21/890.3710)
-
-> **The critical finding.** The worst case is not a 510(k) submission. It is
-> **establishment registration + device listing + 21 CFR 820 quality system +
-> MDR reporting + controlled labeling.** That is still a real and ongoing cost.
-> 510(k) exemptions apply only to device types listed by regulation; other
-> obligations survive the exemption
-> ([FDA premarket notification](https://www.fda.gov/medical-devices/premarket-submissions-selecting-and-preparing-correct-submission/premarket-notification-510k)).
-
-### The exemption can be voided
-
-**21 CFR 890.9** voids the exemption if the device has a *different intended use*
-from legally marketed devices of that type, or uses a *different fundamental
-scientific technology*
-([21 CFR 890.9](https://www.law.cornell.edu/cfr/text/21/890.9)).
-
-Whether a Hall-effect magnetic sensor counts as a different *fundamental*
-technology versus resistive joysticks is arguably no, but **UNVERIFIED**.
-
-### General Wellness policy
-
-The revised guidance (issued 6 January 2026) is the enforcement-discretion route
-for low-risk products with wellness-only intended use
-([FDA General Wellness](https://www.fda.gov/regulatory-information/search-fda-guidance-documents/general-wellness-policy-low-risk-devices)).
-It is a **weaker fit than simply not making medical claims at all**.
-
-### Wheelchair driving changes the answer materially
-
-Powered wheelchairs are **Class II under 21 CFR 890.3860 and are 510(k)-
-REQUIRED**, with dedicated FDA guidance
-([21 CFR 890.3860](https://www.ecfr.gov/current/title-21/chapter-I/subchapter-H/part-890/subpart-D/section-890.3860),
-[FDA wheelchair 510(k) guidance](https://www.fda.gov/regulatory-information/search-fda-guidance-documents/guidance-document-preparation-premarket-notification-510k-applications-mechanical-and-powered)).
-A drive-control input is a safety-critical component of that system.
-
-> This is a category change, not a feature. It is why wheelchair drive control is
-> a hard non-goal for v1.
-
-### Comparables
-
-QuadStick and the Xbox Adaptive Controller appear to be positioned as consumer
-and accessibility peripherals with no FDA clearance. **UNVERIFIED**: no FDA
-registration or 510(k) record surfaced for either.
-
-### What this means
-
-v1 must be labeled and marketed **strictly as a computer and gaming input
-peripheral for accessibility**, with no therapeutic, diagnostic, rehabilitative,
-or communication-for-the-medically-impaired claims. Maintain a documented
-prohibited-claims list subject to marketing review.
-
----
-
-## 2. Reimbursement and funding (US)
+## 1. Reimbursement and funding (US)
 
 ### Medicare will not fund general computer access
 
@@ -158,7 +87,7 @@ necessity template, and a spec sheet quantifying actuation force and throw.
 
 ---
 
-## 3. Electrical and product compliance
+## 2. Electrical and product compliance
 
 ### USB-only, no radio (the v1 scope)
 
@@ -237,7 +166,7 @@ the rest stays open.
 
 ---
 
-## 4. Accessibility standards buyers will cite
+## 3. Accessibility standards buyers will cite
 
 | Standard | Relevance |
 | --- | --- |
@@ -258,7 +187,7 @@ ISO 9999 class in tender documentation. **Never claim "ADA compliant."**
 
 ---
 
-## 5. Open source hardware and firmware
+## 4. Open source hardware and firmware
 
 ### Licensing
 
@@ -284,13 +213,12 @@ The TMAG5273 has a public TI datasheet, so that condition is satisfiable.
 
 ### Conflicts
 
-**No conflict was found** between open sourcing and the FDA, FCC, or CE regimes.
-Two friction points only:
+**No conflict was found** between open sourcing and the compliance regimes that
+apply to the product as scoped. Two friction points only:
 
-1. If BLE ships, RF-parameter control must not be user-modifiable (section 3).
-2. If the product ever becomes an FDA-listed Class II device, **21 CFR 820
-   design controls require documented change control and a design history file**.
-   Community pull requests would then need a gated release process feeding a
+1. If BLE ships, RF-parameter control must not be user-modifiable (section 2).
+2. If the scope ever changed such that a formal quality system applied,
+   community pull requests would need a gated release process feeding a
    controlled build.
 
 ### What this means

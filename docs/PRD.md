@@ -162,7 +162,6 @@ peripheral for accessibility. **Prohibited:** therapeutic, diagnostic, or
 rehabilitative claims; wheelchair drive-control capability; the term "ADA
 compliant."
 
-A medically-claimed device of this type falls under a classification carrying
-registration, quality-system, and reporting obligations. **Marketing language,
-not device function, is what triggers this.** Full analysis:
+How the product describes itself is what determines the category it is treated
+as, so these are product constraints rather than marketing preferences. Details:
 [compliance.md](compliance.md).

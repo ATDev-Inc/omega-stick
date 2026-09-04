@@ -214,11 +214,11 @@ request.
 
 | Item | Reason |
 | --- | --- |
-| **Wheelchair drive control** | Pulls the product into 21 CFR 890.3860 (powered wheelchair, Class II, **510(k) required**). A category change, not a feature. See [compliance.md](compliance.md) |
+| **Wheelchair drive control** | Safety-critical part of a mobility system. A different product category with a different obligation set, not a feature. See [compliance.md](compliance.md) |
 | **BLE / wireless** | D1. Compliance cost with no platform gain |
 | **Direct console connection** | D4. Requires licensing or auth silicon |
 | **Analog TRRS output to XAC X1/X2 ports** | Viable (Tip = axis 1, Ring1 = axis 2, Ring2 = GND, Sleeve = 3.3 V ref) but needs a DAC and a hardware variant. Revisit for v2 |
 | **Companion configuration app** | Design principle 2. Optional CDC CLI only (OUT-8) |
 | **Head / eye / sip-and-puff / voice input** | Different product |
 | **Battery power** | HW-5. Triggers UN 38.3 and IEC 62133-2 for no v1 benefit |
-| **Any medical or therapeutic claim** | See [compliance.md](compliance.md). Changes the regulatory posture of the whole project |
+| **Any medical or therapeutic claim** | See [compliance.md](compliance.md). Changes what category the product is treated as |

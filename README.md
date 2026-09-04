@@ -16,6 +16,7 @@ component library.
 
 - [Why low force](#why-low-force)
 - [Project status](#project-status)
+- [Documentation](#documentation)
 - [Hardware](#hardware)
 - [Getting started](#getting-started)
   - [Prerequisites](#prerequisites)
@@ -66,6 +67,21 @@ in [main/idf_component.yml](main/idf_component.yml) in preparation for that work
 
 If you are looking for somewhere to help, those are the open areas. See
 [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+## Documentation
+
+Product and planning documents live in [docs/](docs/):
+
+| Document | Contents |
+| --- | --- |
+| [PRD.md](docs/PRD.md) | What v1 is, who it is for, scope, and success metrics |
+| [requirements.md](docs/requirements.md) | Functional and non-functional specification |
+| [decisions.md](docs/decisions.md) | Product decisions with rationale, and what is still open |
+| [compliance.md](docs/compliance.md) | What the project may and may not claim about itself |
+| [status.md](docs/status.md) | Current working status |
+| [research/](docs/research/) | Background research these were built from |
+
+Research documents are point-in-time snapshots and are not maintained.
 
 ## Hardware
 
