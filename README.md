@@ -94,7 +94,7 @@ Product and planning documents live in [docs/](docs/):
 | [compliance.md](docs/compliance.md) | What the project may and may not claim about itself |
 | [status.md](docs/status.md) | Current working status |
 | [research/](docs/research/) | Background research these were built from |
-| [assets/logo/](assets/logo/) | Brand marks, wordmark and usage notes |
+| [assets/logo/](assets/logo/) | Brand marks, wordmark, the animated hero scene, and usage notes |
 
 Research documents are point-in-time snapshots and are not maintained.
 
