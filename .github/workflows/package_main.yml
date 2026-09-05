@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  # Project build settings.
+  # TODO: Update the below variables for your project
   APP_NAME: "Omega Stick"
   IDF_TARGET: 'esp32s3'
   IDF_VERSION: 'v6.0'
@@ -43,9 +43,9 @@ jobs:
     - name: Upload Build Outputs
       uses: actions/upload-artifact@v7
       id: zip_step
-      # Artifacts attached to the build / release. Add e.g.
-      # littlefs-flash_args here if a filesystem image is ever added to
-      # the build.
+      # TODO: add / remove files below. You may want to include for example
+      # littlefs-flash_args if you have a littlefs filesystem image you want to
+      # include
       with:
         name: build-artifacts
         path: |
@@ -60,9 +60,9 @@ jobs:
     - name: Attach files to release
       uses: softprops/action-gh-release@v3
       if: ${{ github.event.release && github.event.action == 'published' }}
-      # Artifacts attached to the build / release. Add e.g.
-      # littlefs-flash_args here if a filesystem image is ever added to
-      # the build.
+      # TODO: add / remove files below. You may want to include for example
+      # littlefs-flash_args if you have a littlefs filesystem image you want to
+      # include
       with:
         files: |
           build/*.bin
@@ -94,5 +94,5 @@ jobs:
       - uses: esp-cpp/esp-packaged-programmer-action@v1.0.5
         with:
           zipfile-id: ${{ needs.build.outputs.zipfile-id }}
-
+          # TODO: update programmer name to be what you want to call it
           programmer-name: 'omega_stick_programmer'

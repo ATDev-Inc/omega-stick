@@ -1,25 +1,25 @@
-# Default target. Omega Stick hardware is ESP32-S3.
+# TODO: uncomment one of these if you want to support a specifc target by default
 # CONFIG_IDF_TARGET="esp32"
 # CONFIG_IDF_TARGET="esp32s2"
 CONFIG_IDF_TARGET="esp32s3"
 # CONFIG_IDF_TARGET="esp32c3"
 
-# Uncomment for a 1 kHz FreeRTOS tick (default is 100 Hz).
+# TODO: uncomment if you want freertos to run at 1 khz instead of the default 100 hz
 # CONFIG_FREERTOS_HZ=1000
 
-# Uncomment to run at max clock speed (240 MHz).
+# TODO: uncomment if you want to run the esp at max clock speed (240 mhz)
 # ESP32-specific
 #
 # CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 # CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
 
-# Uncomment to change the event and main task stack sizes.
+# TODO: uncomment if you want to update the event and main task stask sizes
 # Common ESP-related
 #
 # CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
 # CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_TINYUSB_CDC_ENABLED=y
 CONFIG_TINYUSB_CDC_COUNT=1
-CONFIG_TINYUSB_VENDOR_COUNT=1
+CONFIG_TINYUSB_VENDOR_COUNT=1 
 CONFIG_TINYUSB_HID_COUNT=1
 CONFIG_ESPP_I2C_USE_NEW_API=1

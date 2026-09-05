@@ -1,17 +1,19 @@
 name: Build
 
+# TODO: update if you want to allow from forked repositories
 on: [pull_request]
 
-# This is the merge gate, so it must behave identically for pull requests from
-# forks. Those always receive a read-only GITHUB_TOKEN regardless of what is
-# requested here, so this job deliberately needs nothing but read access.
-# Anything that writes back to the PR belongs in size_delta.yml instead.
 permissions:
   contents: read
+  pull-requests: write
 
 env:
+  # TODO: Update the below variables for your project
+  APP_NAME: "Omega Stick"
   IDF_TARGET: 'esp32s3'
   IDF_VERSION: 'v6.0'
+  IDF_COMPONENT_MANAGER: "1" # whether to enable the component manager or not
+  FLASH_TOTAL_OVERRIDE: '8000000' # number of bytes of total flash (for percentage calculations)
 
 jobs:
   build:
@@ -21,7 +23,7 @@ jobs:
     steps:
     - name: Checkout repo
       uses: actions/checkout@v7
-      # No submodules in this repository.
+      # TODO: update this if you have submodules
 
     - name: Build main
       uses: espressif/esp-idf-ci-action@v1
@@ -29,3 +31,13 @@ jobs:
         esp_idf_version: ${{ env.IDF_VERSION }}
         path: "."
         target: ${{ env.IDF_TARGET }}
+
+    - name: Determine Size Delta
+      uses: esp-cpp/esp-idf-size-delta@v1
+      with:
+        app_name: ${{ env.APP_NAME }}
+        app_path: "."
+        idf_target: ${{ env.IDF_TARGET }}
+        idf_version: ${{ env.IDF_VERSION }}
+        idf_component_manager: ${{ env.IDF_COMPONENT_MANAGER }}
+        flash_total_override: ${{ env.FLASH_TOTAL_OVERRIDE }}
