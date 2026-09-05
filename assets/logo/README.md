@@ -23,6 +23,8 @@ bitmap, both noted below.
 | `scene.html` | The scene as a live hero: constructed mark, lit grid, power-on |
 | `build-scene.py` | Regenerates the three generated files above from the constants `scene.html` uses |
 | `source-silhouette.png` | Two-colour bitmap the outline was traced from. Kept so the trace is reproducible |
+| `source-scene.png` | The render the scene was matched to. Provenance, not a spec |
+| `source-scene-knockout.png` | The same render with its background knocked out |
 
 ## Palette
 
@@ -113,6 +115,15 @@ which has no horizon -- so sampling a pixel out of a render will not give you
   horizon in favour of one centred on the mark -- otherwise the frame reads as
   a scene whose floor failed to load. It is the file to reach for when the
   README note above about the grid being decoration needs demonstrating.
+- **The scene was matched to `source-scene.png` by eye, not by measurement,**
+  and it cannot be measured. The reference is a soft, glow-heavy render with
+  no crisp edge anywhere on the mark: threshold it five different ways and
+  the mark's width comes out anywhere from 37% to 55% of the frame, because
+  near the feet its bloom floods almost the full width and the horizon band
+  below it is brighter than the mark's own rim. `scene.html` settles on
+  38.4%, which sits at the sane end of that range. The constants at the top
+  of `scene.html` are the authority for framing; these two PNGs are kept as
+  provenance, so do not re-derive geometry from them.
 - **Set `data-intro="off"` before screenshotting `scene.html`.** The power-on
   runs for 3.2s from load and its first keyframe is a black frame, so a headless
   capture -- which freezes CSS animations at t = 0 -- otherwise gets the unlit
