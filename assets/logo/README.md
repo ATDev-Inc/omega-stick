@@ -1,10 +1,10 @@
 # Brand assets
 
 Vector marks for Omega Stick. Every mark here is true vector: the omega outline
-is 95 cubic Bezier curves with no straight segments, and the wordmark is built
-from geometric primitives rather than an outlined font, so nothing here depends
-on a typeface being installed. The folder also holds one build script and one
-bitmap, both noted below.
+is 95 cubic Bezier curves with no straight segments, and the wordmark is drawn
+rather than set -- straight lines and arcs, stroked with round caps -- so
+nothing here depends on a typeface being installed. The folder also holds
+two build scripts and three bitmaps, all noted below.
 
 ## Files
 
@@ -14,14 +14,15 @@ bitmap, both noted below.
 | `omega-flat.svg` | Same mark without the blur filter. Below 96px |
 | `omega-favicon.svg` | Silhouette only, no rim. Browser tab, 16px and up |
 | `omega-mono.svg` | Single colour via `currentColor`. Silkscreen, laser, one-colour print |
-| `wordmark.svg` | OMEGA STICK, neon gradient |
-| `wordmark-mono.svg` | OMEGA STICK, single colour |
-| `lockup.svg` | Mark above wordmark. Default for headers and README |
+| `wordmark.svg` | OMEGA STICK, neon gradient. Generated |
+| `wordmark-mono.svg` | OMEGA STICK, single colour via `currentColor`. Generated |
+| `lockup.svg` | Mark above wordmark. Default for headers and README. Generated |
 | `scene.svg` | The scene as a still. Poster and hero art. Generated |
 | `scene-mark.svg` | The same canvas and sky with the floor removed. Generated |
 | `omega-neon.svg` | The mark alone with the neon-tube treatment, transparent. Dark grounds only. Generated |
 | `scene.html` | The scene as a live hero: constructed mark, lit grid, power-on |
-| `build-scene.py` | Regenerates the three generated files above from the constants `scene.html` uses |
+| `build-scene.py` | Regenerates the three scene files above from the constants `scene.html` uses |
+| `build-wordmark.py` | Draws the alphabet and regenerates the two wordmarks and the lockup |
 | `source-silhouette.png` | Two-colour bitmap the outline was traced from. Kept so the trace is reproducible |
 | `source-scene.png` | The render the scene was matched to. Provenance, not a spec |
 | `source-scene-knockout.png` | The same render with its background knocked out |
@@ -48,21 +49,72 @@ which has no horizon -- so sampling a pixel out of a render will not give you
   mush at small sizes. Use `omega-flat.svg` or `omega-favicon.svg` instead.
   This was checked by rendering both, not assumed.
 - **`omega-mono.svg` and `wordmark-mono.svg` inherit `currentColor`**, so set
-  `color` on the parent rather than editing the file.
+  `color` on the parent rather than editing the file. That only works when the
+  SVG is inlined in the page. Referenced through `<img>` it is a separate
+  document, inherits nothing, and comes out black -- so on a dark ground reach
+  for `wordmark.svg`, or inline the file.
+- **The wordmark is stroked, not filled.** One path of straight lines and
+  arcs, `stroke-linecap` and `stroke-linejoin` both `round`, at
+  `stroke-width` 17% of the cap height. That is the whole letterform: the round
+  terminal is the same tube the mark reads as, which is what makes the two look
+  like one drawing in the lockup rather than a symbol next to some type. It
+  also means the file stays under 2 kB and the weight is one number.
+  **For laser, CNC or vinyl, expand the stroke to outlines first** -- those
+  toolpaths follow a stroked path as a centreline and will cut the skeleton
+  rather than the letters.
+- **The S is the one letter that is not plainly circles and lines.** Each half
+  is walked out from the waist as a chain of tangent arcs whose radius tightens
+  into the left extreme and opens back out over the top, so the curvature falls
+  towards zero at the inflection instead of the letter carrying a straight
+  segment through its middle. Its proportions are measured off Century Gothic,
+  a geometric face with a truly circular O: there the S is 0.56 of the O's
+  width, and this one is 0.62 because a much heavier stroke needs the extra
+  room for its counters. The docstring in `build-wordmark.py` records two
+  constructions that looked reasonable and were not, so they do not get tried
+  again.
+- **The S's lower half is wider than its upper half, deliberately.** Draw the
+  two congruent and the letter measures symmetrical but reads top-heavy, the
+  usual illusion in S, B, X and 8. Every face measured corrects it, by 1.06 in
+  Corbel and Verdana up to 1.16 in Century Gothic; this sits at 1.095. The
+  waist is nudged left of centre to buy that, and up a little to put the
+  inflection where the references put it, both through one `WAIST` constant.
+  If the S ever looks wrong at the bottom, check that before the curves: the
+  bug people expect is the two halves having drifted apart, and the bug that
+  actually shows is them being identical.
+- **Nothing in the wordmark is a declared width.** The letters are drawn in a
+  100-unit cap height; each one's ink box and both its sidebearings are then
+  measured off the shape. A side gets a full bearing where its silhouette is
+  flat and less of one the further that silhouette recedes, so `T` tucks under
+  its neighbour and `O` sits closer than `I` without anybody kerning pairs by
+  hand. Change the weight and the spacing re-solves with it.
+- **The round letters are bigger than the cap height, on purpose.** `O`, `C`,
+  `G` and `S` overshoot the cap line and the baseline by 1.3 units in 100, and
+  the points of `A` and `M` do the same; a circle that stops exactly on the cap
+  line reads as too small beside a flat-topped letter. `O`, `C` and `G` stay
+  true circles at any weight because their radius is derived from the overshoot
+  rather than typed in.
 - **The traced outline lives in one place.** All eight SVGs that draw the mark
-  carry it byte for byte, and `build-scene.py` reads it out of `omega-mono.svg`
-  at build time rather than keeping its own copy.
+  carry it byte for byte, and both build scripts read it out of `omega-mono.svg`
+  at build time rather than keeping a copy of their own.
 - **Mind which space a gradient is in.** The hand-drawn marks use
   `userSpaceOnUse`, and there the rule is: keep the geometry in one coordinate
   space. Wrap parts of a mark in their own transformed groups and each group
   restarts the gradient in its own space, so every piece renders one flat
-  colour. The three generated files cannot do that -- the mark and its
+  colour. The three scene files cannot do that -- the mark and its
   reflection have to sit in differently transformed groups -- so their neon
   gradient is `objectBoundingBox` instead, which is measured per element and
   survives the transform. Copy the right one for the situation.
 - `scene.svg` and `scene.html` carry the grid and are deliberately the only
   files that do. The grid is decoration; the mark has to work without it.
-- **Three files here are generated; edit `build-scene.py`, not them.** Run
+- **The wordmark files are generated too; edit `build-wordmark.py`, not them.**
+  Run `python assets/logo/build-wordmark.py` to rebuild `wordmark.svg`,
+  `wordmark-mono.svg` and `lockup.svg`. It reads the traced outline out of
+  `omega-mono.svg` for the lockup, the same way `build-scene.py` does, so the
+  trace still lives in exactly one place. The lockup sizes the mark and the gap
+  in wordmark cap heights, measured off the mark's real ink box rather than its
+  viewBox -- the mark files carry a margin for their glow, and laying out
+  against that would put the mark further away than the number says.
+- **Three scene files are generated; edit `build-scene.py`, not them.** Run
   `python assets/logo/build-scene.py` to rebuild `scene.svg`, `scene-mark.svg`
   and `omega-neon.svg`. The camera, framing and palette constants at the top of
   that script mirror the custom properties at the top of `scene.html`, so
