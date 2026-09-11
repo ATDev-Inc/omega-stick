@@ -14,5 +14,5 @@
     "board/esp32s3-builtin.cfg"
   ],
   "idf.flashType": "JTAG",
-  "C_Cpp.default.compilerPath": "cl.exe"
+  "C_Cpp.default.compilerPath": "C:/Espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp32s3-elf-gcc.exe"
 }

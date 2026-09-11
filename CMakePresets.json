@@ -1,0 +1,32 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Default (development)",
+      "description": "Development configuration",
+      "generator": "Ninja",
+      "binaryDir": "C:/Users/Marshall Saltz/Documents/GitHub/omega-stick/build/default",
+      "cacheVariables": {
+        "IDF_TARGET": "esp32s3",
+        "SDKCONFIG": "C:/Users/Marshall Saltz/Documents/GitHub/omega-stick/build/default/sdkconfig"
+      }
+    },
+    {
+      "name": "production",
+      "displayName": "Production",
+      "description": "Production configuration",
+      "generator": "Ninja",
+      "binaryDir": "C:/Users/Marshall Saltz/Documents/GitHub/omega-stick/build/production",
+      "cacheVariables": {
+        "IDF_TARGET": "esp32s3",
+        "SDKCONFIG": "C:/Users/Marshall Saltz/Documents/GitHub/omega-stick/build/production/sdkconfig"
+      }
+    }
+  ]
+}
