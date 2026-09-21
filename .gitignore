@@ -34,3 +34,7 @@ build/
 sdkconfig
 sdkconfig.old
 managed_components/
+
+# Python bytecode, from the build scripts in assets/logo
+__pycache__/
+*.pyc
