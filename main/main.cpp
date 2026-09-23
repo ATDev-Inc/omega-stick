@@ -308,6 +308,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
   printf("Y maximum:                 %.6f\n", center.effective_center_y() + range.max_y);
 
+  // cppcheck-suppress knownConditionTrueFalse
   if (!XAC_SELECTION) { // TODO
 
     printf("\n");
