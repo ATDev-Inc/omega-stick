@@ -59,13 +59,13 @@ static constexpr float MANUAL_OFFSET_Y = 0.0f;
 // flipped, set INVERT_NUDGE_Y to true rather than touching the logic below.
 static constexpr bool INVERT_NUDGE_Y = false;
 
-// Normalized (post-calibration) magnitude the stick must reach, off-center,
-// before a nudge is recognized.
+// Amount of change between current and last movement
+// to determine a nudge. Must happen within NUDGE_TIME
 static constexpr float NUDGE_ENTER_THRESHOLD = 0.5f;
 
 // Normalized magnitude the stick must fall back below before a held nudge is
-// released. Deliberately lower than NUDGE_ENTER_THRESHOLD (hysteresis) so
-// the stick doesn't chatter in and out of a nudge right at the edge.
+// released. Deliberately lower than NUDGE_ENTER_THRESHOLD as this is in
+// absolute position, not a delta. Tested already with both held and temp nudges.
 static constexpr float NUDGE_EXIT_THRESHOLD = 0.8f;
 static constexpr int NUDGE_TIME = 100;
 // The polling loop below runs every 10ms. Emitting a wheel tick on every
@@ -165,11 +165,13 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   }
 
   printf("TMAG5273 initialized successfully!\n\n");
-  std::this_thread::sleep_for(15s);
+  std::this_thread::sleep_for(
+      15s); // for flashing purposes in case want to upload new code in this time
   // ==========================================================================
   // Calibration
   // ==========================================================================
-  bool XAC_SELECTION = false;
+  bool XAC_SELECTION =
+      false; // TODO: Implement XAC_SELECTIon in calibration and also test and fix XAC
 
   const std::filesystem::path calibration_path =
       espp::OmegaCalibration::default_path(CALIBRATION_FILE_NAME);
@@ -182,15 +184,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   bool run_calibration = !have_calibration;
 
   if (have_calibration) {
-    std::string cali;
     printf("\nLoaded existing calibration.");
-    /*std::cin >> cali;
-
-    if (cali == "y" || cali == "Y") {
-      std::error_code clear_ec;
-      espp::OmegaCalibration::clear(calibration_path, clear_ec);
-      run_calibration = true; // User wants a new calibration
-    }*/
   }
 
   if (run_calibration) {
@@ -314,7 +308,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
   printf("Y maximum:                 %.6f\n", center.effective_center_y() + range.max_y);
 
-  if (!XAC_SELECTION) {
+  if (!XAC_SELECTION) { // TODO
 
     printf("\n");
     printf("========================================\n");
@@ -388,90 +382,87 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     // persists across polling iterations/loops so a held nudge stays held.
     NudgeDirection current_nudge = NudgeDirection::NONE;
     int scroll_poll_count = 0;
-    float raw_x;
-    float raw_y;
+
     float jx;
     float jy;
     auto start = std::chrono::high_resolution_clock::now();
     js.update();
-    float prev_x = js.x();
+    float prev_x = js.x(); // before loop so can begin with prev_x and prev_y values for comparison
     float prev_y = js.y();
     while (true) {
-      for (int i = 0; i < 50; i++) {
-        js.update();
-        raw_x = js.raw().x();
-        raw_y = js.raw().y();
-        jx = js.x();
-        jy = js.y();
+      js.update();
+      float raw_x = js.raw().x();
+      float raw_y = js.raw().y();
+      jx = js.x();
+      jy = js.y();
 
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        const float cur_mag = std::hypot(jx, jy);
+      auto end = std::chrono::high_resolution_clock::now();
+      auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+      const float cur_mag = std::hypot(jx, jy);
 
-        // --- Nudge direction detection only (runs every NUDGE_TIME window) ---
-        if (duration >= std::chrono::milliseconds(NUDGE_TIME)) {
-          const float prev_mag = std::hypot(prev_x, prev_y);
-          const float mapped_magnitude = cur_mag - prev_mag;
+      // --- Nudge direction detection only (runs every NUDGE_TIME window) ---
+      if (duration >= std::chrono::milliseconds(NUDGE_TIME)) {
+        const float prev_mag = std::hypot(prev_x, prev_y);
+        const float mapped_magnitude = cur_mag - prev_mag;
 
-          if (current_nudge == NudgeDirection::NONE) {
-            if (mapped_magnitude >= NUDGE_ENTER_THRESHOLD) {
-              current_nudge = classify_nudge(jx, jy);
-              scroll_poll_count = 0;
-            }
-          } else if (cur_mag <= NUDGE_EXIT_THRESHOLD) {
-            current_nudge = NudgeDirection::NONE;
+        if (current_nudge == NudgeDirection::NONE) {
+          if (mapped_magnitude >= NUDGE_ENTER_THRESHOLD) {
+            current_nudge = classify_nudge(jx, jy);
+            scroll_poll_count = 0;
           }
-
-          prev_x = jx;
-          prev_y = jy;
-          start = end;
+        } else if (cur_mag <= NUDGE_EXIT_THRESHOLD) {
+          current_nudge = NudgeDirection::NONE;
         }
 
-        // --- Per-report mouse update: runs every 10ms iteration ---
-        mouse.reset_movement();
-        mouse.set_button(1, current_nudge == NudgeDirection::FORWARD);
-        mouse.set_button(2, current_nudge == NudgeDirection::RIGHT);
-
-        switch (current_nudge) {
-        case NudgeDirection::NONE:
-          mouse.set_movement(jx * SENSITIVITY, jy * SENSITIVITY);
-          break;
-        case NudgeDirection::LEFT:
-          scroll_poll_count++;
-          if (scroll_poll_count % SCROLL_POLL_DIVIDER == 0)
-            mouse.set_wheel(SCROLL_STEP);
-          break;
-        case NudgeDirection::BACK:
-          scroll_poll_count++;
-          if (scroll_poll_count % SCROLL_POLL_DIVIDER == 0)
-            mouse.set_wheel(-SCROLL_STEP);
-          break;
-        case NudgeDirection::FORWARD:
-        case NudgeDirection::RIGHT:
-          break;
-        }
-
-        if (drift_compensator.update(raw_x, raw_y, cur_mag, center)) {
-          espp::OmegaCalibration::apply_calibration(js, center, range);
-          drift_nudge_count++;
-          if (drift_nudge_count % SAVE_EVERY_N_NUDGES == 0) {
-            std::error_code save_ec;
-            if (!espp::OmegaCalibration::save(center, range, calibration_path, save_ec)) {
-              printf("WARNING: Failed to persist drift-corrected calibration: %s\n",
-                     save_ec.message().c_str());
-            }
-          }
-        }
-
-        auto report = mouse.get_report();
-        std::error_code hid_ec;
-        if (!usb.write_hid_report(0, report, hid_ec)) {
-          printf("HID send failed: %s\n", hid_ec.message().c_str());
-        }
-
-        mouse.reset_movement();
-        std::this_thread::sleep_for(10ms);
+        prev_x = jx;
+        prev_y = jy;
+        start = end;
       }
+
+      // --- Per-report mouse update: runs every 10ms iteration ---
+      mouse.reset_movement();
+      mouse.set_button(1, current_nudge == NudgeDirection::FORWARD);
+      mouse.set_button(2, current_nudge == NudgeDirection::RIGHT);
+
+      switch (current_nudge) {
+      case NudgeDirection::NONE:
+        mouse.set_movement(jx * SENSITIVITY, jy * SENSITIVITY);
+        break;
+      case NudgeDirection::LEFT:
+        scroll_poll_count++;
+        if (scroll_poll_count % SCROLL_POLL_DIVIDER == 0)
+          mouse.set_wheel(SCROLL_STEP);
+        break;
+      case NudgeDirection::BACK:
+        scroll_poll_count++;
+        if (scroll_poll_count % SCROLL_POLL_DIVIDER == 0)
+          mouse.set_wheel(-SCROLL_STEP);
+        break;
+      case NudgeDirection::FORWARD:
+      case NudgeDirection::RIGHT:
+        break;
+      }
+
+      if (drift_compensator.update(raw_x, raw_y, cur_mag, center)) {
+        espp::OmegaCalibration::apply_calibration(js, center, range);
+        drift_nudge_count++;
+        if (drift_nudge_count % SAVE_EVERY_N_NUDGES == 0) {
+          std::error_code save_ec;
+          if (!espp::OmegaCalibration::save(center, range, calibration_path, save_ec)) {
+            printf("WARNING: Failed to persist drift-corrected calibration: %s\n",
+                   save_ec.message().c_str());
+          }
+        }
+      }
+
+      auto report = mouse.get_report();
+      std::error_code hid_ec;
+      if (!usb.write_hid_report(0, report, hid_ec)) {
+        printf("HID send failed: %s\n", hid_ec.message().c_str());
+      }
+
+      mouse.reset_movement();
+      std::this_thread::sleep_for(10ms);
     }
   } else {
     using XacInput = espp::XacGamepadInputReport;
