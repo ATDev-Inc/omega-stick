@@ -383,18 +383,16 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     NudgeDirection current_nudge = NudgeDirection::NONE;
     int scroll_poll_count = 0;
 
-    float jx;
-    float jy;
     auto start = std::chrono::high_resolution_clock::now();
     js.update();
-    float prev_x = js.x(); // before loop so can begin with prev_x and prev_y values for comparison
+    float prev_x = js.x();
     float prev_y = js.y();
     while (true) {
       js.update();
       float raw_x = js.raw().x();
       float raw_y = js.raw().y();
-      jx = js.x();
-      jy = js.y();
+      float jx = js.x();
+      float jy = js.y();
 
       auto end = std::chrono::high_resolution_clock::now();
       auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
