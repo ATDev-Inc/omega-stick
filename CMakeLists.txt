@@ -16,7 +16,7 @@ set(
   COMPONENTS
   # Components pulled from the registry via `idf.py add-dependency` do not need
   # to be listed here; see main/idf_component.yml.
-  "main esptool_py freertos tmag5273 usb_device logger i2c base_component"
+  "main esptool_py freertos tmag5273 usb_device logger i2c base_component hid-rp-mouse tinyusb qtpy hid-rp omega_calibration file_system joystick xac"
   CACHE STRING
   "List of components to include"
   )

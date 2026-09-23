@@ -1,6 +1,6 @@
 dependencies:
   espp/base_component:
-    component_hash: 5651445974f90d0686116afaec12615f1552632713cbc194bb984062799c3350
+    component_hash: b9c063f8de5a274a2b02a02410c77ab598b5a8750dc3e02de70055477867552d
     dependencies:
     - name: espp/logger
       registry_url: https://components.espressif.com
@@ -12,9 +12,9 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.2.0
+    version: 1.3.4
   espp/base_peripheral:
-    component_hash: 16772a02f5cd2f5521c0a1c2fe2724c57076ac12d42f843dc9ffdc501601affa
+    component_hash: 8e9dfb6887d307183c1b786f794ebcd1fc39a9fda9259c14e1cfc5e5f5969838
     dependencies:
     - name: espp/base_component
       registry_url: https://components.espressif.com
@@ -26,9 +26,9 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.2.0
+    version: 1.3.3
   espp/cli:
-    component_hash: 495bd10e340b1be69889cad02b7ad5113fac403b6afd14ed35b41d8fea78a3d7
+    component_hash: bd9edf39ebbc2e49510bb34be24a88c3d3a78eac9816d793e3205cdd9170dc3f
     dependencies:
     - name: espp/logger
       registry_url: https://components.espressif.com
@@ -40,9 +40,9 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 1.2.0
+    version: 1.3.4
   espp/color:
-    component_hash: 12a78f98d49ac6780767454717d21f51f5674e754eab2b2c62c15c6ac17c45b6
+    component_hash: 998513eebb2869fdc643cff4e28d85cb095d36256710f2548ba58d0fc5324e20
     dependencies:
     - name: espp/format
       registry_url: https://components.espressif.com
@@ -54,9 +54,27 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 1.2.0
+    version: 1.3.4
+  espp/file_system:
+    component_hash: 4fbf3ad1ba756961dc022c3db6befd066521ef4d84f068a5f8a552c939c2ad85
+    dependencies:
+    - name: espp/base_component
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=1.0'
+    - name: idf
+      require: private
+      version: '>=5.0'
+    - name: joltwallet/littlefs
+      registry_url: https://components.espressif.com
+      require: private
+      version: 1.20.1
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.3.4
   espp/format:
-    component_hash: 6fac1268bda6124e276943c8c85d406b8142b99ffcfab2025d313119315004a8
+    component_hash: ee995a48956bb87925393e3b938e1d7dd7cfeb5c3a3c3b1cf05165013b55717c
     dependencies:
     - name: idf
       require: private
@@ -64,9 +82,9 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 1.2.0
+    version: 1.3.4
   espp/hid-rp:
-    component_hash: 9f35ea28bf22cb2c52a201e4ca5ec432771e3e14917f3788d21c9ebc97861b84
+    component_hash: 37157f1e35663bdc3076ae2b8f7fc45a066e0ed8560e001cda4af1414f142730
     dependencies:
     - name: espp/format
       registry_url: https://components.espressif.com
@@ -78,9 +96,9 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.2.0
+    version: 1.3.3
   espp/i2c:
-    component_hash: ba2a26a1003e4f65be7ff2576c155f23458d2a53a6a2330bcd5564346abd3724
+    component_hash: 4657ebbe26b4b966cae9eef3c3eec36e19cbb39b9aa1efb2a82175c0e653f5f2
     dependencies:
     - name: espp/base_component
       registry_url: https://components.espressif.com
@@ -100,9 +118,9 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.2.0
+    version: 1.3.4
   espp/interrupt:
-    component_hash: faeaeb17cd9927de42d7986e15d63498667dfb30501e5347481fceecb6ea79d5
+    component_hash: 6b38b7deccc64ecf9560083b5cf0ab0da4a294c69c8e5784708214db01f1890a
     dependencies:
     - name: espp/base_component
       registry_url: https://components.espressif.com
@@ -118,9 +136,9 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 1.2.0
+    version: 1.3.4
   espp/joystick:
-    component_hash: 35e861a54e4c1e83e2953eb34f91a8003a6c6f5b4fdca3039379bbe291a3aa9d
+    component_hash: 9410a68d58de6ac4ccdb7a121bb998e7294abdef5d0c8446ee8f61f15bd11cef
     dependencies:
     - name: espp/base_component
       registry_url: https://components.espressif.com
@@ -136,9 +154,9 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.2.0
+    version: 1.3.3
   espp/logger:
-    component_hash: 061e900870fecd8e9ce74f47dbc0fed541a993eed9e4d7d7835d4d6506ba1d23
+    component_hash: 4017d7febfaba258e51195243ec73d6592d35e331aa2cfdfa5c6d596af4e9e43
     dependencies:
     - name: espp/format
       registry_url: https://components.espressif.com
@@ -150,9 +168,9 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 1.2.0
+    version: 1.3.4
   espp/math:
-    component_hash: 34da2b7150e5b89baa0c1757afc9bd2d0d6f8ad09a1c62196386e7fc039fc6a0
+    component_hash: 88f1c60c87a09b04a244f42c4f3e16eddf30365cf1d1d5fcd4f0deb0fd5c02ab
     dependencies:
     - name: espp/format
       registry_url: https://components.espressif.com
@@ -164,9 +182,9 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.2.0
+    version: 1.3.4
   espp/neopixel:
-    component_hash: 97f60c63dddae97221c5e18435d66d2b87f685dc3927d9859055b96c3e619287
+    component_hash: 17885047a1a55ce6743e0787ae9d2807a16029fcadf43ee0745c22cfa0641e27
     dependencies:
     - name: espp/base_component
       registry_url: https://components.espressif.com
@@ -186,9 +204,9 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 1.2.0
+    version: 1.3.4
   espp/qtpy:
-    component_hash: eedcb54edd7241d4704f19a00d984505f34e28896f75075302f01e41cb99421c
+    component_hash: b43a656deda138ca3b563a2ed80f4628f9697696b36f1c4a52008156a1105790
     dependencies:
     - name: espp/base_component
       registry_url: https://components.espressif.com
@@ -219,9 +237,9 @@ dependencies:
     targets:
     - esp32
     - esp32s3
-    version: 1.2.0
+    version: 1.3.3
   espp/rmt:
-    component_hash: 425e2d82e81ab70a94ea34412494861b3325038c127ed8a24bccc90ae52036d6
+    component_hash: 11ded634a44867c4329737ffae725c8802447ab40fc05fa85134adf84a2bc0a3
     dependencies:
     - name: espp/base_component
       registry_url: https://components.espressif.com
@@ -233,9 +251,9 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 1.2.0
+    version: 1.3.4
   espp/task:
-    component_hash: 9de5b542f07568a6dbd17daf85f8f8b1927dc366a9912b07a1c0cec40e74cb83
+    component_hash: fea175a9fa16dd6ed0ce7aa166b79da9b956804ea3092e4ebe3d6a85f39fdc30
     dependencies:
     - name: espp/base_component
       registry_url: https://components.espressif.com
@@ -247,9 +265,9 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.2.0
+    version: 1.3.4
   espp/timer:
-    component_hash: 82e149279b7ca2793b0ac10a9d50f28bd1f721bced011ad787d21809717a1425
+    component_hash: e3465901724121df8a936c0dcf051f9777bd511b62f0c6d1b08b6a3e0c208c02
     dependencies:
     - name: espp/task
       registry_url: https://components.espressif.com
@@ -261,9 +279,9 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.2.0
+    version: 1.3.3
   espp/usb_device:
-    component_hash: 7b79a0f6b9efaf1baaef12bb8dbd180308cf1f723e6aa54fae2d417a25d8812e
+    component_hash: ed7c7d42037721af1d992d94239a219e9babc51ca8431dfa2aab8d603630b380
     dependencies:
     - name: espp/base_component
       registry_url: https://components.espressif.com
@@ -276,10 +294,14 @@ dependencies:
     - name: idf
       require: private
       version: '>=5.0'
+    - name: espressif/tinyusb
+      registry_url: https://components.espressif.com
+      require: public
+      version: '>=0.21.0'
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.2.0
+    version: 1.3.3
   espressif/esp_tinyusb:
     component_hash: 9a73a76a6bc17907f6e523342ff6b1e440023e8aac2c11f4691212106ec24e66
     dependencies:
@@ -320,9 +342,20 @@ dependencies:
     source:
       type: idf
     version: 6.0.2
+  joltwallet/littlefs:
+    component_hash: 8e12955f47e27e6070b76715a96d6c75fc2b44f069e8c33679332d9bdd3120c4
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.20.1
 direct_dependencies:
 - espp/base_component
 - espp/base_peripheral
+- espp/file_system
 - espp/hid-rp
 - espp/i2c
 - espp/joystick
@@ -333,6 +366,6 @@ direct_dependencies:
 - espp/usb_device
 - espressif/tinyusb
 - idf
-manifest_hash: dce6fa9dccd49636f31943e591fba603a27a4356377aad44c6767500b55ded89
+manifest_hash: 69f3a0e2298f59563ce165e3449e39ef9a5d1d46327af92aaaf3151ef3ab0bbd
 target: esp32s3
 version: 3.0.0

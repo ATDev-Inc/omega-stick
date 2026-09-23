@@ -177,9 +177,9 @@ public:
 
     MagneticChannels channels{MagneticChannels::XYZ};
 
-    MagneticRange xy_range{MagneticRange::LOW};
+    MagneticRange xy_range{MagneticRange::HIGH};
 
-    MagneticRange z_range{MagneticRange::LOW};
+    MagneticRange z_range{MagneticRange::HIGH};
 
     OperatingMode operating_mode{OperatingMode::CONTINUOUS};
 
@@ -293,16 +293,17 @@ public:
 
   bool set_operating_mode(OperatingMode mode, std::error_code &ec) {
 
-    uint8_t reg = read_u8_from_register(DEVICE_CONFIG_1, ec);
+    uint8_t reg = read_u8_from_register(DEVICE_CONFIG_2, ec);
 
     if (ec) {
       return false;
     }
 
+    // OPERATING_MODE = bits 1:0
     reg &= 0xFC;
     reg |= static_cast<uint8_t>(mode) & 0x03;
 
-    write_u8_to_register(DEVICE_CONFIG_1, reg, ec);
+    write_u8_to_register(DEVICE_CONFIG_2, reg, ec);
 
     if (!ec) {
       operating_mode_ = mode;
@@ -313,7 +314,7 @@ public:
 
   OperatingMode operating_mode(std::error_code &ec) const {
 
-    const uint8_t reg = read_u8_from_register(DEVICE_CONFIG_1, ec);
+    const uint8_t reg = read_u8_from_register(DEVICE_CONFIG_2, ec);
 
     if (ec) {
       return OperatingMode::STANDBY;
@@ -334,9 +335,9 @@ public:
       return false;
     }
 
-    // MAG_CH bits.
-    reg &= 0xF0;
-    reg |= static_cast<uint8_t>(channels) & 0x0F;
+    // MAG_CH_EN = bits 7:4
+    reg &= 0x0F;
+    reg |= (static_cast<uint8_t>(channels) & 0x0F) << 4;
 
     write_u8_to_register(SENSOR_CONFIG_1, reg, ec);
 
@@ -355,7 +356,7 @@ public:
       return MagneticChannels::OFF;
     }
 
-    return static_cast<MagneticChannels>(reg & 0x0F);
+    return static_cast<MagneticChannels>((reg >> 4) & 0x0F);
   }
 
   // ==========================================================================
@@ -370,12 +371,9 @@ public:
       return false;
     }
 
-    /*
-     * XY_RANGE occupies the appropriate range-selection bits.
-     * Preserve all unrelated bits.
-     */
-    reg &= ~(0x01 << 3);
-    reg |= (static_cast<uint8_t>(range) & 0x01) << 3;
+    // X_Y_RANGE = bit 0
+    reg &= ~(1U << 0);
+    reg |= (static_cast<uint8_t>(range) & 0x01) << 0;
 
     write_u8_to_register(SENSOR_CONFIG_2, reg, ec);
 
@@ -386,17 +384,6 @@ public:
     return !ec;
   }
 
-  MagneticRange xy_range(std::error_code &ec) const {
-
-    const uint8_t reg = read_u8_from_register(SENSOR_CONFIG_2, ec);
-
-    if (ec) {
-      return MagneticRange::LOW;
-    }
-
-    return static_cast<MagneticRange>((reg >> 3) & 0x01);
-  }
-
   bool set_z_range(MagneticRange range, std::error_code &ec) {
 
     uint8_t reg = read_u8_from_register(SENSOR_CONFIG_2, ec);
@@ -405,8 +392,9 @@ public:
       return false;
     }
 
-    reg &= ~(0x01 << 4);
-    reg |= (static_cast<uint8_t>(range) & 0x01) << 4;
+    // Z_RANGE = bit 1
+    reg &= ~(1U << 1);
+    reg |= (static_cast<uint8_t>(range) & 0x01) << 1;
 
     write_u8_to_register(SENSOR_CONFIG_2, reg, ec);
 
@@ -416,16 +404,25 @@ public:
 
     return !ec;
   }
+  MagneticRange xy_range(std::error_code &ec) const {
 
+    const uint8_t reg = read_u8_from_register(SENSOR_CONFIG_2, ec);
+
+    if (ec) {
+      return MagneticRange::HIGH;
+    }
+
+    return static_cast<MagneticRange>((reg >> 0) & 0x01);
+  }
   MagneticRange z_range(std::error_code &ec) const {
 
     const uint8_t reg = read_u8_from_register(SENSOR_CONFIG_2, ec);
 
     if (ec) {
-      return MagneticRange::LOW;
+      return MagneticRange::HIGH;
     }
 
-    return static_cast<MagneticRange>((reg >> 4) & 0x01);
+    return static_cast<MagneticRange>((reg >> 1) & 0x01);
   }
 
   // ==========================================================================
@@ -478,10 +475,11 @@ public:
       return false;
     }
 
+    // LP_LN = bit 4
     if (enabled) {
-      reg |= 0x01;
+      reg |= (1U << 4);
     } else {
-      reg &= ~0x01;
+      reg &= ~(1U << 4);
     }
 
     write_u8_to_register(DEVICE_CONFIG_2, reg, ec);
@@ -501,7 +499,7 @@ public:
       return false;
     }
 
-    return (reg & 0x01) != 0;
+    return (reg & (1U << 4)) != 0;
   }
 
   // ==========================================================================
@@ -672,8 +670,9 @@ public:
       return false;
     }
 
-    reg &= ~(0x03 << 6);
-    reg |= (static_cast<uint8_t>(conversion) & 0x03) << 6;
+    // ANGLE_EN = bits 3:2
+    reg &= ~(0x03 << 2);
+    reg |= (static_cast<uint8_t>(conversion) & 0x03) << 2;
 
     write_u8_to_register(SENSOR_CONFIG_2, reg, ec);
 
@@ -683,7 +682,6 @@ public:
 
     return !ec;
   }
-
   AngleConversion angle_conversion(std::error_code &ec) const {
 
     const uint8_t reg = read_u8_from_register(SENSOR_CONFIG_2, ec);
@@ -745,30 +743,12 @@ private:
 
   float convert_raw_to_mT(int16_t raw, MagneticRange range) const {
 
-    /*
-     * TMAG5273 provides a signed 16-bit magnetic result.
-     *
-     * The full-scale range corresponds to approximately
-     * 32768 counts in the positive direction.
-     */
-    const float full_scale = range == MagneticRange::LOW ? range_xy_mT() : range_xy_mT() * 2.0f;
+    const float full_scale = range == MagneticRange::LOW ? 0.1330f : 0.2660f;
 
-    return static_cast<float>(raw) * full_scale / 32768.0f;
+    return static_cast<float>(raw) / 32768.0f * full_scale * 1000.0f;
   }
 
-  float range_xy_mT() const {
-
-    /*
-     * A1 device:
-     *   LOW  = ±40 mT
-     *   HIGH = ±80 mT
-     *
-     * If using A2, these values need to be changed to:
-     *   LOW  = ±133 mT
-     *   HIGH = ±266 mT
-     */
-    return 266.0f;
-  }
+  float range_xy_mT() const { return 266.0f; }
 
   float range_z_mT() const { return 266.0f; }
 
