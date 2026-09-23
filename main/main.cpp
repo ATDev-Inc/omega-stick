@@ -64,8 +64,10 @@ static constexpr bool INVERT_NUDGE_Y = false;
 static constexpr float NUDGE_ENTER_THRESHOLD = 0.5f;
 
 // Normalized magnitude the stick must fall back below before a held nudge is
-// released. Deliberately lower than NUDGE_ENTER_THRESHOLD as this is in
-// absolute position, not a delta. Tested already with both held and temp nudges.
+// released. This is an absolute position, not a delta like
+// NUDGE_ENTER_THRESHOLD, so the two aren't directly comparable: a nudge starts
+// on a fast flick and stays held while the stick is past this deflection.
+// Tested with both held and temp nudges.
 static constexpr float NUDGE_EXIT_THRESHOLD = 0.8f;
 static constexpr int NUDGE_TIME = 100;
 // The polling loop below runs every 10ms. Emitting a wheel tick on every
@@ -165,8 +167,15 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   }
 
   printf("TMAG5273 initialized successfully!\n\n");
-  std::this_thread::sleep_for(
-      15s); // for flashing purposes in case want to upload new code in this time
+
+#if CONFIG_OMEGA_STICK_BOOT_FLASH_WINDOW_S > 0
+  // Development aid, off by default: until TinyUSB takes over the USB port,
+  // the chip's USB Serial/JTAG can still reset it into the bootloader, so
+  // `idf.py flash` works without holding BOOT. See main/Kconfig.projbuild.
+  printf("Waiting %d s for flashing...\n", CONFIG_OMEGA_STICK_BOOT_FLASH_WINDOW_S);
+  std::this_thread::sleep_for(std::chrono::seconds(CONFIG_OMEGA_STICK_BOOT_FLASH_WINDOW_S));
+#endif
+
   // ==========================================================================
   // Calibration
   // ==========================================================================
