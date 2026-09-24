@@ -1,0 +1,17 @@
+menu "Omega Stick Configuration"
+
+config OMEGA_STICK_BOOT_FLASH_WINDOW_S
+    int "Seconds to wait at boot before starting USB"
+    default 0
+    range 0 60
+    help
+      Development aid. Until the firmware starts TinyUSB, the ESP32-S3's
+      built-in USB Serial/JTAG still owns the USB port, so `idf.py flash`
+      can reset the board into the bootloader without holding BOOT.
+
+      Set this in menuconfig to open that window on every boot. Your local
+      sdkconfig is gitignored, so the setting stays on your machine. Leave it
+      at 0 for anything users run: they would wait this long before the stick
+      responds.
+
+endmenu

@@ -38,3 +38,6 @@ managed_components/
 # Python bytecode, from the build scripts in assets/logo
 __pycache__/
 *.pyc
+
+# Editor settings are per-machine (COM ports, local toolchain paths)
+.vscode/
