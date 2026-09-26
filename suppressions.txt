@@ -5,6 +5,7 @@ unusedFunction
 unusedStructMember
 functionStatic
 cstyleCast
+useStlAlgorithm
 
 // Specific suppressions of the form:
 //   [error id]:[filename]:[line]

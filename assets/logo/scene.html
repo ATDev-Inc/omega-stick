@@ -1,0 +1,696 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Omega Stick scene</title>
+<style>
+/* ===========================================================================
+   Omega Stick scene, drawn in HTML and CSS. No images, no JavaScript, no font.
+
+   THE MARK is constructed, not traced. The outer contour is a single ellipse
+   (rx 492, ry 431); the counter is an egg -- two half-ellipses sharing rx 271,
+   the lower one with a longer radius so it hangs below its own waist; the feet
+   are axis-aligned slabs with a stepped notch, and the counter runs out between
+   them, which is what makes the whole outline one closed curve with no hole.
+   Symmetric about x = 500 by construction.
+
+   THE FLOOR is one 3D-transformed plane. Its background carries the colour and
+   its mask carries the lines, which buys three things: the plane is drawn once
+   instead of once per colour, the lines are lit by a gradient rather than a
+   flat fill, and the optional drift is a mask offset in plane space -- so the
+   grid moves through the perspective correctly instead of sliding across the
+   screen. The drift is off by default; see the note above data-motion="calm".
+
+   Copy .omega-scene and its subtree into a page, or iframe this file.
+
+     data-bg="dark"          navy backdrop (default)
+     data-bg="transparent"   no backdrop, for compositing over your own art
+     data-motion="calm"      still grid, rest of the scene alive (default)
+     data-motion="on"        add the grid drift back
+     data-motion="off"       freeze everything (also frozen by reduced-motion)
+     data-intro="off"        skip the power-on; keep the idle breathe and twinkle
+     data-stars="off"        drop the starfield, back to flat negative space
+     data-crt="on"           scanlines and film grain over the whole frame
+
+   The power-on runs for 3.2s and settles. Screenshot after that, or set
+   data-intro="off" for a deterministic still.
+
+   Dials worth turning, all custom properties on .omega-scene:
+     --cell-x / --cell-z     grid pitch; larger = sparser
+     --lw-x / --lw-z         line weight (--lw-z is plane-space, so 2x --lw-x)
+     --soft-z                width of the shoulder on each depth line; the
+                             note on it explains what that buys
+     --drift                 seconds per cell once data-motion="on"; only has
+                             any effect when the drift is switched on
+     --span / --depth        how far the floor reaches; both must stay whole
+                             multiples of their cell or the mask tiles seam
+     --tilt / --persp        camera; keep --persp = --horizon * tan(--tilt)
+     --mark-w / --base       how big the mark is and where it stands
+     --fade                  must track --depth; see the note on it below
+
+   Scene geometry, as percentages of the (square) scene box:
+
+     horizon    38 up from the bottom edge -- the plane's vanishing line
+     floor      tilted 60deg, seen from 65.8 back: horizon = persp / tan(tilt)
+     grid       reaches 32.4 up, i.e. 85.3% of the way to the horizon. It is
+                gone by 31.5 so the cut edge never shows, and only reaches full
+                strength at 20.9, below which its lines are still a pixel wide
+     mark       38.4 wide, standing at 31.5 up, so its feet overlap the grid's
+                far edge rather than floating above it
+
+   scene.svg is the still twin of this file and is generated from these same
+   numbers by build-scene.py. If you retune the camera, the framing or the
+   palette here, rerun that script or the two will drift apart.
+   =========================================================================== */
+
+.omega-scene {
+  /* palette, from assets/logo/README.md */
+  --pink:    #FF12E8;
+  --magenta: #C022FF;
+  --violet:  #7A3BFF;
+  --azure:   #2A8CFF;
+  --cyan:    #25D8F2;
+  --ink:     #0B0A2E;
+
+  /* camera */
+  --tilt:    60deg;
+  --horizon: 38cqh;    /* the vanishing line, measured up from the bottom */
+  --persp:   65.8cqh;  /* eye distance; = --horizon * tan(--tilt) */
+  --base:    31.5cqh;  /* where the mark's feet meet the floor */
+
+  /* floor */
+  --cell-x:  12cqw;    /* vertical-line pitch at the near edge */
+  --cell-z:  26cqh;    /* depth pitch, in plane space */
+  --span:    480cqw;   /* 40 cells wide */
+  --depth:   442cqh;   /* 17 cells deep */
+  --lw-x:    0.22cqw;
+  --lw-z:    0.44cqw;  /* plane-space, so it lands at 0.22 once foreshortened */
+  /* Shoulder either side of that core, also plane-space. Foreshortening squares
+     the line weight -- a depth line lands at --lw-z * cos(tilt) * (1 - u)^2 --
+     so past u = 0.33 the lines are thinner than a pixel, and a hard-edged line
+     that thin changes coverage in jumps as it drifts. That is the flicker. The
+     shoulders give the rasteriser a ramp to sample instead of a step. */
+  --soft-z:  0.44cqw;
+  /* Where the plane's far edge sits, as a fraction of the floor box measured
+     down from its top: 1 - (depth*sin(tilt)) / (persp + depth*sin(tilt)), so
+     14.7% at this --depth. The fade must start at least that early or the far
+     edge shows as a hard cut; a little earlier still, as here, also clears the
+     band where the cells fall under a pixel and moire out into dots. */
+  --fade:    17%;
+
+  /* mark */
+  --mark-w:  38.4cqw;
+
+  /* motion */
+  --drift:   9s;
+  --breathe: 7.5s;
+
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  container-type: size;
+  overflow: hidden;
+  isolation: isolate;
+  background: var(--ink);
+}
+
+.omega-scene[data-bg="transparent"] { background: none; }
+.omega-scene[data-bg="transparent"] .omega-scene__sky,
+.omega-scene[data-bg="transparent"] .omega-scene__stars,
+.omega-scene[data-bg="transparent"] .omega-scene__vignette { display: none; }
+
+/* --- sky ----------------------------------------------------------------- */
+
+/* Near-black overhead, pooling to indigo and then violet as it comes down to
+   the horizon. The two radials are anchored off --horizon rather than off the
+   box, so retuning the camera drags the light with it. */
+.omega-scene__sky {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(72cqw 24cqh at 50% calc(100% - var(--horizon)),
+                    rgba(196, 62, 255, .30), transparent 72%),
+    radial-gradient(132cqw 56cqh at 50% calc(100% - var(--horizon) + 12cqh),
+                    rgba(78, 28, 210, .40), transparent 74%),
+    linear-gradient(#0A0730 0%, #0C0638 44%, #14084C 78%, #1B0A5E 100%);
+}
+
+/* Four tiled one-star gradients per layer, at sizes with no common factor, so
+   ~40 stars land in what reads as no pattern. Masked away before the horizon,
+   where the sky glow would swallow them anyway. */
+.omega-scene__stars {
+  position: absolute;
+  inset: 0;
+  -webkit-mask-image: linear-gradient(#000 6%, rgba(0, 0, 0, .5) 50%, transparent 76%);
+          mask-image: linear-gradient(#000 6%, rgba(0, 0, 0, .5) 50%, transparent 76%);
+}
+
+.omega-scene[data-stars="off"] .omega-scene__stars { display: none; }
+
+.omega-scene__stars::before,
+.omega-scene__stars::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+.omega-scene__stars::before {
+  background-image:
+    radial-gradient(circle .9px at 17% 24%, #fff 0 38%, rgba(255,255,255,.2) 70%, transparent),
+    radial-gradient(circle .7px at 68% 71%, #CFE8FF 0 38%, rgba(207,232,255,.2) 70%, transparent),
+    radial-gradient(circle 1.1px at 42% 12%, #fff 0 34%, rgba(255,255,255,.22) 68%, transparent),
+    radial-gradient(circle .6px at 88% 39%, #FFD9FF 0 40%, rgba(255,217,255,.2) 72%, transparent);
+  background-size: 41% 53%, 59% 37%, 47% 61%, 67% 43%;
+  animation: omega-twinkle 6.5s ease-in-out infinite alternate;
+}
+
+.omega-scene__stars::after {
+  background-image:
+    radial-gradient(circle .8px at 79% 18%, #fff 0 38%, rgba(255,255,255,.2) 70%, transparent),
+    radial-gradient(circle .6px at 23% 63%, #A8DFFF 0 38%, rgba(168,223,255,.2) 70%, transparent),
+    radial-gradient(circle 1px at 55% 84%, #fff 0 34%, rgba(255,255,255,.22) 68%, transparent),
+    radial-gradient(circle .7px at 11% 31%, #FFC8F5 0 40%, rgba(255,200,245,.2) 72%, transparent);
+  background-size: 73% 47%, 37% 67%, 61% 41%, 53% 71%;
+  animation: omega-twinkle 8.5s -3.2s ease-in-out infinite alternate;
+}
+
+@keyframes omega-twinkle {
+  from { opacity: .55 }
+  to   { opacity: 1 }
+}
+
+/* The mark's own light on the air behind it. It sits under the floor so it
+   never veils the grid -- light spilling forward onto the floor is the job of
+   .omega-scene__spill, which is a separate, flatter pool. */
+.omega-scene__aura {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--base) - 3cqh);
+  width: 88cqw;
+  height: 64cqh;
+  translate: -50% 0;
+  /* Ramped all the way to zero alpha at 100%, i.e. at the inscribed ellipse,
+     so there is no stop where the falloff changes slope. Cutting it off early
+     with `transparent 70%` leaves a circle you can see against the flat sky. */
+  background: radial-gradient(50% 50% at 50% 50%,
+    rgba(200, 80, 255, .30)   0%,
+    rgba(178, 66, 250, .20)  26%,
+    rgba(140, 50, 238, .10)  48%,
+    rgba(112, 40, 222, .035) 72%,
+    rgba(96, 34, 210, 0)    100%);
+  filter: blur(4cqmin);
+}
+
+/* --- reflection ---------------------------------------------------------- */
+
+/* Mirrored about the baseline and squashed to 0.55, so it lies down in the
+   same perspective as the grid rather than standing up behind it.
+
+   It is a separate element, ahead of the floor, rather than a layer inside the
+   mark: drawn over the grid it dims every line it covers and reads as a smudge
+   instead of light. Behind, it fills the dark between the lines and nothing
+   else. Its own viewBox starts at the baseline (y = 936) so the fade mask has
+   a box to measure against -- masking this from inside the mark's viewBox puts
+   the mirrored copy outside the mask's origin box, where the gradient tiles
+   and starts over at full black instead of fading out. */
+.omega-scene__reflect {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--base) - var(--mark-w) * 0.46);
+  width: var(--mark-w);
+  translate: -50% 0;
+  filter: blur(.8cqmin);
+  -webkit-mask-image: linear-gradient(#000, transparent 62%);
+          mask-image: linear-gradient(#000, transparent 62%);
+}
+
+/* --- floor --------------------------------------------------------------- */
+
+/* The mask does two jobs. It hides the plane's far edge, and it holds the grid
+   at full strength only over the stretch where a depth line is still at least a
+   pixel wide -- u < 0.61 with the shouldered profile, i.e. the lower 44% of the
+   floor box -- ramping it down over everything beyond that. Lines thinner than
+   a pixel cannot drift without their coverage stepping, so the fix is to stop
+   showing them at full contrast. It reads as distance haze, which the far grid
+   wants anyway. */
+.omega-scene__floor {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: var(--horizon);
+  overflow: hidden;
+  filter:
+    blur(.055cqmin)
+    drop-shadow(0 0 .4cqmin rgba(210, 96, 255, .55))
+    drop-shadow(0 0 1.6cqmin rgba(124, 60, 236, .34));
+  -webkit-mask-image: linear-gradient(transparent var(--fade),
+      rgba(0, 0, 0, .25) calc(var(--fade) +  8%),
+      rgba(0, 0, 0, .70) calc(var(--fade) + 17%),
+      #000               calc(var(--fade) + 28%));
+          mask-image: linear-gradient(transparent var(--fade),
+      rgba(0, 0, 0, .25) calc(var(--fade) +  8%),
+      rgba(0, 0, 0, .70) calc(var(--fade) + 17%),
+      #000               calc(var(--fade) + 28%));
+}
+
+/* The colour lives in the background and the lines live in the mask.
+   Stop positions are pre-distorted. A plane-space fraction p projects to a
+   fraction u of the horizon height where u = 382.8p / (65.8 + 382.8p), so an
+   evenly spaced gradient here would pile every stop against the horizon. These
+   stops are the inverse of that map, sampled off the brand ramp: cyan at the
+   near edge, azure at u = 0.2, violet at u = 0.4, magenta at u = 0.8, and the
+   far edge landing at u = 0.853. Re-solve them if --depth changes. */
+.omega-scene__plane {
+  position: absolute;
+  bottom: 0;
+  left: calc((100cqw - var(--span)) / 2);
+  width: var(--span);
+  height: var(--depth);
+  transform-origin: 50% 100%;
+  transform: perspective(var(--persp)) rotateX(var(--tilt));
+  background-image: linear-gradient(
+    #D81CF6 0%,
+    #D21DF8 16.1%,
+    #CB1FFB 31.2%,
+    #9531FF 74.2%,
+    #5B5AFF 88.5%,
+    #2999FD 95.7%,
+    #25D8F2 100%);
+  -webkit-mask-image:
+    repeating-linear-gradient(to right,  #000 0 var(--lw-x), transparent var(--lw-x) var(--cell-x)),
+    repeating-linear-gradient(to bottom,
+      transparent 0,
+      #000 var(--soft-z),
+      #000 calc(var(--soft-z) + var(--lw-z)),
+      transparent calc(var(--soft-z) * 2 + var(--lw-z)),
+      transparent var(--cell-z));
+          mask-image:
+    repeating-linear-gradient(to right,  #000 0 var(--lw-x), transparent var(--lw-x) var(--cell-x)),
+    repeating-linear-gradient(to bottom,
+      transparent 0,
+      #000 var(--soft-z),
+      #000 calc(var(--soft-z) + var(--lw-z)),
+      transparent calc(var(--soft-z) * 2 + var(--lw-z)),
+      transparent var(--cell-z));
+  /* Back half a line on each axis, so a vertical sits dead centre and a depth
+     line sits on the near edge. Both spans divide exactly by their cell, so the
+     tiles wrap without a seam. */
+  -webkit-mask-position: calc(var(--lw-x) / -2) 0, 0 calc(0cqh - var(--soft-z) - var(--lw-z) / 2);
+          mask-position: calc(var(--lw-x) / -2) 0, 0 calc(0cqh - var(--soft-z) - var(--lw-z) / 2);
+  animation: omega-drift var(--drift) linear infinite;
+}
+
+/* Offsetting the mask in plane space, not screen space, is what makes the
+   lines accelerate as they come at you. */
+@keyframes omega-drift {
+  from { -webkit-mask-position: calc(var(--lw-x) / -2) 0, 0 calc(0cqh - var(--soft-z) - var(--lw-z) / 2);
+                 mask-position: calc(var(--lw-x) / -2) 0, 0 calc(0cqh - var(--soft-z) - var(--lw-z) / 2); }
+  to   { -webkit-mask-position: calc(var(--lw-x) / -2) 0, 0 calc(var(--cell-z) - var(--soft-z) - var(--lw-z) / 2);
+                 mask-position: calc(var(--lw-x) / -2) 0, 0 calc(var(--cell-z) - var(--soft-z) - var(--lw-z) / 2); }
+}
+
+/* Haze along the grid's far edge, where the depth lines compress past the
+   point of resolving. It is the same magenta the plane's gradient ends on, so
+   the lines dissolve into it rather than stopping. */
+.omega-scene__horizon {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--base) - 5cqh);
+  height: 10cqh;
+  background:
+    radial-gradient(26cqw 58% at 50% 50%, rgba(255, 172, 255, .98), transparent 76%),
+    radial-gradient(62cqw 100% at 50% 50%, rgba(255, 30, 236, .74), transparent 76%),
+    radial-gradient(126cqw 82% at 50% 50%, rgba(172, 60, 255, .52), transparent 80%);
+  filter: blur(1.2cqmin);
+}
+
+/* --- mark ---------------------------------------------------------------- */
+
+/* Light pooling on the floor where the feet stand. */
+.omega-scene__spill {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--base) - 4cqh);
+  width: 56cqw;
+  height: 9cqh;
+  translate: -50% 0;
+  background: radial-gradient(50% 50% at 50% 44%, rgba(232, 118, 255, .62), transparent 66%);
+  filter: blur(1.4cqmin);
+}
+
+.omega-scene__mark {
+  position: absolute;
+  left: 50%;
+  bottom: var(--base);
+  width: var(--mark-w);
+  translate: -50% 0;
+  overflow: visible;
+}
+
+/* Three copies of the same gradient at widening blur radii. Blurring the fill
+   rather than stacking drop-shadows is what keeps the halo pink on the left
+   and cyan on the right instead of one flat colour. */
+.omega-scene__bloom { filter: blur(5.5cqmin); opacity: .5 }
+.omega-scene__glow  { filter: blur(1.9cqmin); opacity: .95 }
+
+.omega-scene__body {
+  filter: drop-shadow(0 0 2.6cqmin rgba(190, 74, 255, .58));
+}
+
+/* The tube highlight. A fat white stroke on the same outline, clipped to the
+   inside of the shape, leaves a band hugging the contour from within -- on the
+   counter as well as the outer edge, since both are the one path. Its gradient
+   fades down the mark, so the crown reads lit and the feet read grounded. */
+.omega-scene__core { filter: blur(.5cqmin) }
+
+.omega-scene__rim {
+  filter: drop-shadow(0 0 .9cqmin rgba(255, 255, 255, .82));
+}
+
+/* --- overlays ------------------------------------------------------------ */
+
+.omega-scene__vignette,
+.omega-scene__crt {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Ramped from zero rather than held transparent and then turned on. A flat
+   stretch followed by a ramp puts a kink in the falloff, and against a field
+   as even as the grid that kink shows up as a visible ellipse. */
+.omega-scene__vignette {
+  background: radial-gradient(130% 112% at 50% 44%,
+    rgba(3, 1, 18, 0)   0%,
+    rgba(3, 1, 18, .04) 44%,
+    rgba(3, 1, 18, .13) 66%,
+    rgba(3, 1, 18, .27) 84%,
+    rgba(3, 1, 18, .42) 100%);
+}
+
+.omega-scene__crt { opacity: 0 }
+.omega-scene[data-crt="on"] .omega-scene__crt { opacity: 1 }
+
+.omega-scene__crt::before,
+.omega-scene__crt::after { content: ""; position: absolute }
+
+.omega-scene__crt::before {
+  inset: 0;
+  background: repeating-linear-gradient(rgba(0, 0, 0, .26) 0 .16cqh, transparent .16cqh .4cqh);
+  mix-blend-mode: multiply;
+}
+
+/* Oversized so the jitter never exposes an edge. */
+.omega-scene__crt::after {
+  inset: -25%;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: .14;
+  mix-blend-mode: overlay;
+  animation: omega-grain .8s steps(4) infinite;
+}
+
+@keyframes omega-grain {
+  0%   { translate:    0     0 }
+  25%  { translate: -3cqmin  2cqmin }
+  50%  { translate:  2cqmin -3cqmin }
+  75%  { translate:  3cqmin  3cqmin }
+  100% { translate:    0     0 }
+}
+
+/* --- power-on ------------------------------------------------------------ */
+
+/* Order of events: the horizon strikes first, the grid runs out from it toward
+   the viewer, and the tube catches last and stutters before it holds. */
+
+.omega-scene__floor {
+  animation: omega-floor-in 1.9s cubic-bezier(.16, .84, .3, 1) .14s both;
+}
+
+.omega-scene__horizon {
+  animation: omega-strike 1.2s ease-out .06s both;
+}
+
+.omega-scene__stars {
+  animation: omega-lift 2.8s ease-out both;
+}
+
+.omega-scene__aura {
+  animation:
+    omega-ignite  2.6s .62s both,
+    omega-breathe var(--breathe) ease-in-out infinite alternate;
+}
+
+.omega-scene__reflect,
+.omega-scene__spill,
+.omega-scene__mark {
+  animation: omega-ignite 2.6s .62s both;
+}
+
+@keyframes omega-floor-in {
+  from { clip-path: inset(0 0 100% 0) }
+  to   { clip-path: inset(0 0 0 0) }
+}
+
+@keyframes omega-strike {
+  0%   { opacity: 0;  filter: blur(4cqmin) }
+  14%  { opacity: 1 }
+  34%  { opacity: .5 }
+  100% { opacity: 1;  filter: blur(1.2cqmin) }
+}
+
+@keyframes omega-lift {
+  from { opacity: 0 }
+  to   { opacity: 1 }
+}
+
+/* Deliberately uneven: a real tube strikes, drops out, and catches. */
+@keyframes omega-ignite {
+  0%        { opacity: 0 }
+  7%        { opacity: .9 }
+  10%       { opacity: .04 }
+  15%       { opacity: 1 }
+  19%       { opacity: .1 }
+  25%       { opacity: .85 }
+  29%       { opacity: .28 }
+  36%, 100% { opacity: 1 }
+}
+
+/* Scale, not opacity, so it can run alongside the ignition without the two
+   animations fighting over the same property. */
+@keyframes omega-breathe {
+  from { scale: 1 }
+  to   { scale: 1.055 }
+}
+
+.omega-scene[data-intro="off"] .omega-scene__floor,
+.omega-scene[data-intro="off"] .omega-scene__horizon,
+.omega-scene[data-intro="off"] .omega-scene__stars,
+.omega-scene[data-intro="off"] .omega-scene__reflect,
+.omega-scene[data-intro="off"] .omega-scene__spill,
+.omega-scene[data-intro="off"] .omega-scene__mark { animation: none }
+
+.omega-scene[data-intro="off"] .omega-scene__aura {
+  animation: omega-breathe var(--breathe) ease-in-out infinite alternate;
+}
+
+/* The default. Depth lines fall under a pixel wide past u = 0.61 -- see the
+   note on --soft-z -- and nothing available in CSS makes a sub-pixel line drift
+   without its coverage stepping. Softening the line profile, fading the far
+   field and low-passing the floor together cut the measured shimmer roughly in
+   half, which was not enough. So the floor holds still by default and the scene
+   stays alive on the breathe, the twinkle and the power-on. data-motion="on"
+   puts the drift back; --drift sets its speed. */
+.omega-scene[data-motion="calm"] .omega-scene__plane { animation: none }
+
+.omega-scene[data-motion="off"] .omega-scene__plane,
+.omega-scene[data-motion="off"] .omega-scene__stars,
+.omega-scene[data-motion="off"] .omega-scene__stars::before,
+.omega-scene[data-motion="off"] .omega-scene__stars::after,
+.omega-scene[data-motion="off"] .omega-scene__aura,
+.omega-scene[data-motion="off"] .omega-scene__floor,
+.omega-scene[data-motion="off"] .omega-scene__horizon,
+.omega-scene[data-motion="off"] .omega-scene__reflect,
+.omega-scene[data-motion="off"] .omega-scene__spill,
+.omega-scene[data-motion="off"] .omega-scene__mark,
+.omega-scene[data-motion="off"] .omega-scene__crt::after { animation: none }
+
+@media (prefers-reduced-motion: reduce) {
+  .omega-scene__plane,
+  .omega-scene__stars,
+  .omega-scene__stars::before,
+  .omega-scene__stars::after,
+  .omega-scene__aura,
+  .omega-scene__floor,
+  .omega-scene__horizon,
+  .omega-scene__reflect,
+  .omega-scene__spill,
+  .omega-scene__mark,
+  .omega-scene__crt::after { animation: none }
+}
+
+/* --- demo page chrome (not part of the asset) ---------------------------- */
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  gap: 1.25rem;
+  padding: 2rem 1rem;
+  box-sizing: border-box;
+  background: #05041a;
+  color: #9c8fd8;
+  font: 500 12px/1 ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+
+.stage { width: min(100vmin, 1000px) }
+
+.dials { display: flex; flex-wrap: wrap; gap: .4rem; justify-content: center }
+.dials input { position: absolute; opacity: 0; pointer-events: none }
+.dials label {
+  border: 1px solid #2b2160;
+  border-radius: 99px;
+  padding: .5rem .95rem;
+  cursor: pointer;
+  user-select: none;
+}
+.dials label:hover { border-color: #4b3aa0; color: #c3b6ff }
+.dials:has(#d-drift:checked) label[for="d-drift"],
+.dials:has(#d-crt:checked)   label[for="d-crt"],
+.dials:has(#d-still:checked) label[for="d-still"],
+.dials:has(#d-bare:checked)  label[for="d-bare"],
+.dials:has(#d-flat:checked)  label[for="d-flat"] {
+  border-color: #FF12E8;
+  color: #ffd6fb;
+  box-shadow: 0 0 14px rgba(255, 18, 232, .35);
+}
+
+/* Outranks the data-motion="calm" rule on id specificity, so the demo can show
+   the drift without the markup having to change. */
+body:has(#d-drift:checked) .omega-scene__plane {
+  animation: omega-drift var(--drift) linear infinite;
+}
+body:has(#d-crt:checked)   .omega-scene__crt { opacity: 1 }
+body:has(#d-still:checked) .omega-scene__plane,
+body:has(#d-still:checked) .omega-scene__stars,
+body:has(#d-still:checked) .omega-scene__stars::before,
+body:has(#d-still:checked) .omega-scene__stars::after,
+body:has(#d-still:checked) .omega-scene__aura,
+body:has(#d-still:checked) .omega-scene__floor,
+body:has(#d-still:checked) .omega-scene__horizon,
+body:has(#d-still:checked) .omega-scene__reflect,
+body:has(#d-still:checked) .omega-scene__spill,
+body:has(#d-still:checked) .omega-scene__mark,
+body:has(#d-still:checked) .omega-scene__crt::after { animation: none }
+body:has(#d-bare:checked)  .omega-scene__stars { display: none }
+body:has(#d-flat:checked)  .omega-scene { background: none }
+body:has(#d-flat:checked)  .omega-scene__sky,
+body:has(#d-flat:checked)  .omega-scene__stars,
+body:has(#d-flat:checked)  .omega-scene__vignette { display: none }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <div class="omega-scene" data-bg="dark" data-motion="calm" data-intro="on" data-stars="on" data-crt="off">
+
+    <div class="omega-scene__sky"></div>
+    <div class="omega-scene__stars"></div>
+    <div class="omega-scene__aura"></div>
+
+    <!-- Defined in the mark's <defs> further down; same-document references
+         resolve either way round. fill-opacity, not opacity, so the element's
+         own opacity stays free for the power-on to animate. -->
+    <svg class="omega-scene__reflect" viewBox="0 936 1000 460" aria-hidden="true">
+      <use href="#omega-outline" fill="url(#omega-neon)" fill-opacity=".34"
+           transform="translate(0,1450.8) scale(1,-0.55)"/>
+    </svg>
+
+    <div class="omega-scene__floor">
+      <div class="omega-scene__plane"></div>
+    </div>
+
+    <div class="omega-scene__horizon"></div>
+    <div class="omega-scene__spill"></div>
+
+    <svg class="omega-scene__mark" viewBox="0 0 1000 936" aria-label="Omega Stick" role="img">
+      <defs>
+        <!-- Palette from assets/logo/README.md. The axis is inset from the
+             mark's edges so the feet clamp to full pink and full cyan. -->
+        <linearGradient id="omega-neon" gradientUnits="userSpaceOnUse" x1="40" y1="0" x2="920" y2="0">
+          <stop offset="0%"   stop-color="#FF12E8"/>
+          <stop offset="24%"  stop-color="#C022FF"/>
+          <stop offset="50%"  stop-color="#7A3BFF"/>
+          <stop offset="76%"  stop-color="#2A8CFF"/>
+          <stop offset="100%" stop-color="#25D8F2"/>
+        </linearGradient>
+
+        <!-- Vertical, so the tube highlight falls off toward the feet. -->
+        <linearGradient id="omega-tube" gradientUnits="userSpaceOnUse" x1="0" y1="80" x2="0" y2="936">
+          <stop offset="0%"   stop-color="#fff" stop-opacity=".70"/>
+          <stop offset="38%"  stop-color="#fff" stop-opacity=".34"/>
+          <stop offset="72%"  stop-color="#fff" stop-opacity=".12"/>
+          <stop offset="100%" stop-color="#fff" stop-opacity=".05"/>
+        </linearGradient>
+
+        <!-- One closed outline, clockwise. The counter runs out into the gap
+             between the feet, so the shape is simply connected: no second
+             subpath, no fill-rule. -->
+        <path id="omega-outline" d="
+          M 0 850
+          L 0 788     A 16 16 0 0 1 16 772
+          L 72 772    A 14 14 0 0 1 86 786
+          L 86 794    A 14 14 0 0 0 100 808
+          L 261.5 808
+          A 492 431 0 1 1 738.5 808
+          L 900 808   A 14 14 0 0 0 914 794
+          L 914 786   A 14 14 0 0 1 928 772
+          L 984 772   A 16 16 0 0 1 1000 788
+          L 1000 920  A 16 16 0 0 1 984 936
+          L 628 936   A 14 14 0 0 1 614 922
+          L 614 799
+          A 271 391 0 0 0 771 444
+          A 271 339 0 0 0 500 105
+          A 271 339 0 0 0 229 444
+          A 271 391 0 0 0 386 799
+          L 386 922   A 14 14 0 0 1 372 936
+          L 16 936    A 16 16 0 0 1 0 920
+          Z"/>
+
+        <clipPath id="omega-inside"><use href="#omega-outline"/></clipPath>
+      </defs>
+
+      <use class="omega-scene__bloom" href="#omega-outline" fill="url(#omega-neon)"/>
+      <use class="omega-scene__glow"  href="#omega-outline" fill="url(#omega-neon)"/>
+      <use class="omega-scene__body"  href="#omega-outline" fill="url(#omega-neon)"/>
+
+      <!-- Clipped on the group so the stroke's blur is trimmed to the shape;
+           the gradient stays in one untransformed space, as the README warns. -->
+      <g clip-path="url(#omega-inside)">
+        <use class="omega-scene__core" href="#omega-outline" fill="none"
+             stroke="url(#omega-tube)" stroke-width="40" stroke-linejoin="round"/>
+      </g>
+
+      <use class="omega-scene__rim" href="#omega-outline" fill="none"
+           stroke="#fff" stroke-width="16" stroke-linejoin="round" opacity=".92"/>
+    </svg>
+
+    <div class="omega-scene__vignette"></div>
+    <div class="omega-scene__crt"></div>
+
+  </div>
+</div>
+
+<div class="dials">
+  <input type="checkbox" id="d-drift"><label for="d-drift">Grid drift</label>
+  <input type="checkbox" id="d-still"><label for="d-still">Freeze</label>
+  <input type="checkbox" id="d-crt"><label for="d-crt">CRT</label>
+  <input type="checkbox" id="d-bare"><label for="d-bare">No stars</label>
+  <input type="checkbox" id="d-flat"><label for="d-flat">Transparent</label>
+</div>
+
+</body>
+</html>

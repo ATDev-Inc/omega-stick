@@ -171,8 +171,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   }
 
   printf("TMAG5273 initialized successfully!\n\n");
-  std::this_thread::sleep_for(
-      15s); // for flashing purposes in case want to upload new code in this time
+
 #if CONFIG_OMEGA_STICK_BOOT_FLASH_WINDOW_S > 0
   // Development aid, off by default: until TinyUSB takes over the USB port,
   // the chip's USB Serial/JTAG can still reset it into the bootloader, so
@@ -180,6 +179,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   printf("Waiting %d s for flashing...\n", CONFIG_OMEGA_STICK_BOOT_FLASH_WINDOW_S);
   std::this_thread::sleep_for(std::chrono::seconds(CONFIG_OMEGA_STICK_BOOT_FLASH_WINDOW_S));
 #endif
+
   // ==========================================================================
   // Calibration + live settings store
   // ==========================================================================
@@ -389,7 +389,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
   printf("Y maximum:                 %.6f\n", center.effective_center_y() + range.max_y);
 
-  if (!XAC_SELECTION) {
+  // cppcheck-suppress knownConditionTrueFalse
+  if (!XAC_SELECTION) { // TODO
 
     printf("\n");
     printf("========================================\n");
