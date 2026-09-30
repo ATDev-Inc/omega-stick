@@ -27,8 +27,8 @@ public:
   void set_root_path(std::filesystem::path root) { root_ = std::move(root); }
 
 private:
-  FileSystem() {
-    root_ = std::filesystem::temp_directory_path() / "omega_stick_host_tests";
+  FileSystem()
+      : root_(std::filesystem::temp_directory_path() / "omega_stick_host_tests") {
     std::error_code ec;
     std::filesystem::create_directories(root_, ec);
   }

@@ -37,7 +37,7 @@ struct Fixture {
                    sent.insert(sent.end(), f.begin(), f.end());
                  }}) {}
 
-  OmegaStore::Config with_paths(OmegaStore::Config c) {
+  OmegaStore::Config with_paths(OmegaStore::Config c) const {
     c.calibration_path = dir.file("omega_calibration.cfg");
     c.settings_path = dir.file("omega_settings.cfg");
     return c;
@@ -170,7 +170,7 @@ XFAIL_TEST(service_ok_reply_is_sent_before_mode_change_callback_runs,
            "before the OK reply is built; main.cpp's callback calls esp_restart(), so the "
            "console never receives the OK and reports a timeout for a switch that worked") {
   int sends_seen_from_callback = -1;
-  Fixture *self = nullptr;
+  const Fixture *self = nullptr;
   Fixture fx("svc_mode_order", {.on_mode_changed = [&](OmegaStore::InputMode) {
                 sends_seen_from_callback = self->send_calls;
               }});
