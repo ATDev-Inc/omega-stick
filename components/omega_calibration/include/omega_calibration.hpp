@@ -31,8 +31,8 @@ public:
   // Tunables
   // --------------------------------------------------------------------------
 
-  static constexpr int CENTER_SAMPLES = 500;
-  static constexpr int RANGE_SAMPLES = 500;
+  static constexpr int CENTER_SAMPLES = 200;
+  static constexpr int RANGE_SAMPLES = 200;
 
   static constexpr int RANGE_SECTORS = 32;
 

@@ -871,7 +871,6 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
       // IMPORTANT:
       // Gamepad/XAC axes are already normalized [-1, +1].
       xac_input_report.set_joystick(js.x(), js.y());
-
       auto report = xac_input_report.get_report();
 
       if (!usb.write_hid_report(1, report, usb_ec)) {

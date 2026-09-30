@@ -1,10 +1,11 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 
 #include "hid-rp-gamepad.hpp"
-
-// untested code
+// TODO: add config option for chosing L or R port joystick-- default to R or something
+//  untested code
 
 namespace espp {
 
@@ -60,8 +61,8 @@ public:
     // The XAC only uses our physical left joystick.
     //
     // Keep the unused right joystick centered.
-    Base::set_right_joystick(0.0f, 0.0f);
-
+    // Base::set_right_joystick(0.0f, 0.0f);
+    // Base::set_left_joystick(0.0f, 0.0f);
     // Keep both triggers released.
     Base::set_left_trigger(0.0f);
     Base::set_right_trigger(0.0f);
@@ -73,42 +74,38 @@ public:
    * @param x X position in range [-1, 1]
    * @param y Y position in range [-1, 1]
    */
-  constexpr void set_joystick(float x, float y) { Base::set_left_joystick(x, y); }
-
-  /**
-   * @brief Set the joystick position using raw 8-bit values.
-   *
-   * @param x X position in range [0, 255]
-   * @param y Y position in range [0, 255]
-   */
+  constexpr void set_joystick(float x, float y) {
+    // Clamp before handing off to GamepadInputReport::set_joystick_axis().
+    // That function casts (value * range + center) straight to uint8_t
+    // WITHOUT clamping the float first -- a value even slightly outside
+    // [-1, 1] (sensor overshoot, drift, calibration slop) casts a negative
+    // float to an unsigned integer type, which is undefined behavior in
+    // C++, not a safe wrap/clamp. Clamping here, before the call, avoids
+    // ever handing it an out-of-range float.
+    x = std::clamp(x, -1.0f, 1.0f);
+    y = std::clamp(y, -1.0f, 1.0f);
+    // Base::set_right_joystick(x, y);
+    // Base::set_left_joystick(x, y);
+    Base::set_joystick_axis(0, x); // d-pad or nothing
+    Base::set_joystick_axis(1, y); // right stick x, left dpad
+    Base::set_joystick_axis(2, x); // right stick y
+    Base::set_joystick_axis(3, y); // left x, right d-pad
+  }
   constexpr void set_joystick(std::uint8_t x, std::uint8_t y) {
     Base::set_joystick_axis(0, x);
     Base::set_joystick_axis(1, y);
   }
-
-  /**
-   * @brief Set only the X axis.
-   *
-   * @param x X position in range [-1, 1]
-   */
-  constexpr void set_x(float x) { Base::set_joystick_axis(0, x); }
-
-  /**
-   * @brief Set only the Y axis.
-   *
-   * @param y Y position in range [-1, 1]
-   */
-  constexpr void set_y(float y) { Base::set_joystick_axis(1, y); }
-
+  constexpr void set_x(float x) { Base::set_joystick_axis(0, std::clamp(x, -1.0f, 1.0f)); }
+  constexpr void set_y(float y) { Base::set_joystick_axis(1, std::clamp(y, -1.0f, 1.0f)); }
   /**
    * @brief Set only the X axis using raw 8-bit data.
    */
-  constexpr void set_x(std::uint8_t x) { Base::set_joystick_axis(0, x); }
+  constexpr void set_x(std::uint8_t x) { Base::set_joystick_axis(2, x); }
 
   /**
    * @brief Set only the Y axis using raw 8-bit data.
    */
-  constexpr void set_y(std::uint8_t y) { Base::set_joystick_axis(1, y); }
+  constexpr void set_y(std::uint8_t y) { Base::set_joystick_axis(3, y); }
 
   /**
    * @brief Set a button.
@@ -136,12 +133,27 @@ public:
    *
    * The report ID is not included.
    */
-  constexpr auto get_report() const { return Base::get_report(); }
+  constexpr auto get_report() const {
+    const std::uint8_t *p = this->data() + 1; // only the report ID precedes the payload
+    return std::vector<std::uint8_t>(p, p + Base::num_data_bytes);
+  }
 
   /**
    * @brief Get the HID report descriptor.
    */
-  static constexpr auto get_descriptor() { return Base::get_descriptor(); }
+  /**
+   * @brief Get the HID report descriptor.
+   */
+  static constexpr auto get_descriptor() {
+    using namespace hid::page;
+    using namespace hid::rdf;
+
+    return descriptor(usage_page<generic_desktop>(),
+                      usage(generic_desktop::GAMEPAD), // top-level collection usage
+                      collection::application(
+                          Base::get_descriptor() // report ID + axes/hat/buttons go inside here
+                          ));
+  }
 };
 
 /**
