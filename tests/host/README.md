@@ -62,18 +62,14 @@ Current XFAIL entries:
 - `service_ok_reply_is_sent_before_mode_change_callback_runs`: the mode
   change callback (which reboots) runs before the OK reply is built, so the
   console always times out on `SET_INPUT_MODE`.
-- `xac_report_bytes_follow_descriptor_order`,
-  `xac_centered_report_is_neutral`, `xac_stick_x_moves_report_x`: espp's
-  `GamepadInputReport::get_report()` (and `set_data()`) skip a fixed 2 bytes
-  at the front of the object. With the default `uint16_t` axes that is the
-  report ID plus one byte of alignment padding, but `XacInputReport` uses
-  `uint8_t` axes, which have no padding, so the copy starts one byte late:
-  X is dropped, every later field moves down a slot, RZ reads 0 (right
-  stick pinned to an edge) and the last byte is read from past the end of
-  the object. This is the "drifts up, only moves in X" behaviour seen on
-  the Xbox Adaptive Controller. The fix belongs upstream in espp
-  (`hid-rp-gamepad.hpp`); until then `XacInputReport` should override
-  `get_report()` with a 1-byte offset (0 when `REPORT_ID` is 0).
+
+The three `xac_*` report-layout tests used to be XFAIL entries for an espp
+`GamepadInputReport::get_report()` bug (it skips a fixed 2 bytes, which is one
+too many for the `uint8_t` axes `XacInputReport` uses). `XacInputReport` now
+overrides `get_report()` with a 1-byte offset, so those tests are ordinary
+`TEST`s again and guard the override. The upstream fix is esp-cpp/espp#829;
+once `dependencies.lock` picks up a release that contains it, the override can
+be removed and the tests will keep guarding the layout.
 
 ## Component quirks the host build surfaced
 
