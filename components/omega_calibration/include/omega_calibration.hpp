@@ -31,8 +31,8 @@ public:
   // Tunables
   // --------------------------------------------------------------------------
 
-  static constexpr int CENTER_SAMPLES = 500;
-  static constexpr int RANGE_SAMPLES = 500;
+  static constexpr int CENTER_SAMPLES = 200;
+  static constexpr int RANGE_SAMPLES = 200;
 
   static constexpr int RANGE_SECTORS = 32;
 
@@ -146,6 +146,180 @@ public:
     std::vector<float> sector_max_radius;
   };
 
+  /// Which USB HID device the stick currently drives. Persisted and
+  /// live-adjustable via DeviceSettings, so the firmware doesn't need a
+  /// reflash to switch between the two.
+  enum class InputMode : uint8_t { MOUSE = 0, XAC = 1 };
+
+  /// Live-tunable device settings that sit alongside (but are distinct
+  /// from) the CenterResult/RangeResult produced by an interactive
+  /// calibration sweep. Unlike center/range, these are meant to be edited
+  /// directly -- e.g. from a console/browser UI -- rather than measured,
+  /// so they're saved to their own file (see default_path()) and can be
+  /// changed live without re-running center_calibration()/range_calibration().
+  struct DeviceSettings {
+    // ------------------------------------------------------------------
+    // Manual deadzone overrides
+    // ------------------------------------------------------------------
+    // CenterResult::deadzone and RangeResult::deadzone are derived from the
+    // calibration sweep. These let a live UI override either one directly
+    // (e.g. "the auto center deadzone still feels twitchy, bump it up") --
+    // std::nullopt means "use the calibration-derived value as-is".
+    std::optional<float> manual_center_deadzone;
+    std::optional<float> manual_range_deadzone;
+
+    /// The center deadzone actually used at runtime: manual_center_deadzone
+    /// if set, otherwise the calibration-derived center.deadzone.
+    float effective_center_deadzone(const CenterResult &center) const {
+      return manual_center_deadzone.value_or(center.deadzone);
+    }
+
+    /// The range deadzone actually used at runtime: manual_range_deadzone
+    /// if set, otherwise the calibration-derived range.deadzone.
+    float effective_range_deadzone(const RangeResult &range) const {
+      return manual_range_deadzone.value_or(range.deadzone);
+    }
+
+    // ------------------------------------------------------------------
+    // Nudge-click tuning
+    // ------------------------------------------------------------------
+    // "Nudging" is pushing the stick, off-center, past a distance
+    // threshold in one of the four cardinal directions to drive a click or
+    // scroll instead of cursor movement (see the nudge-click feature in
+    // main.cpp) -- there is no physical switch, this is purely how far/how
+    // long the stick has been pushed.
+
+    /// How much the stick's magnitude must CHANGE, measured once per
+    /// nudge_hold_time window, before a nudge is recognized ("nudge enter
+    /// threshold" / distance threshold). This is a DELTA (current magnitude
+    /// minus the magnitude at the start of the window), not an absolute
+    /// position.
+    float nudge_distance_threshold{0.5f};
+
+    /// Absolute normalized magnitude the stick must fall back to (or below)
+    /// before a held nudge is released ("nudge exit threshold"). Unlike
+    /// nudge_distance_threshold this IS an absolute position, not a delta --
+    /// tune it against real-hardware testing rather than assuming it should
+    /// be small; a held nudge is meant to persist for as long as the stick
+    /// stays meaningfully deflected.
+    float nudge_exit_threshold{0.8f};
+
+    /// The polling window over which nudge_distance_threshold's magnitude
+    /// delta is measured ("nudge time") -- a coarser cadence than the
+    /// per-report polling loop, so a single noisy sample can't register as
+    /// a nudge.
+    std::chrono::milliseconds nudge_hold_time{100};
+
+    // ------------------------------------------------------------------
+    // Input mode
+    // ------------------------------------------------------------------
+    InputMode input_mode{InputMode::MOUSE};
+
+    // ------------------------------------------------------------------
+    // Persistence
+    // ------------------------------------------------------------------
+
+    /// Convenience: builds a path for the settings file under espp's
+    /// mounted file system root (e.g. "/littlefs/omega_settings.cfg").
+    /// Deliberately a different file from OmegaCalibration::default_path()
+    /// (the calibration file): settings are user-tuned and change far more
+    /// often than a calibration sweep's raw center/range measurements, so
+    /// keeping them separate means a settings change never risks touching
+    /// (or being confused for) the calibration data, and vice versa.
+    static std::filesystem::path default_path(const std::string &filename = "omega_settings.cfg") {
+      return espp::FileSystem::get().get_root_path() / filename;
+    }
+
+    /// Saves settings to a simple "key=value" text file (same format as
+    /// OmegaCalibration::save()) at the given path. Overwrites any existing
+    /// file at that path. An unset manual_*_deadzone override is simply
+    /// omitted from the file, so load() correctly restores it as nullopt.
+    static bool save(const DeviceSettings &settings, const std::filesystem::path &path,
+                     std::error_code &ec) {
+      ec.clear();
+
+      std::ofstream out(path, std::ios::out | std::ios::trunc);
+      if (!out.is_open()) {
+        ec = make_error_code(Error::file_open_failed);
+        return false;
+      }
+
+      if (settings.manual_center_deadzone) {
+        out << "manual_center_deadzone=" << *settings.manual_center_deadzone << "\n";
+      }
+      if (settings.manual_range_deadzone) {
+        out << "manual_range_deadzone=" << *settings.manual_range_deadzone << "\n";
+      }
+      out << "nudge_distance_threshold=" << settings.nudge_distance_threshold << "\n";
+      out << "nudge_exit_threshold=" << settings.nudge_exit_threshold << "\n";
+      out << "nudge_hold_time_ms=" << static_cast<float>(settings.nudge_hold_time.count()) << "\n";
+      out << "input_mode=" << static_cast<float>(static_cast<uint8_t>(settings.input_mode)) << "\n";
+      out.flush();
+
+      if (!out) {
+        ec = make_error_code(Error::file_write_failed);
+        return false;
+      }
+      return true;
+    }
+
+    /// Loads settings previously written by save(). Every field is
+    /// optional in the file (unlike OmegaCalibration::load(), which
+    /// requires its core fields): a missing manual_*_deadzone key means
+    /// "no override" (nullopt), and a missing nudge/mode key falls back to
+    /// that field's default -- so a settings file from an older firmware
+    /// version, or a hand-written partial file, still loads cleanly.
+    /// Returns false (with ec set) only if the file can't be opened or
+    /// contains an unparseable line.
+    static bool load(DeviceSettings &settings, const std::filesystem::path &path,
+                     std::error_code &ec) {
+      ec.clear();
+
+      std::ifstream in(path);
+      if (!in.is_open()) {
+        ec = make_error_code(Error::file_open_failed);
+        return false;
+      }
+
+      std::unordered_map<std::string, float> values;
+      std::string line;
+      while (std::getline(in, line)) {
+        const auto eq = line.find('=');
+        if (eq == std::string::npos) {
+          continue;
+        }
+        const std::string key = line.substr(0, eq);
+        const std::string value_str = line.substr(eq + 1);
+
+        char *parse_end = nullptr;
+        const float value = std::strtof(value_str.c_str(), &parse_end);
+        if (parse_end == value_str.c_str()) {
+          ec = make_error_code(Error::file_parse_failed);
+          return false;
+        }
+        values[key] = value;
+      }
+
+      settings.manual_center_deadzone = values.count("manual_center_deadzone")
+                                            ? std::optional<float>(values["manual_center_deadzone"])
+                                            : std::nullopt;
+      settings.manual_range_deadzone = values.count("manual_range_deadzone")
+                                           ? std::optional<float>(values["manual_range_deadzone"])
+                                           : std::nullopt;
+      settings.nudge_distance_threshold =
+          values.count("nudge_distance_threshold") ? values["nudge_distance_threshold"] : 0.5f;
+      settings.nudge_exit_threshold =
+          values.count("nudge_exit_threshold") ? values["nudge_exit_threshold"] : 0.8f;
+      settings.nudge_hold_time = std::chrono::milliseconds(
+          values.count("nudge_hold_time_ms") ? static_cast<long long>(values["nudge_hold_time_ms"])
+                                             : 100);
+      settings.input_mode = values.count("input_mode")
+                                ? static_cast<InputMode>(static_cast<uint8_t>(values["input_mode"]))
+                                : InputMode::MOUSE;
+      return true;
+    }
+  };
+
   /// Errors this calibration routine can report.
   enum class Error {
     read_failure = 1,
@@ -172,13 +346,13 @@ public:
         case Error::no_range_samples:
           return "insufficient angular coverage during range calibration";
         case Error::file_open_failed:
-          return "failed to open calibration file";
+          return "failed to open file";
         case Error::file_write_failed:
-          return "failed to write calibration file";
+          return "failed to write file";
         case Error::file_parse_failed:
-          return "failed to parse calibration file";
+          return "failed to parse file";
         case Error::file_missing_field:
-          return "calibration file is missing a required field";
+          return "file is missing a required field";
         default:
           return "unknown error";
         }
@@ -556,6 +730,11 @@ public:
   /// this zeroing, so prefer this function (or at least call it once right
   /// after construction) instead of relying on the constructor alone.
   ///
+  /// This overload uses the calibration-derived deadzones (center.deadzone /
+  /// range.deadzone) verbatim. Prefer the DeviceSettings-aware overload
+  /// below once manual deadzone overrides are in play, so a live-edited
+  /// override actually takes effect.
+  ///
   /// @note Does not change the joystick's type or its get_values function.
   ///       The joystick must already have been constructed with
   ///       Type::CIRCULAR (e.g. via make_joystick_config()) for the
@@ -572,9 +751,31 @@ public:
         center.deadzone, range.deadzone);
   }
 
+  /// Same as the three-argument apply_calibration() above, but resolves the
+  /// center/range deadzones through DeviceSettings first -- so a manual
+  /// deadzone override set via set_manual_offset()-style live editing (e.g.
+  /// from a console/browser UI) actually reaches the joystick, instead of
+  /// always using the raw calibration-derived values. Use this overload
+  /// once DeviceSettings is in play; use the plain three-argument overload
+  /// only where no DeviceSettings exists yet.
+  static void apply_calibration(espp::Joystick &js, const CenterResult &center,
+                                const RangeResult &range, const DeviceSettings &settings) {
+    js.set_calibration(
+        espp::FloatRangeMapper::Config{.center = center.effective_center_x(),
+                                       .minimum = center.effective_center_x() + range.min_x,
+                                       .maximum = center.effective_center_x() + range.max_x},
+        espp::FloatRangeMapper::Config{.center = center.effective_center_y(),
+                                       .minimum = center.effective_center_y() + range.min_y,
+                                       .maximum = center.effective_center_y() + range.max_y},
+        settings.effective_center_deadzone(center), settings.effective_range_deadzone(range));
+  }
+
   /// Builds the espp::Joystick config from completed calibration results.
   /// The caller supplies get_values since it typically closes over a sensor
-  /// object (e.g. a TMAG5273) that this class doesn't own.
+  /// object (e.g. a TMAG5273) that this class doesn't own. Uses the
+  /// calibration-derived deadzones verbatim; see the DeviceSettings-aware
+  /// overload below to honor manual deadzone overrides from construction
+  /// onward.
   ///
   /// @note Use this for the initial construction of the Joystick only. To
   ///       push a new calibration onto an already-constructed Joystick (e.g.
@@ -599,10 +800,34 @@ public:
     };
   }
 
+  /// Same as make_joystick_config() above, but resolves the center/range
+  /// deadzones through DeviceSettings first (manual override if set, else
+  /// the calibration-derived value) -- prefer this overload once
+  /// DeviceSettings is in play.
+  static espp::Joystick::Config
+  make_joystick_config(const CenterResult &center, const RangeResult &range,
+                       const DeviceSettings &settings,
+                       std::function<bool(float *, float *)> get_values) {
+    return espp::Joystick::Config{
+        .x_calibration = {.center = center.effective_center_x(),
+                          .minimum = center.effective_center_x() + range.min_x,
+                          .maximum = center.effective_center_x() + range.max_x},
+        .y_calibration = {.center = center.effective_center_y(),
+                          .minimum = center.effective_center_y() + range.min_y,
+                          .maximum = center.effective_center_y() + range.max_y},
+        .type = espp::Joystick::Type::CIRCULAR,
+        .center_deadzone_radius = settings.effective_center_deadzone(center),
+        .range_deadzone = settings.effective_range_deadzone(range),
+        .get_values = std::move(get_values),
+    };
+  }
+
   /// Convenience: builds a path for the calibration file under espp's
-  /// mounted file system root (e.g. "/littlefs/omega_calibration.cfg").
+  /// mounted file system root (e.g. "/<partition_label>/omega_calibration.cfg").
   /// Requires that espp::FileSystem's partition/label is already set up
-  /// correctly (see FileSystem::get_root_path()).
+  /// correctly (see FileSystem::get_root_path()). For the separate,
+  /// independently-persisted live settings (deadzone overrides, nudge
+  /// tuning, input mode), see DeviceSettings::default_path().
   static std::filesystem::path default_path(const std::string &filename = "omega_calibration.cfg") {
     return espp::FileSystem::get().get_root_path() / filename;
   }

@@ -26,3 +26,6 @@ dependencies:
   espressif/tinyusb: '>=0.15'
   espp/base_peripheral: '>=1.0'
   espp/file_system: '>=1.0'
+  espp/coredump: '>=1.0'
+  espp/dispatcher: '>=1.0'
+  espp/stream_frame: '>=1.0'

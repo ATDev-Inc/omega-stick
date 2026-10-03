@@ -173,7 +173,7 @@ public:
     BasePeripheral::write_fn write;
     // BasePeripheral::read_fn read;
     BasePeripheral::read_register_fn read_register;
-    espp::Logger::Verbosity verbosity = espp::Logger::Verbosity::INFO;
+    espp::Logger::Verbosity verbosity = espp::Logger::Verbosity::ERROR;
 
     MagneticChannels channels{MagneticChannels::XYZ};
 
