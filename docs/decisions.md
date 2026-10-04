@@ -74,7 +74,13 @@ with no licensing. `espp::GamepadInputReport` provides exactly this layout
 already (X/Y left stick, Z/RZ right stick, 2 triggers, 4-bit hat, N buttons).
 
 Caveat: `get_descriptor()` returns a fragment the caller must wrap in
-`usage_page<generic_desktop>` / `usage(GAMEPAD)` / `collection::application`.
+`usage_page<generic_desktop>` / `usage(...)` / `collection::application`.
+`espp::xac_app_report_descriptor()` in `components/xac` does that wrapping. It
+declares usage Joystick (0x04) rather than Gamepad (0x05) because the external
+joysticks confirmed working on the XAC (`controllercustom/dinput_pluggable`,
+`dinput_tinyusb`) declare Joystick, with unsigned 8-bit axes 0..255, a 4-bit
+hat and 12 buttons. Those references also show that a report ID and a CDC
+interface beside the HID interface do not stop the XAC accepting the device.
 
 ## D4: Console support routes through the XAC USB-A port, not direct
 
