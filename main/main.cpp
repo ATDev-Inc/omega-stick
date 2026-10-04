@@ -473,7 +473,9 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
       std::this_thread::sleep_for(10ms);
     }
   } else {
-    using XacInput = espp::XacGamepadInputReport;
+    // One report ID, shared by the descriptor and every report we send.
+    static constexpr uint8_t XAC_REPORT_ID = 1;
+    using XacInput = espp::XacInputReport<XAC_REPORT_ID>;
 
     // ------------------------------------------------------------
     // USB HID configuration
@@ -481,7 +483,11 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
     std::vector<uint8_t> hid_report_descriptor;
     {
-      auto raw = XacInput::get_descriptor();
+      // XacInput::get_descriptor() is only the field list. The host needs it
+      // wrapped in a Generic Desktop / Joystick application collection, which
+      // xac_app_report_descriptor() adds, the same way the mouse branch gets
+      // its wrapper from mouse_app_report_descriptor().
+      auto raw = espp::xac_app_report_descriptor<XAC_REPORT_ID>();
       hid_report_descriptor.assign(raw.begin(), raw.end());
     }
 
@@ -591,13 +597,13 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
         }
       }
 
-      // IMPORTANT:
-      // Gamepad/XAC axes are already normalized [-1, +1].
+      // Gamepad/XAC axes are already normalized [-1, +1]. XacInputReport
+      // clamps to that range before the 8-bit conversion.
       xac_input_report.set_joystick(js.x(), js.y());
 
       auto report = xac_input_report.get_report();
 
-      if (!usb.write_hid_report(1, report, usb_ec)) {
+      if (!usb.write_hid_report(XAC_REPORT_ID, report, usb_ec)) {
 
         printf("HID send failed: %s\n", usb_ec.message().c_str());
       }
