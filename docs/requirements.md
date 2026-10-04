@@ -101,7 +101,9 @@ Evidence behind these requirements is in [docs/research/](research/).
 - **OUT-9 [S]** Verify against the XAC's documented external-joystick mapping
   (X/Y to left stick, Z/RZ to right stick, hat to d-pad), which requires **XAC
   firmware June 2024 or newer**. Default button mapping for external USB joystick
-  buttons is reported as unexpected and needs bench confirmation.
+  buttons is reported as unexpected and needs bench confirmation. *Status:* the
+  descriptor now matches the layout the working reference joysticks use (see D3
+  in [decisions.md](decisions.md)); the bench test itself is still outstanding.
 
 ## 5. Configuration
 

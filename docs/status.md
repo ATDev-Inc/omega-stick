@@ -3,14 +3,16 @@
 Working status, kept out of [PRD.md](PRD.md) deliberately: the PRD specifies what
 the product must be, not where the work has reached.
 
-**Updated:** 2026-09-04
+**Updated:** 2026-10-03
 
 | Component | Status |
 | --- | --- |
 | Physical prototype | **Built** |
 | Sensor driver | Implemented. Two defects identified, recorded in [requirements.md](requirements.md#11-known-defects-to-fix-first) |
-| Sensor bring-up firmware | Implemented, diagnostic only |
-| Joystick behaviour, output, calibration, configuration | Not implemented |
+| Calibration and persistence | Implemented: interactive centre/range calibration, centre deadzone, slow drift compensation, saved to flash |
+| Mouse mode | **Working**: cursor from the stick, nudge-click for left/right click and scroll |
+| XAC joystick mode | Built, awaiting bench validation. The report descriptor was incomplete until PR #15 (`fix/xac-descriptor`), which also moves to espp/hid-rp 1.3.6 for the 8-bit axis fix. Mode is a compile-time switch until configuration exists |
+| Host-side configuration and mode selection | Not implemented |
 | Mechanical files for 3D printing | **Not yet published** |
 | Force and throw measurement | **Not yet performed or published** |
 
@@ -31,8 +33,14 @@ It is not blocked by firmware progress and can be done independently.
 Signal path → joystick maths → controller output → mouse mode → calibration and
 persistence → Xbox Adaptive Controller validation → user feedback.
 
-The middle of that sequence has no precedent in the library the project builds
-on, so it is original work rather than integration.
+Everything up to and including calibration and persistence is in the tree. The
+current step is XAC validation: the descriptor-side fixes are on PR #15 and the
+next action is a bench test, PC gamepad tester first, then the XAC itself. What
+is known about XAC compatibility (8-bit axes, usage Joystick, report IDs and a
+CDC interface all fine) is recorded under D3 in [decisions.md](decisions.md).
+
+The middle of that sequence had no precedent in the library the project builds
+on, so it was original work rather than integration.
 
 ## Open items requiring a decision
 

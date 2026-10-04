@@ -70,14 +70,24 @@ What is in the tree today:
 
 - A `TMAG5273` driver ([components/tmag5273/include/tmag5273.hpp](components/tmag5273/include/tmag5273.hpp))
   covering configuration, magnetic X/Y/Z reads, temperature, and conversion status.
-- A sensor bring-up application ([main/main.cpp](main/main.cpp)) that probes the
-  sensor, dumps its configuration, and streams live magnetic readings to the
-  console.
+- Centre and range calibration with a centre deadzone and slow drift
+  compensation ([components/omega_calibration](components/omega_calibration/include/omega_calibration.hpp)).
+  It runs interactively on the console when no saved calibration exists and the
+  result persists to flash, so it is a one-time step per build.
+- **USB HID mouse mode**, working: the stick drives the cursor, and quick flicks
+  ("nudge clicks") give left click, right click and scroll. Sensitivity and the
+  nudge thresholds are compile-time constants at the top of
+  [main/main.cpp](main/main.cpp).
+- **Xbox Adaptive Controller (XAC) joystick mode**, built but not yet verified
+  on hardware: a 12-button gamepad report with unsigned 8-bit axes and the
+  complete report descriptor around it ([components/xac](components/xac/include/xac.hpp)).
+  The mode is selected by the `XAC_SELECTION` constant in `main.cpp` until
+  host-side configuration exists.
 
-Not implemented yet: the HID report descriptor, axis calibration and centering,
-deadzone and response curve shaping, and the USB gamepad/mouse output path. The
-`espp/hid-rp`, `espp/joystick`, and `espp/usb_device` dependencies are declared
-in [main/idf_component.yml](main/idf_component.yml) in preparation for that work.
+Not implemented yet: selecting the mode and tuning deadzone, response curve and
+gain from the host (the browser configuration page in
+[decisions.md](docs/decisions.md)), and persisting that selection. The
+[docs/status.md](docs/status.md) page carries the fuller picture.
 
 If you are looking for somewhere to help, those are the open areas. See
 [CONTRIBUTING.md](./CONTRIBUTING.md).
@@ -139,24 +149,20 @@ idf.py -p PORT flash monitor
 Replace `PORT` with your serial port (`COM7` on Windows, `/dev/ttyACM0` on
 Linux, `/dev/cu.usbmodem*` on macOS). Exit the monitor with `Ctrl-]`.
 
-### Expected output
+### Expected behaviour
 
-With a TMAG5273 connected on the Qwiic bus, the bring-up app prints the device
-and manufacturer IDs, the active configuration, and then a live stream of
-readings. Move a magnet near the sensor and the values should track it:
+With a TMAG5273 connected on the Qwiic bus, the firmware probes the sensor and
+then looks for a saved calibration. On a fresh board there is none, so it walks
+you through centre and range calibration on the console (release the stick
+completely, then move it slowly through a complete circle when asked) and saves
+the result to flash. On every later boot it loads that calibration, prints the effective
+centre and range, and enumerates over USB as a HID mouse, with the console
+routed over the same USB connection as a CDC serial port.
 
-```
-========================================
-       TMAG5273 Driver Test
-========================================
-I2C Address: 0x35
-========================================
-
-Probing for TMAG5273...
-TMAG5273 found!
-
-X:    1.234 mT   Y:   -0.567 mT   Z:   12.345 mT   T:  24.50 C   Ready: YES
-```
+To try the XAC joystick mode instead, set `XAC_SELECTION` to `true` in
+[main/main.cpp](main/main.cpp) and rebuild. Check it on a PC gamepad tester
+first (`joy.cpl` on Windows, or any browser gamepad test page); if the stick
+shows up there with moving X/Y, it is ready to try on the XAC.
 
 If you see `ERROR: TMAG5273 not found at address 0x35`, check the Qwiic cable
 and confirm the sensor's address strap.
@@ -164,10 +170,15 @@ and confirm the sensor's address strap.
 ## Repository layout
 
 ```
-main/                     application entry point and IDF component manifest
-components/tmag5273/      TMAG5273 Hall-effect sensor driver
-.github/workflows/        build, packaging, and static analysis CI
-sdkconfig.defaults        project-wide ESP-IDF configuration defaults
+main/                       application entry point and IDF component manifest
+components/tmag5273/        TMAG5273 Hall-effect sensor driver
+components/omega_calibration/  centre/range calibration, persistence, drift compensation
+components/hid-rp-mouse/    HID mouse report and descriptor (optional wheel)
+components/xac/             Xbox Adaptive Controller joystick report and descriptor
+docs/                       product, requirements, decisions and status documents
+assets/logo/                brand assets
+.github/workflows/          build, packaging, and static analysis CI
+sdkconfig.defaults          project-wide ESP-IDF configuration defaults
 ```
 
 ## Contributing
