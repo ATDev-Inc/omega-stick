@@ -198,49 +198,6 @@ depends on. It now constrains the *minimum* achievable force instead.
 **Consequence.** The README no longer presents "under 10 grams" as the
 differentiator on its own, which matches section 5 of [PRD.md](PRD.md).
 
-## D13: Two-slot OTA with automatic health-check rollback
-
-Firmware is updated over USB from the calibration console into one of two OTA
-slots (`ota_0` / `ota_1`), with `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` set. A new
-image confirms itself once USB HID has enumerated, the TMAG5273 is answering, and
-10 s of polling have passed. Otherwise it is rolled back.
-
-The alternative was a manual-only confirmation step. It was rejected because a
-reset before confirmation silently reverts to the old image, which hid updates in
-the first attempt: the user saw the old version and had no way to tell why. For a
-device someone relies on to operate their computer (design principle 4), a bad
-image has to undo itself, and a good one must not depend on the user remembering
-a second step. The console also shows the previous slot's version and state and
-offers "Revert to previous firmware", so the user can step back deliberately.
-
-**Consequence.** The first move to the new partition table needs one serial flash
-and loses saved calibration once. See [firmware-updates.md](firmware-updates.md).
-
-## D14: `version.txt` plus a commit suffix, not `git describe` strings
-
-`version.txt` holds `MAJOR.MINOR.PATCH`, bumped by hand in the PR that warrants
-it. Builds embed that number alone for a release (clean tree at tag `vX.Y.Z`),
-and `X.Y.Z+<7-char sha>` otherwise, with `.dirty` appended for uncommitted
-changes.
-
-`git describe` output is traceable but not something a person quotes in a bug
-report or reads off the console. A plain number is, and the exact commit is still
-recoverable from the suffix. CI refuses to publish a release whose tag does not
-match `version.txt`, so a release number cannot drift from the tag.
-
-## D15: Adopt espp 1.3.6 across the board
-
-Adding `espp/ota` to the manifest makes the component manager re-solve every
-dependency, so the lock could not stay at the old mix of 1.3.3 to 1.3.5. A fresh
-solve picked espp 1.3.7 together with tinyusb 2.4.0; the `ota-implementation`
-branch's lock, with every espp component at 1.3.6 and tinyusb unchanged, was the
-smaller jump and had already run on hardware, so that is the one adopted. The
-1.3.6 dispatcher adds `ModuleInfo::protocol`, now set to `"espp.calibration"`.
-The host tests pin the same release (see [tests/host](../tests/host/README.md));
-the XAC report-layout tests give identical results on hid-rp 1.3.3 and 1.3.6.
-
----
-
 ## D13: Mouse clicks and scroll come from stick nudge gestures
 
 *Recorded from the implementation on 2026-10-10.*
@@ -303,6 +260,49 @@ copies differ. The C++ service generates `tests/protocol/golden_frames.json`;
 the Node tests decode those frames, so the two sides of the protocol cannot
 drift apart unnoticed. A libFuzzer harness covers the frame parser and
 service. Known bugs are kept as expected-failure tests until fixed.
+
+## D18: Two-slot OTA with automatic health-check rollback
+
+Firmware is updated over USB from the calibration console into one of two OTA
+slots (`ota_0` / `ota_1`), with `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` set. A new
+image confirms itself once USB HID has enumerated, the TMAG5273 is answering, and
+10 s of polling have passed. Otherwise it is rolled back.
+
+The alternative was a manual-only confirmation step. It was rejected because a
+reset before confirmation silently reverts to the old image, which hid updates in
+the first attempt: the user saw the old version and had no way to tell why. For a
+device someone relies on to operate their computer (design principle 4), a bad
+image has to undo itself, and a good one must not depend on the user remembering
+a second step. The console also shows the previous slot's version and state and
+offers "Revert to previous firmware", so the user can step back deliberately.
+
+**Consequence.** The first move to the new partition table needs one serial flash
+and loses saved calibration once. See [firmware-updates.md](firmware-updates.md).
+
+## D19: `version.txt` plus a commit suffix, not `git describe` strings
+
+`version.txt` holds `MAJOR.MINOR.PATCH`, bumped by hand in the PR that warrants
+it. Builds embed that number alone for a release (clean tree at tag `vX.Y.Z`),
+and `X.Y.Z+<7-char sha>` otherwise, with `.dirty` appended for uncommitted
+changes.
+
+`git describe` output is traceable but not something a person quotes in a bug
+report or reads off the console. A plain number is, and the exact commit is still
+recoverable from the suffix. CI refuses to publish a release whose tag does not
+match `version.txt`, so a release number cannot drift from the tag.
+
+## D20: Adopt espp 1.3.6 across the board
+
+Adding `espp/ota` to the manifest makes the component manager re-solve every
+dependency, so the lock could not stay at the old mix of 1.3.3 to 1.3.5. A fresh
+solve picked espp 1.3.7 together with tinyusb 2.4.0; the `ota-implementation`
+branch's lock, with every espp component at 1.3.6 and tinyusb unchanged, was the
+smaller jump and had already run on hardware, so that is the one adopted. The
+1.3.6 dispatcher adds `ModuleInfo::protocol`, now set to `"espp.calibration"`.
+The host tests pin the same release (see [tests/host](../tests/host/README.md));
+the XAC report-layout tests give identical results on hid-rp 1.3.3 and 1.3.6.
+
+---
 
 ## Open question: compete with Willow, or collaborate?
 
