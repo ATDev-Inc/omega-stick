@@ -217,7 +217,9 @@ if(OMEGA_HOST_FUZZ)
   endif()
   add_executable(omega_frame_fuzz "${OMEGA_ROOT}/tests/fuzz/frame_fuzz.cpp")
   target_include_directories(omega_frame_fuzz PRIVATE
-    "${OMEGA_ROOT}/components/omega_calibration/include")
+    "${OMEGA_ROOT}/components/omega_calibration/include"
+    # calibration_service.hpp includes the ESP-only OTA headers.
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs")
   target_compile_options(omega_frame_fuzz PRIVATE
     -Wall -Wextra -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer)
   target_link_options(omega_frame_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
