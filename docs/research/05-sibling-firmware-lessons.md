@@ -74,6 +74,8 @@ This pairs with the OTA rollback work: the post-update health check can refuse
 to mark an image valid if the reset log shows it crashed, and the same log can
 be exposed through the coredump or calibration console.
 
+**Done** as `ResetLog` and D16; the console and health-check hooks are open.
+
 ### 3. Tighten dependency floors in `main/idf_component.yml`
 
 The manifest still carries the template's `idf: '>=4.1.0'`, and every espp
@@ -83,6 +85,15 @@ needs. A lock refresh could silently accept a version the firmware cannot use.
 Known real floors: the IDF version CI builds with, and `espp/hid-rp >= 1.3.6`
 for the 8-bit axis fix the XAC descriptor depends on.
 
+**Done, with a twist.** Floors turned out not to be enough: the component
+manager re-solves to the newest matching release whenever the manifest
+changes and ignores the lock while doing so, and the first attempt pulled in
+espp 1.3.7, whose `DispatcherModuleInfo` gained a field the `-Werror` build
+rejects. The manifest now pins each espp component to its exact tested
+release and says how to bump them as a set. `hid-rp` stays at 1.3.3 here
+because `XacInputReport` carries its own `get_report()` override;
+`fix/xac-descriptor` raises it.
+
 ### 4. Harden CI the way ATOS does
 
 The ATOS repository pins every GitHub Action to a commit SHA with a version
@@ -91,6 +102,9 @@ plus workflow linting (zizmor) on push, on PRs, and on a daily schedule.
 Omega Stick pins actions by tag, and `esp-cpp/StaticAnalysis@master` floats on
 a branch. Because this repository is public and ships firmware to users, a
 compromised action tag is a supply chain risk worth closing.
+
+**Done** for pinning and Dependabot. The secret scan and workflow linting are
+still open.
 
 ### 5. Write the OTA safety rules down before shipping rollback
 
@@ -108,6 +122,9 @@ even though ATOS has not built it yet. Its rules map directly onto
   anti-rollback) with the date, the reason, and a "revisit when" trigger.
   ATOS keeps these in a dedicated register; a section in
   [decisions.md](../decisions.md) would do the same job here.
+
+**Done** as D15, which records the rules and the register. Enforcing the
+safe-state rule in the update path itself belongs to `feat/ota-rollback`.
 
 ### 6. Smaller items
 
