@@ -3,7 +3,7 @@
 // image is confirmed by someone else (console MARK_VALID).
 
 #include <chrono>
-#include <span>
+#include <vector>
 
 #include "esp_ota_ops.h"
 #include "firmware_health_check.hpp"
@@ -127,8 +127,7 @@ TEST(health_crash_loop_needs_consecutive_crashes) {
   CHECK(!Health::revert_if_crash_looping(fx.ota, interrupted));
   const bool too_few[] = {true, true};
   CHECK(!Health::revert_if_crash_looping(fx.ota, too_few));
-  const bool none[] = {};
-  CHECK(!Health::revert_if_crash_looping(fx.ota, std::span<const bool>(none, 0)));
+  CHECK(!Health::revert_if_crash_looping(fx.ota, std::vector<bool>{}));
   CHECK_EQ(esp_ota_fake().set_boot_calls, 0);
 }
 

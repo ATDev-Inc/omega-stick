@@ -37,7 +37,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
-#include <span>
+#include <iterator>
 #include <system_error>
 
 #include "esp_ota_ops.h"
@@ -90,13 +90,16 @@ public:
   /// slot becomes the boot partition and this returns true; the caller then
   /// restarts. Nothing happens while the running image is still pending:
   /// the bootloader reverts a pending image by itself at the next reset.
-  template <typename OtaT>
-  static bool revert_if_crash_looping(OtaT &ota, std::span<const bool> recent_crashes,
+  /// `recent_crashes` is any indexable range of bools (std::vector<bool>
+  /// included, which is why this is not a std::span).
+  template <typename OtaT, typename Crashes>
+  static bool revert_if_crash_looping(OtaT &ota, const Crashes &recent_crashes,
                                       size_t threshold = CRASH_LOOP_RESETS) {
-    if (threshold == 0 || recent_crashes.size() < threshold) {
+    const size_t count = std::size(recent_crashes);
+    if (threshold == 0 || count < threshold) {
       return false;
     }
-    for (size_t i = recent_crashes.size() - threshold; i < recent_crashes.size(); i++) {
+    for (size_t i = count - threshold; i < count; i++) {
       if (!recent_crashes[i]) {
         return false;
       }
