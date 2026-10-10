@@ -31,14 +31,26 @@ Host unit tests (no ESP-IDF, no board; CMake 3.20+ and a C++20 compiler with
 `<format>`):
 
 ```console
-cmake -S tests/host -B build-host
+cmake -S tests/host -B build-host -DOMEGA_HOST_WERROR=ON
 cmake --build build-host
 ctest --test-dir build-host --output-on-failure
 ```
 
-On Windows toolchains the host build fails in the pinned espp `hid-rp`
-headers (`std::bit_cast` without `<bit>`). Use the force-include workaround in
-[tests/host/README.md](tests/host/README.md#component-quirks-the-host-build-surfaced).
+The host build downloads the real espp components pinned in
+`dependencies.lock` (hash-checked) and compiles them; only the ESP-only OTA
+headers are stand-ins under `tests/host/stubs/`. Sanitizer and coverage
+options are in [tests/host/README.md](tests/host/README.md#cmake-options).
+
+Web console tests (Node 24, no dependencies):
+
+```console
+node --test "tests/web/*.test.js"
+```
+
+They check [omega_protocol.js](components/omega_calibration/web/omega_protocol.js)
+against the C++ side, including `tests/protocol/golden_frames.json`, which the
+host tests generate. After an intentional protocol change, regenerate it with
+`OMEGA_WRITE_GOLDEN=1 build-host/omega_host_tests` and review the diff.
 
 Formatting is clang-format **14.0.6** via pre-commit
 ([.pre-commit-config.yaml](.pre-commit-config.yaml)). Newer clang-format
@@ -56,7 +68,9 @@ Every pull request runs:
 | Workflow | Job | Notes |
 | --- | --- | --- |
 | [build.yml](.github/workflows/build.yml) | `build` | `idf.py build` for esp32s3 on IDF v6.0. The merge gate |
-| [host_tests.yml](.github/workflows/host_tests.yml) | `host-tests` | the host unit tests above |
+| [host_tests.yml](.github/workflows/host_tests.yml) | `host-tests` | the host unit tests above, on gcc (coverage), clang (ASan/UBSan) and MSVC, all with `-Werror` |
+| [web_tests.yml](.github/workflows/web_tests.yml) | `web-tests` | the console's protocol tests above |
+| [fuzz.yml](.github/workflows/fuzz.yml) | `frame-fuzz` | libFuzzer on the frame parser, see [tests/fuzz](tests/fuzz/README.md) |
 | [static_analysis.yml](.github/workflows/static_analysis.yml) | `static_analysis` | cppcheck, `--std=c++17`, global suppressions in [suppressions.txt](suppressions.txt) |
 | [size_delta.yml](.github/workflows/size_delta.yml) | `size_delta` | reporting only, not a required check |
 
@@ -70,18 +84,23 @@ would run untrusted PR code with write access.
 ## Layout
 
 ```
-main/main.cpp                 the whole application: sensor bring-up, calibration, mouse and XAC loops, USB setup
+main/main.cpp                 sensor bring-up, calibration, USB setup, and thin adapters that drive the control core
 main/Kconfig.projbuild        OMEGA_STICK_BOOT_FLASH_WINDOW_S (boot delay before USB starts, so idf.py flash works without BOOT)
 main/idf_component.yml        registry dependencies (espp/*, espressif/tinyusb); resolved set pinned in dependencies.lock
 components/tmag5273/          Hall-effect sensor driver
 components/hid-rp-mouse/      HID mouse report descriptor and input report
 components/xac/               XAC gamepad report (XacInputReport)
-components/omega_calibration/ calibration maths, persisted settings, OmegaStore, the console protocol, and the browser console (web/)
-tests/host/                   desktop unit tests for omega_calibration and xac, with stubs for the ESP-IDF-only espp pieces
+components/omega_calibration/ calibration maths, sensor fault monitor, persisted settings, OmegaStore, the console protocol,
+                              the firmware health check, and the browser console (web/, protocol code in omega_protocol.js)
+components/omega_control/     pure, host-tested control-loop logic (nudge clicks, drift, sensor faults) for both modes
+tests/host/                   desktop unit tests against the real espp code (stubs only for the OTA headers)
+tests/web/, tests/protocol/   Node tests for the console, and the golden frames shared with the host tests
+tests/fuzz/                   libFuzzer harness for the frame parser
 docs/                         PRD, requirements, decisions, compliance, status, and research snapshots
 files/                        source directory for the littlefs image flashed with the app
 models/                       STL files for the printed parts
-partitions.csv                factory app 4 MB, littlefs 2 MB (calibration and settings files), coredump 64 KB
+partitions.csv                two OTA app slots of 1920 KB, littlefs 2 MB (calibration and settings files), coredump 64 KB
+version.txt                   firmware MAJOR.MINOR.PATCH, see "Versioning" below
 sdkconfig.defaults            project-wide config; sdkconfig itself is gitignored
 ```
 
@@ -94,6 +113,20 @@ espp.
 
 ## How the firmware fits together
 
+- **Control loops.** The mouse and XAC loops in `main.cpp` only read the
+  sensor and call `mouse_tick()` / `xac_tick()` in
+  [omega_control.hpp](components/omega_control/include/omega_control.hpp),
+  which reaches hardware through an injected `Ports` interface. Put loop logic
+  there, with a host test, not in `main.cpp` (decision D16).
+- **Sensor faults.** A failed or frozen TMAG5273 read trips
+  `SensorFaultMonitor`; the control core then sends a neutral report instead
+  of the last deflection until the sensor recovers (decision D21).
+- **Firmware updates** go over the same console protocol into the inactive
+  OTA slot. A new image boots pending verification and `FirmwareHealthCheck`
+  confirms it after 10 s of USB plus sensor health, or rolls back (90 s
+  deadline, or at once on an init failure). Full rules in
+  [docs/firmware-updates.md](docs/firmware-updates.md).
+
 - **Input mode** (mouse or XAC) is read from the persisted settings once at
   boot and picks the USB descriptor. Changing it at runtime saves settings to
   flash and calls `esp_restart()`.
@@ -105,7 +138,11 @@ espp.
   format is documented at the top of
   [calibration_service.hpp](components/omega_calibration/include/calibration_service.hpp)
   and must stay in sync with
-  [calibration_console.html](components/omega_calibration/web/calibration_console.html).
+  [omega_protocol.js](components/omega_calibration/web/omega_protocol.js),
+  which [calibration_console.html](components/omega_calibration/web/calibration_console.html)
+  inlines verbatim (a web test enforces the copy). Message IDs are
+  append-only: never renumber or reuse one, since released firmware and the
+  console must keep talking to each other.
   See the [component README](components/omega_calibration/README.md).
 - **USB ids:** `OMEGA_USB_VID` / `OMEGA_USB_PID` in `main/main.cpp` must match
   `DEFAULT_VID` / `DEFAULT_PID` in the console page. The current pair is a
@@ -123,8 +160,10 @@ espp.
   agent. Say so plainly in the PR and describe what a person should test
   (slow movements, held positions, rapid direction changes, the sensor
   unplugged mid-session).
-- **Tests.** If you change the calibration store, the console protocol, or the
-  calibration file format, add or update a host test in the same change.
+- **Tests.** If you change the calibration store, the console protocol, the
+  calibration file format, the control loop, or a driver's register handling,
+  add or update a test in the same change. A protocol change updates the C++
+  and JavaScript sides together and regenerates the golden frames.
 - **Known-bug tests.** `XFAIL_TEST` marks a test that documents a current bug.
   When a fix makes it pass, the runner reports `XPASS` and the run fails until
   the marker becomes `TEST`. Change the marker in the same PR as the fix.
@@ -150,6 +189,15 @@ espp.
   low and adjustable, require no host software beyond standard USB HID, keep
   configuration optional, fail visibly rather than silently, and do not assume
   the user's body (ranges and mappings stay adjustable).
+
+## Versioning
+
+`version.txt` holds the firmware version as `MAJOR.MINOR.PATCH`. Bump it by
+hand in the PR that warrants it: MAJOR when saved calibration or settings, or
+the console protocol, become incompatible; MINOR for a new user-visible
+feature; PATCH for fixes only. Builds embed `X.Y.Z` only at a matching
+`vX.Y.Z` tag on a clean tree, otherwise `X.Y.Z+<sha>` (plus `.dirty`). See
+[docs/firmware-updates.md](docs/firmware-updates.md#firmware-versioning).
 
 ## Code style
 
