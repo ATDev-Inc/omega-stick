@@ -29,7 +29,7 @@ jobs:
 
     steps:
     - name: Checkout repo
-      uses: actions/checkout@v7
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0
 
@@ -47,14 +47,14 @@ jobs:
         fi
 
     - name: Build Main Code
-      uses: espressif/esp-idf-ci-action@v1
+      uses: espressif/esp-idf-ci-action@9d38657f3d789ca759b2b37aaf5ceffbc42c4f0d # v1
       with:
         esp_idf_version: ${{ env.IDF_VERSION }}
         path: '.'
         target: ${{ env.IDF_TARGET }}
 
     - name: Upload Build Outputs
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       id: zip_step
       # Artifacts attached to the build / release. Add e.g.
       # littlefs-flash_args here if a filesystem image is ever added to
@@ -71,7 +71,7 @@ jobs:
         retention-days: 7
 
     - name: Attach files to release
-      uses: softprops/action-gh-release@v3
+      uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
       if: ${{ github.event.release && github.event.action == 'published' }}
       # Artifacts attached to the build / release. Add e.g.
       # littlefs-flash_args here if a filesystem image is ever added to
@@ -87,7 +87,7 @@ jobs:
 
     - name: Determine Size Delta
       if: ${{ github.event.release && github.event.action == 'published' }}
-      uses: esp-cpp/esp-idf-size-delta@v1
+      uses: esp-cpp/esp-idf-size-delta@fb63ac752301845b16670ed609f04e443b3cb354 # v1.2.4
       with:
         app_name: ${{ env.APP_NAME }}
         app_path: "."
@@ -104,7 +104,7 @@ jobs:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: esp-cpp/esp-packaged-programmer-action@v1.0.5
+      - uses: esp-cpp/esp-packaged-programmer-action@de8c8efe3daa81de8d1e0ca66393a5e12fbf284c # v1.0.5
         with:
           zipfile-id: ${{ needs.build.outputs.zipfile-id }}
 

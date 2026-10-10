@@ -353,6 +353,64 @@ wording). Reading it costs an extra I2C transaction per tick, or a 7-byte burst
 instead of 6. That belongs with SEN-3 and SEN-4, and would let the stuck window
 shrink to the 500 ms budget.
 
+## D22: Update safety rules, and a register of deferred security controls
+
+These rules bind the two-slot OTA update path (D18, documented in
+[firmware-updates.md](firmware-updates.md)). They come from the OTA design
+study in the ATOS repository, the most thorough treatment of OTA among the
+sibling projects; see
+[research/05-sibling-firmware-lessons.md](research/05-sibling-firmware-lessons.md).
+
+**Rules.**
+
+1. **An update is only applied from a safe state.** Before the firmware
+   accepts a new image, the output must be neutral and must stay neutral until
+   the reboot: the host is talking to the console, not playing. A user driving
+   a pointer must never have the device vanish mid-motion.
+2. **A new image confirms itself only after a self-test.** It must enumerate on
+   USB, the sensor must answer, and the loop must have run for a dwell time.
+   Otherwise it rolls back. `feat/ota-rollback` implements this as
+   `FirmwareHealthCheck`. The reset log (D23) is the next input for it: an
+   image whose first boots were abnormal resets has not shown it works.
+3. **Downgrades stay possible.** The update path does not reject an older or
+   equal version. Recovery from a bad release must not depend on the bad
+   release's own good behaviour.
+4. **Anti-rollback stays off until the release process manages version
+   numbers.** The ESP32-S3 can burn a `secure_version` into eFuses so an older
+   image can never boot again. That is irreversible per device. Enabling it
+   while versions are bumped by hand would brick devices on the first
+   legitimate downgrade or the first forgotten bump.
+
+**Deferred security controls.** Each entry says why it is off and what would
+make us revisit it, so a security review does not re-raise it from scratch.
+
+| Control | Status (2026-10-10) | Why deferred | Revisit when |
+| --- | --- | --- | --- |
+| Secure boot v2 | Off | Needs a signing key with a custody story; irreversible per device; makes community builds unflashable without the key, against the open-hardware goal | A production run ships to users who do not build their own firmware |
+| Flash encryption | Off | The flash holds only calibration, settings and the firmware itself, all of which are public or user-owned; nothing secret to protect | Credentials or a per-device identity land in flash |
+| Anti-rollback (`secure_version`) | Off | Rule 4 above | Releases are tagged and versioned by CI, and a release has shipped that must never run again |
+| Image signing without secure boot | Off | Images are served from the GitHub release page over TLS; the console only loads what the user picks | An update server or auto-update path exists |
+
+## D23: Reset reasons are logged across boots
+
+Every boot records `esp_reset_reason()` in a small file next to the
+calibration, together with a boot counter and whether the reason was abnormal
+(panic, any watchdog, brownout, power glitch, eFuse error, CPU lockup). The
+last sixteen are kept and the abnormal ones are printed at boot.
+
+**Why.** A core dump only exists for a panic. A brownout from a weak USB port,
+a watchdog reset from a stalled I2C transaction, or a loop of short-lived
+boots leaves nothing behind today, and a user's report of "it sometimes
+restarts" cannot be checked. The sibling medical-device firmware keeps exactly
+this log and it is the first thing read when a unit comes back from the field.
+
+**Consequence.** `ResetLog` in `components/omega_calibration/include/
+reset_log.hpp` needs nothing from ESP-IDF, so the host tests cover it. The
+reason is stored as the platform's integer plus a name, so a new reason code
+in a later ESP-IDF still logs. Exposing the log on the calibration console,
+and feeding `abnormal_count()` into the OTA health check (D22, rule 2), are
+the next steps.
+
 ---
 
 ## Open question: compete with Willow, or collaborate?
