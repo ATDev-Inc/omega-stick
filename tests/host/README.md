@@ -7,6 +7,10 @@ no ESP-IDF and no hardware. They cover:
 - `OmegaStore` load-on-construct, live setters, change callbacks, `save_to_flash`
 - `CalibrationService` request decoding, replies, and store side effects,
   including the framing path through the real espp `stream_frame` parser
+- Firmware info and OTA through `CalibrationService`: `FW_INFO` flags, strings and
+  previous-slot states, the OTA begin/data/finish/abort flow (bad offsets,
+  missing session, write failure), and "revert to previous" (error cases, boot
+  partition set, restart), all against the `ota.hpp` / `esp_ota_ops.h` fakes
 - `XacInputReport` (`components/xac`): the byte layout `get_report()` hands
   to `write_hid_report()`, checked against the real espp `hid-rp` headers
 
@@ -35,11 +39,13 @@ tests' result.
 | `omega_calibration.hpp`, `omega_store.hpp`, `calibration_service.hpp` | the component under test |
 | `xac.hpp` | the component under test |
 | `stream_frame.hpp`, `dispatcher.hpp` | real espp, pinned |
-| `hid-rp-gamepad.hpp`, `hid-rp.hpp`, `gamepad_hat.hpp`, `hid/` | real espp `hid-rp` 1.3.3 archive, pinned |
+| `hid-rp-gamepad.hpp`, `hid-rp.hpp`, `gamepad_hat.hpp`, `hid/` | real espp `hid-rp` 1.3.6 archive, pinned |
 | `format.hpp`, `hid-rp-gamepad-formatters.hpp` | `stubs/`, empty: only a `fmt::formatter` forward declaration is needed |
 | `logger.hpp`, `base_component.hpp` | `stubs/`, prints to stderr via `std::format` |
 | `joystick.hpp`, `range_mapper.hpp` | `stubs/`, records what `set_calibration` received |
 | `file_system.hpp` | `stubs/`, root under the system temp directory |
+| `ota.hpp`, `esp_app_desc.h` | `stubs/`, controllable `espp::Ota` fake and a fixed `esp_app_desc_t` |
+| `esp_ota_ops.h` | `stubs/`, fake of the ESP-IDF OTA partition calls (other slot, image state, `esp_ota_set_boot_partition`), driven through `esp_ota_fake()` |
 
 The stubs deliberately expose a few extra accessors (marked "test-only") so
 tests can assert on what the component pushed into them.

@@ -40,7 +40,9 @@ the following as you can:
 
 * A description of the vulnerability and its potential impact
 * Steps to reproduce, including hardware setup if relevant
-* The firmware version or git commit hash you tested against
+* The firmware version and build you tested against: use the calibration
+  console's Copy button and paste the line (version, build, ELF sha, running
+  partition). See [docs/firmware-updates.md](docs/firmware-updates.md)
 * The ESP-IDF version in use
 * Any relevant logs, serial console output, or USB captures
 * Whether the issue requires physical access to the device

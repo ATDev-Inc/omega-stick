@@ -24,8 +24,8 @@ set(CMAKE_CXX_EXTENSIONS ON)
 add_compile_definitions(_USE_MATH_DEFINES)
 
 set(OMEGA_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
-set(ESPP_VERSION "v1.3.5") # espp/stream_frame, espp/dispatcher in dependencies.lock
-set(ESPP_HID_RP_VERSION "1.3.3") # espp/hid-rp in dependencies.lock
+set(ESPP_VERSION "v1.3.6") # espp/stream_frame, espp/dispatcher in dependencies.lock
+set(ESPP_HID_RP_VERSION "1.3.6") # espp/hid-rp in dependencies.lock
 
 function(fetch_pinned url dest sha256)
   if(NOT EXISTS "${dest}")
@@ -56,9 +56,9 @@ if(EXISTS "${ESPP_MANAGED}/espp__stream_frame/include/stream_frame.hpp"
       "${ESPP_MANAGED}/espp__dispatcher/include")
 else()
   fetch_espp_header(${ESPP_VERSION} stream_frame stream_frame.hpp
-    a67f593bbe21484806373ab05b43eb25e77bed98819780f1fc58d8014477deee)
+    e8a312348e9ea7a107228ddcaf6de3cb9d9edc0947ba026ff1f8d2a7a2eb920c)
   fetch_espp_header(${ESPP_VERSION} dispatcher dispatcher.hpp
-    b0ca02a77cd3029428426cc8acae296b7e05495683d0fc2529118aa4c22c68dc)
+    92a0f77849af54248e02c5f80c9adf51cf0c42727de124c71777b50ce92493cf)
   set(ESPP_INCLUDE_DIRS
       "${CMAKE_CURRENT_BINARY_DIR}/espp-${ESPP_VERSION}/stream_frame"
       "${CMAKE_CURRENT_BINARY_DIR}/espp-${ESPP_VERSION}/dispatcher")
@@ -75,7 +75,7 @@ set(HID_RP_DIR "${CMAKE_CURRENT_BINARY_DIR}/espp__hid-rp-v${ESPP_HID_RP_VERSION}
 fetch_pinned(
   "https://components-file.espressif.com/components/espp/hid-rp/${ESPP_HID_RP_VERSION}/espp__hid-rp-v${ESPP_HID_RP_VERSION}.zip"
   "${HID_RP_ARCHIVE}"
-  986766286692d7a4029c3a7021f72b69d6f6aff161b8d096612ab97398490405)
+  11ad7ca6a4d2030f3af76d771ba8857d32db7c94a48d42770c2256da6c667007)
 if(NOT EXISTS "${HID_RP_DIR}/host-include/hid-rp-gamepad.hpp")
   file(ARCHIVE_EXTRACT INPUT "${HID_RP_ARCHIVE}" DESTINATION "${HID_RP_DIR}")
   file(COPY "${HID_RP_DIR}/include/" DESTINATION "${HID_RP_DIR}/host-include"
@@ -105,6 +105,9 @@ if(MSVC)
   target_compile_options(omega_host_tests PRIVATE /W4)
 else()
   target_compile_options(omega_host_tests PRIVATE -Wall -Wextra)
+  # hid-rp 1.3.6 uses std::bit_cast without including <bit>; some standard
+  # libraries only provide it transitively, so make sure it is always there.
+  target_compile_options(omega_host_tests PRIVATE -include bit)
 endif()
 if(MINGW)
   # Let the binary run from shells that do not have the MinGW bin dir on PATH.

@@ -14,6 +14,7 @@ the product must be, not where the work has reached.
 | XAC mode | Implemented, **not verified on real Xbox Adaptive Controller hardware** |
 | Calibration console (WebUSB and Web Serial) | Implemented: `CalibrationService` with a browser page, each USB byte stream routed through a `DispatcherWorker`. Persists input mode, manual offsets, deadzone overrides and nudge tuning |
 | Host unit tests and CI | Implemented: `tests/host` (calibration, store, service, XAC report layout) run by the Host tests workflow on pull requests. The harness supports expected-failure markers for known bugs; none are open |
+| Firmware update over USB, automatic rollback, revert to previous, build versioning | Implemented: OTA messages in `CalibrationService`, `FirmwareHealthCheck` in `main/main.cpp`, see [firmware-updates.md](firmware-updates.md). Host-tested, **not yet hardware-tested** |
 | Response curves, per-axis inversion and gain, tremor filter, profiles, status LED, schema version | Not implemented |
 | Mechanical files for 3D printing | STL files for the printed parts are in [models/](../models/). Editable CAD source, PCB, and wiring are not published |
 | Force and throw measurement | **Not yet performed or published** |

@@ -147,7 +147,23 @@ Evidence behind these requirements is in [docs/research/](research/).
 - **PER-2 [M]** Corrupt or absent stored configuration falls back to defaults and
   reports through STA-2, rather than failing to boot.
 - **PER-3 [S]** Store a schema version so future firmware can migrate or safely
-  reject old records.
+  reject old records. "Major version" in PER-1 means the MAJOR field in
+  `version.txt`, which is bumped when saved settings or the console protocol
+  become incompatible (see [firmware-updates.md](firmware-updates.md)).
+
+Firmware updates (`UPD-`) sit here because they are what PER-1 has to survive.
+
+- **UPD-1 [M]** The firmware can be updated over USB from the calibration console,
+  without a programmer or ESP-IDF installed.
+- **UPD-2 [M]** An update that does not come up healthy (USB HID enumerated, sensor
+  answering, a short period of polling) reverts to the previous firmware
+  automatically, without user action.
+- **UPD-3 [S]** The console shows the installed firmware version and the previous
+  slot's version and state, and lets the user revert to the previous firmware on
+  demand.
+- **UPD-4 [M]** Every build identifies itself and is traceable to a commit; a
+  release build carries only the `version.txt` number and a tag that CI checks
+  against it.
 
 ## 8. Non-functional
 

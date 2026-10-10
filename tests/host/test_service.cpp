@@ -1,13 +1,17 @@
 // CalibrationService: request decoding, replies, store side effects, and the
 // framing path through the real espp stream_frame parser/builder.
 
+#include <atomic>
+#include <chrono>
 #include <limits>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "calibration_service.hpp"
 #include "file_system.hpp"
 #include "omega_store.hpp"
+#include "ota.hpp"
 #include "test_harness.hpp"
 #include "test_support.hpp"
 
@@ -333,4 +337,313 @@ TEST(service_feed_parses_wire_bytes_across_chunks) {
   fx.service.feed(noisy);
   reply = support::decode_one(fx.sent);
   CHECK(reply && is(*reply, Msg::State));
+}
+
+// ---- OTA / firmware info / restart ------------------------------------------
+
+namespace {
+
+/// Like Fixture, but with an espp::Ota fake and restart callback optionally wired.
+struct OtaFixture {
+  TempDir dir;
+  OmegaStore::Config store_cfg;
+  OmegaStore store;
+  espp::Ota ota;
+  std::vector<uint8_t> sent;
+  std::atomic<bool> restart_ran{false};
+  CalibrationService service;
+
+  explicit OtaFixture(const char *label, bool wire_ota = true, bool wire_restart = false)
+      : dir(label)
+      , store_cfg(with_paths())
+      , store(store_cfg)
+      , ota(espp::Ota::Config{})
+      , service(make_config(wire_ota, wire_restart)) {
+    esp_ota_fake().reset();
+  }
+
+  OmegaStore::Config with_paths() const {
+    OmegaStore::Config c;
+    c.calibration_path = dir.file("omega_calibration.cfg");
+    c.settings_path = dir.file("omega_settings.cfg");
+    return c;
+  }
+
+  CalibrationService::Config make_config(bool wire_ota, bool wire_restart) {
+    CalibrationService::Config cfg{.store = store, .send = [this](std::span<const uint8_t> f) {
+                                     sent.insert(sent.end(), f.begin(), f.end());
+                                   }};
+    if (wire_ota) {
+      cfg.ota = &ota;
+    }
+    if (wire_restart) {
+      cfg.restart = [this] { restart_ran = true; };
+    }
+    return cfg;
+  }
+
+  stream::Frame request(Msg type, std::vector<uint8_t> payload = {}) {
+    sent.clear();
+    CHECK(service.handle_frame(static_cast<uint8_t>(type), payload));
+    auto reply = support::decode_one(sent);
+    CHECK(reply.has_value());
+    CHECK(reply->is_reply());
+    return *reply;
+  }
+};
+
+std::vector<uint8_t> u32le(uint32_t v) {
+  return {static_cast<uint8_t>(v), static_cast<uint8_t>(v >> 8), static_cast<uint8_t>(v >> 16),
+          static_cast<uint8_t>(v >> 24)};
+}
+
+std::vector<uint8_t> ota_data(uint32_t offset, const std::vector<uint8_t> &bytes) {
+  auto p = u32le(offset);
+  p.insert(p.end(), bytes.begin(), bytes.end());
+  return p;
+}
+
+} // namespace
+
+TEST(service_get_fw_info_reports_flags_and_strings) {
+  OtaFixture fx("svc_fwinfo");
+  fx.ota.pending_verify = true;
+  fx.ota.running_label = "ota_1";
+  fx.ota.boot_label = "ota_0";
+  auto reply = fx.request(Msg::GetFwInfo);
+  CHECK(is(reply, Msg::FwInfo));
+  const auto &p = reply.payload;
+  CHECK(p.size() >= 2);
+  CHECK_EQ(p[0], 1);
+  CHECK_EQ(p[1], 0);
+  std::vector<std::string> strs;
+  size_t pos = 2;
+  while (pos < p.size()) {
+    const size_t n = p[pos++];
+    CHECK(pos + n <= p.size());
+    strs.emplace_back(reinterpret_cast<const char *>(p.data() + pos), n);
+    pos += n;
+  }
+  const std::vector<std::string> expected{"omega_stick", "v9.9.9-test", "Oct 10 2026", "12:34:56",
+                                          "v6.0.2",      "ota_1",       "deadbeef",    "ota_0",
+                                          "ota_1",       "0.0.9-prev",  "Jan  2 2026", "01:02:03",
+                                          "valid"};
+  CHECK_EQ(strs.size(), expected.size());
+  for (size_t i = 0; i < expected.size() && i < strs.size(); ++i) {
+    CHECK(strs[i] == expected[i]);
+  }
+
+  // The flags follow the fake: not pending, and an active session shows up.
+  fx.ota.pending_verify = false;
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(16)), Msg::Ok));
+  reply = fx.request(Msg::GetFwInfo);
+  CHECK(is(reply, Msg::FwInfo));
+  CHECK_EQ(reply.payload[0], 0);
+  CHECK_EQ(reply.payload[1], 1);
+}
+
+namespace {
+std::vector<std::string> fw_info_strings(const stream::Frame &reply) {
+  std::vector<std::string> strs;
+  const auto &p = reply.payload;
+  size_t pos = 2;
+  while (pos < p.size()) {
+    const size_t n = p[pos++];
+    if (pos + n > p.size()) {
+      break;
+    }
+    strs.emplace_back(reinterpret_cast<const char *>(p.data() + pos), n);
+    pos += n;
+  }
+  return strs;
+}
+} // namespace
+
+TEST(service_get_fw_info_previous_slot_states) {
+  OtaFixture fx("svc_fwinfo_prev");
+  auto &fake = esp_ota_fake();
+
+  fake.other_has_image = false;
+  auto strs = fw_info_strings(fx.request(Msg::GetFwInfo));
+  CHECK_EQ(strs.size(), 13u);
+  if (strs.size() == 13) {
+    CHECK(strs[8] == "ota_1");
+    CHECK(strs[9].empty());
+    CHECK(strs[10].empty());
+    CHECK(strs[11].empty());
+    CHECK(strs[12] == "empty");
+  }
+
+  fake.other_has_image = true;
+  fake.other_state = ESP_OTA_IMG_INVALID;
+  strs = fw_info_strings(fx.request(Msg::GetFwInfo));
+  CHECK_EQ(strs.size(), 13u);
+  if (strs.size() == 13) {
+    CHECK(strs[9] == "0.0.9-prev");
+    CHECK(strs[12] == "invalid");
+  }
+}
+
+TEST(service_revert_errors) {
+  OtaFixture none("svc_revert_none", /*wire_ota=*/false);
+  auto reply = none.request(Msg::Revert);
+  CHECK(is(reply, Msg::Error));
+  CHECK_EQ(stream::get_u32(reply.payload), static_cast<uint32_t>(std::errc::function_not_supported));
+
+  OtaFixture fx("svc_revert_err");
+  auto &fake = esp_ota_fake();
+
+  reply = fx.request(Msg::Revert, {1});
+  CHECK(is(reply, Msg::Error));
+  CHECK_EQ(stream::get_u32(reply.payload), static_cast<uint32_t>(std::errc::invalid_argument));
+
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(16)), Msg::Ok));
+  reply = fx.request(Msg::Revert);
+  CHECK(is(reply, Msg::Error));
+  CHECK_EQ(stream::get_u32(reply.payload), static_cast<uint32_t>(std::errc::operation_in_progress));
+  CHECK_EQ(fake.set_boot_calls, 0);
+  CHECK(is(fx.request(Msg::OtaAbort), Msg::Ok));
+
+  fake.other_has_image = false;
+  reply = fx.request(Msg::Revert);
+  CHECK(is(reply, Msg::Error));
+  CHECK_EQ(stream::get_u32(reply.payload), static_cast<uint32_t>(std::errc::no_such_device));
+  CHECK_EQ(fake.set_boot_calls, 0);
+
+  fake.other_has_image = true;
+  fake.set_boot_result = ESP_FAIL;
+  reply = fx.request(Msg::Revert);
+  CHECK(is(reply, Msg::Error));
+  CHECK_EQ(stream::get_u32(reply.payload), static_cast<uint32_t>(std::errc::io_error));
+  CHECK(support::error_message(reply).find(esp_err_to_name(ESP_FAIL)) != std::string::npos);
+  CHECK_EQ(fake.set_boot_calls, 1);
+  CHECK(!fx.ota.restart_called.load());
+}
+
+TEST(service_revert_sets_boot_partition_and_restarts) {
+  OtaFixture fx("svc_revert_ok");
+  auto &fake = esp_ota_fake();
+  CHECK(is(fx.request(Msg::Revert), Msg::Ok));
+  CHECK_EQ(fake.set_boot_calls, 1);
+  CHECK(fake.last_set_boot == &fake.other);
+  // Restart comes from a detached thread ~750 ms after the reply.
+  std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+  CHECK(fx.ota.restart_called.load());
+}
+
+TEST(service_ota_messages_error_without_ota) {
+  OtaFixture fx("svc_noota", /*wire_ota=*/false);
+  const std::vector<std::pair<Msg, std::vector<uint8_t>>> cases{
+      {Msg::GetFwInfo, {}}, {Msg::OtaBegin, u32le(100)}, {Msg::MarkValid, {}}};
+  for (const auto &[type, payload] : cases) {
+    auto reply = fx.request(type, payload);
+    CHECK(is(reply, Msg::Error));
+    CHECK_EQ(stream::get_u32(reply.payload),
+             static_cast<uint32_t>(std::errc::function_not_supported));
+  }
+  CHECK(is(fx.request(Msg::OtaData, ota_data(0, {1, 2, 3})), Msg::Error));
+  CHECK(is(fx.request(Msg::OtaFinish), Msg::Error));
+  // Abort is harmless without an engine.
+  CHECK(is(fx.request(Msg::OtaAbort), Msg::Ok));
+}
+
+TEST(service_ota_happy_path_streams_image_and_finishes) {
+  OtaFixture fx("svc_ota_ok");
+  std::vector<uint8_t> image(1000);
+  for (size_t i = 0; i < image.size(); ++i) {
+    image[i] = static_cast<uint8_t>(i * 7 + 3);
+  }
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(static_cast<uint32_t>(image.size()))), Msg::Ok));
+  CHECK(fx.ota.session_active());
+  CHECK(fx.service.update_in_progress());
+  CHECK_EQ(fx.ota.image_size(), image.size());
+
+  uint32_t offset = 0;
+  for (const uint32_t chunk : {400u, 400u, 200u}) {
+    const std::vector<uint8_t> part(image.begin() + offset, image.begin() + offset + chunk);
+    auto reply = fx.request(Msg::OtaData, ota_data(offset, part));
+    CHECK(is(reply, Msg::Ok));
+    offset += chunk;
+    CHECK_EQ(stream::get_u32(reply.payload), offset);
+  }
+  CHECK(fx.ota.image == image);
+
+  CHECK(is(fx.request(Msg::OtaFinish), Msg::Ok));
+  CHECK(!fx.ota.session_active());
+  CHECK_EQ(fx.ota.finish_calls, 1);
+
+  // The service reboots from a detached thread ~750 ms after the reply.
+  std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+  CHECK(fx.ota.restart_called.load());
+}
+
+TEST(service_ota_data_rejects_bad_offset_and_missing_session) {
+  OtaFixture fx("svc_ota_bad");
+
+  // No OtaBegin yet.
+  auto reply = fx.request(Msg::OtaData, ota_data(0, {1, 2, 3}));
+  CHECK(is(reply, Msg::Error));
+  CHECK_EQ(stream::get_u32(reply.payload),
+           static_cast<uint32_t>(std::errc::operation_not_permitted));
+  CHECK(is(fx.request(Msg::OtaFinish), Msg::Error));
+
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(64)), Msg::Ok));
+  CHECK(is(fx.request(Msg::OtaData, ota_data(0, {1, 2, 3, 4})), Msg::Ok));
+
+  // Wrong offset: error, nothing written, session survives.
+  reply = fx.request(Msg::OtaData, ota_data(100, {9, 9}));
+  CHECK(is(reply, Msg::Error));
+  CHECK(support::error_message(reply).find("offset") != std::string::npos);
+  CHECK(fx.ota.session_active());
+  CHECK_EQ(fx.ota.bytes_written(), 4u);
+
+  // An offset with no data is rejected too.
+  CHECK(is(fx.request(Msg::OtaData, u32le(4)), Msg::Error));
+
+  // The right offset still works afterwards.
+  reply = fx.request(Msg::OtaData, ota_data(4, {5, 6}));
+  CHECK(is(reply, Msg::Ok));
+  CHECK_EQ(stream::get_u32(reply.payload), 6u);
+}
+
+TEST(service_ota_write_failure_ends_session) {
+  OtaFixture fx("svc_ota_wfail");
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(64)), Msg::Ok));
+  fx.ota.fail_next_write = true;
+  CHECK(is(fx.request(Msg::OtaData, ota_data(0, {1, 2})), Msg::Error));
+  CHECK(!fx.ota.session_active());
+  // The service no longer owns a session.
+  CHECK(is(fx.request(Msg::OtaData, ota_data(0, {1, 2})), Msg::Error));
+}
+
+TEST(service_ota_abort_ends_session) {
+  OtaFixture fx("svc_ota_abort");
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(64)), Msg::Ok));
+  CHECK(fx.ota.session_active());
+  CHECK(is(fx.request(Msg::OtaAbort), Msg::Ok));
+  CHECK(!fx.ota.session_active());
+  CHECK_EQ(fx.ota.abort_calls, 1);
+  CHECK(is(fx.request(Msg::OtaData, ota_data(0, {1})), Msg::Error));
+}
+
+TEST(service_mark_valid_clears_pending_verify) {
+  OtaFixture fx("svc_markvalid");
+  fx.ota.pending_verify = true;
+  CHECK(is(fx.request(Msg::MarkValid), Msg::Ok));
+  CHECK(!fx.ota.pending_verify);
+  fx.ota.fail_mark_valid = true;
+  CHECK(is(fx.request(Msg::MarkValid), Msg::Error));
+}
+
+TEST(service_restart_requires_callback_and_empty_payload) {
+  OtaFixture none("svc_restart_none", /*wire_ota=*/false, /*wire_restart=*/false);
+  CHECK(is(none.request(Msg::Restart), Msg::Error));
+
+  OtaFixture fx("svc_restart", /*wire_ota=*/false, /*wire_restart=*/true);
+  CHECK(is(fx.request(Msg::Restart, {1}), Msg::Error));
+  CHECK(!fx.restart_ran.load());
+
+  CHECK(is(fx.request(Msg::Restart), Msg::Ok));
+  std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+  CHECK(fx.restart_ran.load());
 }

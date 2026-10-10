@@ -15,6 +15,7 @@ By participating you agree to follow our [Code of Conduct](./CODE_OF_CONDUCT.md)
 - [Code style](#code-style)
 - [Static analysis](#static-analysis)
 - [Making a change](#making-a-change)
+- [Versioning](#versioning)
 - [Adding dependencies](#adding-dependencies)
 - [Testing](#testing)
 - [Reporting security issues](#reporting-security-issues)
@@ -187,6 +188,30 @@ Maintainers may ask for changes. Accessibility tradeoffs in particular tend to
 need discussion, because a change that helps one person's use case can make the
 device unusable for someone else.
 
+## Versioning
+
+`version.txt` holds the firmware number as `MAJOR.MINOR.PATCH`. It is bumped by
+hand, in the pull request that warrants it:
+
+- **MAJOR** when saved calibration or settings, or the console protocol, become
+  incompatible.
+- **MINOR** for a new user-visible feature.
+- **PATCH** for fixes.
+
+Builds embed the number alone for a release (clean tree at the tag), and
+`<version>+<7-char sha>` otherwise, with `.dirty` added for uncommitted changes.
+A release tag is `vMAJOR.MINOR.PATCH` (for example `v0.1.0`), placed on the merge
+commit, and CI refuses to publish a release whose tag does not match
+`version.txt`. See [docs/firmware-updates.md](docs/firmware-updates.md).
+
+The console and the firmware can be on different versions, so the protocol is
+append-only:
+
+- Message IDs in
+  [calibration_service.hpp](components/omega_calibration/include/calibration_service.hpp)
+  are never renumbered or reused. Add new ones at the end.
+- Anything that reads `FW_INFO` must tolerate extra trailing fields.
+
 ## Adding dependencies
 
 Use the component manager rather than editing the manifest by hand:
@@ -227,6 +252,8 @@ The tests compile the component headers unchanged. The espp pieces that need
 ESP-IDF (logger, joystick, file system) are replaced by small stand-ins under
 `tests/host/stubs/`; the espp framing and dispatcher headers are the real ones,
 downloaded pinned to the version in `dependencies.lock` and verified by hash.
+Stand-ins for the OTA-related ESP-only headers (`ota.hpp`, `esp_app_desc.h`,
+`esp_ota_ops.h`) live there too.
 
 If you change the calibration store, the console protocol, or the calibration
 file format, add or update a test alongside the change.
