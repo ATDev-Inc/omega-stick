@@ -17,6 +17,7 @@
 #include "esp_system.h" // esp_restart() -- used to apply a live mode switch (see on_mode_changed below)
 
 #include "calibration_service.hpp"
+#include "dispatcher_worker.hpp"
 #include "file_system.hpp"
 #include "hid-rp-mouse.hpp"
 #include "hid-rp.hpp"
@@ -34,6 +35,13 @@
 using namespace std::chrono_literals;
 
 static constexpr uint8_t TMAG_ADDRESS = 0x35;
+
+// USB ids. These are espp::UsbDevice's defaults (a borrowed pid.codes pair),
+// spelled out so the calibration console's WebUSB filter (DEFAULT_VID /
+// DEFAULT_PID in components/omega_calibration/web/calibration_console.html)
+// has one place to match. Replace both with an allocated PID before shipping.
+static constexpr uint16_t OMEGA_USB_VID = 0x1209;
+static constexpr uint16_t OMEGA_USB_PID = 0x0d32;
 
 // Scales the normalized joystick output (-1..1) into mouse movement counts
 // per polling interval. Lower this to slow the cursor down, raise it to
@@ -215,8 +223,9 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
               printf("WARNING: failed to save settings before restart: %s\n",
                      save_ec.message().c_str());
             }
-            // Give the calibration console's OK reply a moment to actually
-            // go out over USB before the reset tears the link down.
+            // CalibrationService sends the OK before calling this; give it a
+            // moment to actually go out over USB before the reset tears the
+            // link down.
             std::this_thread::sleep_for(200ms);
             esp_restart();
           },
@@ -389,7 +398,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
   printf("Y maximum:                 %.6f\n", center.effective_center_y() + range.max_y);
 
-  if (!XAC_SELECTION) { // TODO
+  if (!XAC_SELECTION) { // MOUSE mode; the XAC branch is the else below
 
     printf("\n");
     printf("========================================\n");
@@ -407,6 +416,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     espp::UsbDevice::Config usb_cfg;
     usb_cfg.manufacturer = "espp";
     usb_cfg.product = "omega-stick mouse";
+    usb_cfg.vid = OMEGA_USB_VID;
+    usb_cfg.pid = OMEGA_USB_PID;
     espp::UsbDevice::CdcFunction cdc_fn;
     cdc_fn.route_console = true;
     usb_cfg.cdc = cdc_fn;
@@ -418,14 +429,15 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     usb_cfg.hid = hid_fn;
 
     // --------------------------------------------------------------------
-    // Calibration console wiring (module 5) -- BEST-EFFORT / UNVERIFIED.
-    // We don't have usb_device.hpp in this session, so the exact field and
-    // method names below (VendorFunction, .on_receive, write_vendor(),
-    // write_cdc()) are inferred from coredump_service.hpp's own header
-    // comment ("send = usb.write_vendor(frame), and call feed(data) from
-    // the vendor receive callback" / the equivalent CDC line). Confirm
-    // these against your actual espp::UsbDevice API before relying on it;
-    // everything else in this file does not depend on this section.
+    // Calibration console wiring (module 5), checked against usb_device.hpp
+    // (espp/usb_device 1.3.3) and dispatcher_worker.hpp (espp/dispatcher
+    // 1.3.5), see dependencies.lock. One CalibrationService and
+    // one DispatcherWorker per USB byte stream (vendor for WebUSB, CDC for
+    // Web Serial). The receive callbacks only push() bytes into the worker:
+    // they run on the TinyUSB task, where UsbDevice's write path fails fast
+    // instead of waiting for FIFO room, so replying from there could drop
+    // frames. The worker parses and dispatches on its own task, and also
+    // answers the console's module-0xFF discovery request.
     // --------------------------------------------------------------------
     static espp::UsbDevice *usb_ptr = nullptr; // set once `usb` exists, below
     espp::CalibrationService::Config calibration_cfg{
@@ -452,16 +464,34 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
         usb_ptr->write_cdc(frame);
     };
     espp::CalibrationService calibration_cdc(calibration_cfg);
+    espp::DispatcherWorker vendor_link({
+        .send =
+            [](std::span<const uint8_t> frame) {
+              if (usb_ptr)
+                usb_ptr->write_vendor(frame);
+            },
+        .task_config = {.name = "cal_vendor_rx", .stack_size_bytes = 8192},
+    });
+    vendor_link.register_module(calibration_vendor);
+    vendor_link.serve_discovery("omega-stick");
+    espp::DispatcherWorker cdc_link({
+        .send =
+            [](std::span<const uint8_t> frame) {
+              if (usb_ptr)
+                usb_ptr->write_cdc(frame);
+            },
+        .task_config = {.name = "cal_cdc_rx", .stack_size_bytes = 8192},
+    });
+    cdc_link.register_module(calibration_cdc);
+    cdc_link.serve_discovery("omega-stick");
 
     espp::UsbDevice::VendorFunction vendor_fn;
     vendor_fn.interface_name = "omega-stick vendor";
-    vendor_fn.on_receive = [&calibration_vendor](std::span<const uint8_t> data) {
-      calibration_vendor.feed(data);
+    vendor_fn.on_receive = [&vendor_link](std::span<const uint8_t> data) {
+      vendor_link.push(data);
     };
     usb_cfg.vendor = vendor_fn;
-    cdc_fn.on_receive = [&calibration_cdc](std::span<const uint8_t> data) {
-      calibration_cdc.feed(data);
-    };
+    cdc_fn.on_receive = [&cdc_link](std::span<const uint8_t> data) { cdc_link.push(data); };
     usb_cfg.cdc = cdc_fn; // re-assign now that on_receive is set
 
     espp::UsbDevice usb(usb_cfg);
@@ -521,8 +551,6 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
       // --- Recalibration-on-demand (see the section above) ---
       if (recalibration_requested.exchange(false)) {
         printf("\n=== RE-CALIBRATION REQUESTED (calibration console) ===\n");
-        const float old_manual_offset_x = center.manual_offset_x;
-        const float old_manual_offset_y = center.manual_offset_y;
         espp::OmegaCalibration::CenterResult new_center;
         espp::OmegaCalibration::RangeResult new_range;
         std::error_code recal_ec;
@@ -543,18 +571,16 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
         bool recal_ok = recal.center_calibration(new_center, recal_ec) &&
                         recal.range_calibration(new_center, new_range, recal_ec);
         if (recal_ok) {
-          // Preserve whatever manual offset was already live -- a fresh
-          // center_calibration() starts it at zero, and recalibration is
-          // only supposed to redo the center/range sweep, not discard a
-          // previously-tuned trim (deadzone overrides, nudge tuning and
-          // input mode already live outside CenterResult/RangeResult, in
-          // DeviceSettings, so they're untouched either way).
-          espp::OmegaCalibration::set_manual_offset(new_center, old_manual_offset_x,
-                                                    old_manual_offset_y);
+          // Recalibration redoes only the center/range sweep. A fresh
+          // center_calibration() starts the manual offset at zero, so
+          // set_measured_calibration() keeps the store's live trim, and we
+          // read it back (deadzone overrides, nudge tuning and input mode
+          // live in DeviceSettings, so they're untouched either way).
           recal.finalize_center_deadzone(new_center, new_range);
-          center = new_center;
           range = new_range;
-          store.set_calibration(center, range); // fires on_calibration_changed -> re-applies live
+          // fires on_calibration_changed -> re-applies live
+          store.set_measured_calibration(new_center, range);
+          center = store.center();
           std::error_code save_ec;
           if (!store.save_to_flash(save_ec)) {
             printf("WARNING: recalibration succeeded but saving to flash failed: %s\n",
@@ -639,7 +665,10 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
       }
 
       if (drift_compensator.update(raw_x, raw_y, cur_mag, center)) {
-        store.set_calibration(center, range); // keeps the store (and console) in sync
+        // Keeps the store (and console) in sync without reverting a manual
+        // offset set since our copy was taken; read the live one back.
+        store.set_measured_calibration(center, range);
+        center = store.center();
         espp::OmegaCalibration::apply_calibration(js, center, range, store.settings());
         drift_nudge_count++;
         if (drift_nudge_count % SAVE_EVERY_N_NUDGES == 0) {
@@ -678,6 +707,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     espp::UsbDevice::Config usb_cfg;
     usb_cfg.manufacturer = "espp";
     usb_cfg.product = "omega-stick XAC";
+    usb_cfg.vid = OMEGA_USB_VID;
+    usb_cfg.pid = OMEGA_USB_PID;
 
     espp::UsbDevice::CdcFunction cdc_fn;
     cdc_fn.route_console = true;
@@ -690,9 +721,9 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
     usb_cfg.hid = hid_fn;
 
-    // Same best-effort calibration-console wiring as the mouse branch above
-    // (see the comment there) -- kept here too so the console still works
-    // when the stick boots in XAC mode.
+    // Same calibration-console wiring as the mouse branch above (see the
+    // comment there) -- kept here too so the console still works when the
+    // stick boots in XAC mode.
     static espp::UsbDevice *usb_ptr = nullptr;
     espp::CalibrationService::Config calibration_cfg{
         .store = store,
@@ -718,15 +749,33 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
         usb_ptr->write_cdc(frame);
     };
     espp::CalibrationService calibration_cdc(calibration_cfg);
+    espp::DispatcherWorker vendor_link({
+        .send =
+            [](std::span<const uint8_t> frame) {
+              if (usb_ptr)
+                usb_ptr->write_vendor(frame);
+            },
+        .task_config = {.name = "cal_vendor_rx", .stack_size_bytes = 8192},
+    });
+    vendor_link.register_module(calibration_vendor);
+    vendor_link.serve_discovery("omega-stick");
+    espp::DispatcherWorker cdc_link({
+        .send =
+            [](std::span<const uint8_t> frame) {
+              if (usb_ptr)
+                usb_ptr->write_cdc(frame);
+            },
+        .task_config = {.name = "cal_cdc_rx", .stack_size_bytes = 8192},
+    });
+    cdc_link.register_module(calibration_cdc);
+    cdc_link.serve_discovery("omega-stick");
     espp::UsbDevice::VendorFunction vendor_fn;
     vendor_fn.interface_name = "omega-stick vendor";
-    vendor_fn.on_receive = [&calibration_vendor](std::span<const uint8_t> data) {
-      calibration_vendor.feed(data);
+    vendor_fn.on_receive = [&vendor_link](std::span<const uint8_t> data) {
+      vendor_link.push(data);
     };
     usb_cfg.vendor = vendor_fn;
-    cdc_fn.on_receive = [&calibration_cdc](std::span<const uint8_t> data) {
-      calibration_cdc.feed(data);
-    };
+    cdc_fn.on_receive = [&cdc_link](std::span<const uint8_t> data) { cdc_link.push(data); };
     usb_cfg.cdc = cdc_fn;
 
     espp::UsbDevice usb(usb_cfg);
@@ -798,8 +847,6 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
       // --- Recalibration-on-demand (see the section above the mouse loop) ---
       if (recalibration_requested.exchange(false)) {
         printf("\n=== RE-CALIBRATION REQUESTED (calibration console) ===\n");
-        const float old_manual_offset_x = center.manual_offset_x;
-        const float old_manual_offset_y = center.manual_offset_y;
         espp::OmegaCalibration::CenterResult new_center;
         espp::OmegaCalibration::RangeResult new_range;
         std::error_code recal_ec;
@@ -820,12 +867,10 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
         bool recal_ok = recal.center_calibration(new_center, recal_ec) &&
                         recal.range_calibration(new_center, new_range, recal_ec);
         if (recal_ok) {
-          espp::OmegaCalibration::set_manual_offset(new_center, old_manual_offset_x,
-                                                    old_manual_offset_y);
           recal.finalize_center_deadzone(new_center, new_range);
-          center = new_center;
           range = new_range;
-          store.set_calibration(center, range);
+          store.set_measured_calibration(new_center, range); // keeps the live manual offset
+          center = store.center();
           std::error_code save_ec;
           if (!store.save_to_flash(save_ec)) {
             printf("WARNING: recalibration succeeded but saving to flash failed: %s\n",
@@ -850,7 +895,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
       if (drift_compensator.update(raw_x, raw_y, mapped_magnitude, center)) {
 
-        store.set_calibration(center, range);
+        store.set_measured_calibration(center, range); // keeps the live manual offset
+        center = store.center();
         espp::OmegaCalibration::apply_calibration(js, center, range, store.settings());
 
         drift_nudge_count++;

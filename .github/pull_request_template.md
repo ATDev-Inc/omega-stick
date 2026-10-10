@@ -19,6 +19,7 @@
 
 - [ ] Built locally with `idf.py build`
 - [ ] Flashed and tested on hardware
+- [ ] Host tests pass (`ctest`) if `components/omega_calibration` or `components/xac` changed
 - [ ] CI build passes
 
 Board/host tested on:

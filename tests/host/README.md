@@ -52,28 +52,28 @@ do. When the underlying bug is fixed the test starts passing, the runner
 reports `XPASS`, and the run fails until the marker is changed to `TEST`.
 That keeps the fix and its regression test tied together.
 
-Current XFAIL entries:
+There are no XFAIL entries at the moment. Fixed, now plain tests:
 
-- `store_input_mode_same_value_is_a_no_op`: re-selecting the active mode
-  still fires `on_mode_changed`, which saves and reboots.
-- `store_set_calibration_preserves_live_manual_offset`: a drift nudge or
-  recalibration pushed from a stale local `CenterResult` reverts a manual
-  offset the console set.
-- `service_ok_reply_is_sent_before_mode_change_callback_runs`: the mode
-  change callback (which reboots) runs before the OK reply is built, so the
-  console always times out on `SET_INPUT_MODE`.
+- `store_set_measured_calibration_preserves_live_manual_offset`: a drift
+  nudge or recalibration pushed from the control loop's stale local
+  `CenterResult` reverted a manual offset the console set. The loop now
+  pushes through `OmegaStore::set_measured_calibration()`, which keeps the
+  live offset, and reads `center()` back.
+- `store_input_mode_same_value_is_a_no_op` and
+  `service_ok_reply_is_sent_before_mode_change_callback_runs`: re-selecting
+  the active mode is ignored, and `CalibrationService` applies a mode change
+  only after the OK reply has been sent, so the console sees the OK before
+  the device restarts.
 - `xac_report_bytes_follow_descriptor_order`,
   `xac_centered_report_is_neutral`, `xac_stick_x_moves_report_x`: espp's
-  `GamepadInputReport::get_report()` (and `set_data()`) skip a fixed 2 bytes
-  at the front of the object. With the default `uint16_t` axes that is the
-  report ID plus one byte of alignment padding, but `XacInputReport` uses
-  `uint8_t` axes, which have no padding, so the copy starts one byte late:
-  X is dropped, every later field moves down a slot, RZ reads 0 (right
-  stick pinned to an edge) and the last byte is read from past the end of
-  the object. This is the "drifts up, only moves in X" behaviour seen on
-  the Xbox Adaptive Controller. The fix belongs upstream in espp
-  (`hid-rp-gamepad.hpp`); until then `XacInputReport` should override
-  `get_report()` with a 1-byte offset (0 when `REPORT_ID` is 0).
+  `GamepadInputReport::get_report()` skips a fixed 2 bytes at the front of
+  the object (report ID plus padding for the default `uint16_t` axes).
+  `XacInputReport` uses `uint8_t` axes, which have no padding, so it
+  overrides `get_report()` to skip only the report ID. Without that, X was
+  dropped and every later field moved down a slot: the "drifts up, only
+  moves in X" behaviour seen on the Xbox Adaptive Controller. Full
+  deflection reads 0 and 254, not 255: hid-rp maps [-1, 1] to center 127
+  plus or minus 127.
 
 ## Component quirks the host build surfaced
 
@@ -85,6 +85,16 @@ Current XFAIL entries:
   `make_error_code`. The specialisation needs a namespace-scope overload to
   work, so `ec == OmegaCalibration::Error::file_open_failed` does not
   compile. The tests go through `support::is_error()` instead.
+- On Windows (clang with the MSVC STL, or MSVC itself) the build fails in
+  the pinned espp `hid-rp` headers with "no member named 'bit_cast' in
+  namespace 'std'": `hid/rdf/short_item.hpp` uses `std::bit_cast` without
+  including `<bit>`, which libstdc++ happens to pull in transitively. Until
+  that is fixed upstream, force-include the header when configuring, for
+  example with clang and Ninja:
+
+  ```
+  cmake -S tests/host -B build-host -G Ninja -DCMAKE_CXX_COMPILER=clang++ "-DCMAKE_CXX_FLAGS=-include bit"
+  ```
 
 ## Not covered here
 

@@ -24,9 +24,9 @@
 
     ------------------------------------------------------------------
     CALIBRATION PROTOCOL (MODULE 5) -- this is the contract a firmware-side
-    handler needs to implement (e.g. a calibration_service.hpp alongside
-    the existing coredump_service.hpp / ota_service.hpp, registered with
-    the same espp::Dispatcher those use). This page is the reference
+    handler needs to implement (implemented by calibration_service.hpp
+    alongside the existing coredump_service.hpp / ota_service.hpp, registered
+    with the same espp::Dispatcher those use). This page is the reference
     client for that contract; nothing here is firmware code.
     ------------------------------------------------------------------
 
@@ -300,7 +300,7 @@
       </div>
       <p id="devInfo" class="muted" style="margin: 8px 0 0;">
         Not connected. Needs a firmware build with the calibration module (5) registered on the
-        same dispatcher as coredump/OTA — see the protocol spec in this page's source comment.
+        same dispatcher as coredump/OTA (see the protocol spec in this page's source comment).
       </p>
     </div>
 
@@ -313,7 +313,7 @@
       </div>
 
       <fieldset>
-        <legend>Calibration (read-only — from the last interactive sweep)</legend>
+        <legend>Calibration (read-only, from the last interactive sweep)</legend>
         <div class="field-grid" id="calibrationFields">
           <div class="field"><span class="field-label">Center X / Y</span><span class="field-value" data-f="center">-</span></div>
           <div class="field"><span class="field-label">Center noise radius</span><span class="field-value" data-f="noise">-</span></div>
@@ -324,6 +324,21 @@
           <div class="field"><span class="field-label">Usable radius</span><span class="field-value" data-f="usableRadius">-</span></div>
           <div class="field"><span class="field-label">Reliable max radius (normalized)</span><span class="field-value" data-f="reliableRadius">-</span></div>
           <div class="field"><span class="field-label">Range deadzone (auto)</span><span class="field-value" data-f="rangeDeadzoneAuto">-</span></div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Manual center offset (trim)</legend>
+        <div class="edit-row">
+          <label for="offsetX">Offset X</label>
+          <input type="number" id="offsetX" class="grow" step="0.001" value="0">
+          <label for="offsetY">Offset Y</label>
+          <input type="number" id="offsetY" class="grow" step="0.001" value="0">
+        </div>
+        <div class="edit-row">
+          <button id="applyOffsetBtn" class="primary" disabled>Apply live</button>
+          <button id="zeroOffsetBtn" disabled>Reset to 0</button>
+          <span class="muted">added to the calibrated center, in the same raw units as Center X / Y above</span>
         </div>
       </fieldset>
 
@@ -372,7 +387,7 @@
           <button id="modeMouseBtn" disabled>Mouse</button>
           <button id="modeXacBtn" disabled>XAC gamepad</button>
         </div>
-        <p class="muted" style="margin: 8px 0 0;">Applies live and takes effect immediately (may re-enumerate the USB HID device).</p>
+        <p class="muted" style="margin: 8px 0 0;">The device saves its settings and restarts to apply the new mode, so this console will disconnect; reconnect afterwards.</p>
       </fieldset>
 
       <fieldset>
@@ -380,7 +395,7 @@
         <p class="warn-text" style="margin: 0 0 8px;">
           Re-runs the full interactive center + range calibration sequence on the device
           (the same one that runs on a fresh boot). This blocks mouse/XAC output for the
-          duration and walks you through moving the stick via printed prompts — connect
+          duration and walks you through moving the stick via printed prompts. Connect
           over <strong>Web Serial</strong> (not WebUSB) to see those prompts in the console
           log below. Manual deadzone overrides, nudge tuning, and input mode are left as-is.
         </p>
@@ -403,8 +418,8 @@
     <footer>
       Speaks a module-5 extension of the espp OT framing shared with the coredump and OTA
       consoles (magic "OT" + flags + module + type + len + payload + CRC-32; see this page's
-      source comment for the full spec). Firmware flashing (.elf) is handled by the separate
-      OTA console — see <a href="ota_console.html">ota_console.html</a> alongside this page.
+      source comment for the full spec). This page does not flash firmware; use
+      <code>idf.py flash</code> as described in the project README.
       Everything here runs locally in your browser.
     </footer>
   </div>
@@ -415,7 +430,7 @@
     // ===================================================================
     // Constants (must match the calibration module's device-side handler)
     // ===================================================================
-    const DEFAULT_VID = 0x1209, DEFAULT_PID = 0x0d36;
+    const DEFAULT_VID = 0x1209, DEFAULT_PID = 0x0d32; // OMEGA_USB_VID / OMEGA_USB_PID in main/main.cpp
     const VENDOR_CLASS = 0xFF;
     const HEADER_SIZE = 9, CRC_SIZE = 4;
     const MAX_PAYLOAD = 4096;
@@ -457,6 +472,7 @@
     const els = {};
     for (const id of ["status", "usbBtn", "serialBtn", "anyDevice", "devInfo",
                       "refreshBtn", "saveFlashBtn", "stateInfo",
+                      "offsetX", "offsetY", "applyOffsetBtn", "zeroOffsetBtn",
                       "centerDzEnable", "centerDzValue", "rangeDzEnable", "rangeDzValue", "applyDeadzoneBtn",
                       "nudgeEnter", "nudgeExit", "nudgeTime", "applyNudgeBtn",
                       "modeMouseBtn", "modeXacBtn",
@@ -884,6 +900,8 @@
       els.anyDevice.disabled = connected;
       els.refreshBtn.disabled = !connected || busy;
       els.saveFlashBtn.disabled = !connected || busy || !haveState;
+      els.applyOffsetBtn.disabled = !connected || busy || !haveState;
+      els.zeroOffsetBtn.disabled = !connected || busy || !haveState;
       els.applyDeadzoneBtn.disabled = !connected || busy || !haveState;
       els.applyNudgeBtn.disabled = !connected || busy || !haveState;
       els.modeMouseBtn.disabled = !connected || busy || !haveState;
@@ -1016,7 +1034,7 @@
     }
 
     // ===================================================================
-    // STATE decode/encode helpers (fixed 75-byte struct — see the header
+    // STATE decode/encode helpers (fixed 79-byte struct, see the header
     // comment for the exact field order/sizes)
     // ===================================================================
     let state = null; // decoded STATE payload, kept as the form's source of truth
@@ -1058,6 +1076,9 @@
       fieldEls.reliableRadius.textContent = s.reliableMaxRadius.toFixed(6) + " (" + (s.normalizedMaxRadius * 100).toFixed(1) + "%)";
       fieldEls.rangeDeadzoneAuto.textContent = s.rangeDeadzoneAuto.toFixed(6);
 
+      els.offsetX.value = s.manualOffsetX.toFixed(6);
+      els.offsetY.value = s.manualOffsetY.toFixed(6);
+
       els.centerDzEnable.checked = s.manualCenterDeadzone !== null;
       els.centerDzValue.disabled = !els.centerDzEnable.checked;
       els.centerDzValue.value = (s.manualCenterDeadzone !== null ? s.manualCenterDeadzone : s.centerDeadzoneAuto).toFixed(4);
@@ -1079,15 +1100,21 @@
     els.centerDzEnable.addEventListener("change", () => { els.centerDzValue.disabled = !els.centerDzEnable.checked; });
     els.rangeDzEnable.addEventListener("change", () => { els.rangeDzValue.disabled = !els.rangeDzEnable.checked; });
 
+    // Fetches and renders STATE without touching `busy`, so the Apply
+    // handlers (which already hold busy) can re-read the device's state.
+    async function fetchState() {
+      const reply = await transact(TYPE.GET_STATE, null, [TYPE.STATE], CMD_TIMEOUT_MS, 1);
+      state = decodeState(reply.payload);
+      haveState = true;
+      renderState(state);
+      logLine("sys", "Fetched calibration & settings state.");
+    }
+
     async function refreshState() {
       if (!transport || busy) return;
       busy = true; updateUI(); setStatus("busy", "Fetching state...");
       try {
-        const reply = await transact(TYPE.GET_STATE, null, [TYPE.STATE], CMD_TIMEOUT_MS, 1);
-        state = decodeState(reply.payload);
-        haveState = true;
-        renderState(state);
-        logLine("sys", "Fetched calibration & settings state.");
+        await fetchState();
         setStatus("connected", "Connected");
       } catch (e) {
         logLine("err", "GET_STATE failed: " + e.message);
@@ -1097,6 +1124,31 @@
       }
     }
     els.refreshBtn.addEventListener("click", refreshState);
+
+    async function applyManualOffset(x, y) {
+      if (!transport || busy) return;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        logLine("err", "Manual offset: enter a number for both X and Y."); return;
+      }
+      const payload = new Uint8Array(8);
+      const v = new DataView(payload.buffer);
+      v.setFloat32(0, x, true);
+      v.setFloat32(4, y, true);
+      busy = true; updateUI(); setStatus("busy", "Applying manual offset...");
+      try {
+        await transact(TYPE.SET_MANUAL_OFFSET, payload, [TYPE.OK], CMD_TIMEOUT_MS, 1);
+        logLine("sys", "Manual center offset applied live (" + x + " / " + y + ").");
+        await fetchState();
+      } catch (e) {
+        logLine("err", "SET_MANUAL_OFFSET failed: " + e.message);
+      } finally {
+        busy = false; updateUI();
+        if (transport) setStatus("connected", "Connected");
+      }
+    }
+    els.applyOffsetBtn.addEventListener("click", () =>
+      applyManualOffset(parseFloat(els.offsetX.value), parseFloat(els.offsetY.value)));
+    els.zeroOffsetBtn.addEventListener("click", () => applyManualOffset(0, 0));
 
     els.applyDeadzoneBtn.addEventListener("click", async () => {
       if (!transport || busy) return;
@@ -1115,7 +1167,7 @@
       try {
         await transact(TYPE.SET_DEADZONE_OVERRIDE, payload, [TYPE.OK], CMD_TIMEOUT_MS, 1);
         logLine("sys", "Deadzone override applied live" + (centerOn || rangeOn ? "." : " (cleared)."));
-        await refreshState();
+        await fetchState();
       } catch (e) {
         logLine("err", "SET_DEADZONE_OVERRIDE failed: " + e.message);
       } finally {
@@ -1147,7 +1199,7 @@
       try {
         await transact(TYPE.SET_NUDGE_SETTINGS, payload, [TYPE.OK], CMD_TIMEOUT_MS, 1);
         logLine("sys", "Nudge-click settings applied live.");
-        await refreshState();
+        await fetchState();
       } catch (e) {
         logLine("err", "SET_NUDGE_SETTINGS failed: " + e.message);
       } finally {
@@ -1162,7 +1214,7 @@
       try {
         await transact(TYPE.SET_INPUT_MODE, new Uint8Array([mode]), [TYPE.OK], CMD_TIMEOUT_MS, 1);
         logLine("sys", "Switched to " + (mode === INPUT_MODE.XAC ? "XAC gamepad" : "mouse") + " mode.");
-        await refreshState();
+        await fetchState();
       } catch (e) {
         logLine("err", "SET_INPUT_MODE failed: " + e.message);
       } finally {

@@ -944,7 +944,7 @@ public:
   /// Deletes the persisted calibration file at the given path, forcing a
   /// fresh interactive calibration next time load() is tried (e.g. from a
   /// "hold button at boot to recalibrate" check, or a debug/console
-  /// command). It is not an error for the file to already be missing —
+  /// command). It is not an error for the file to already be missing:
   /// this returns true in that case too. Returns false (with ec set) only
   /// if the file exists but couldn't actually be removed.
   static bool clear(const std::filesystem::path &path, std::error_code &ec) {

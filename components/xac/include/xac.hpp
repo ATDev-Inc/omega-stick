@@ -141,9 +141,6 @@ public:
   /**
    * @brief Get the HID report descriptor.
    */
-  /**
-   * @brief Get the HID report descriptor.
-   */
   static constexpr auto get_descriptor() {
     using namespace hid::page;
     using namespace hid::rdf;

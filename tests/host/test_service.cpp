@@ -1,6 +1,7 @@
 // CalibrationService: request decoding, replies, store side effects, and the
 // framing path through the real espp stream_frame parser/builder.
 
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -133,6 +134,42 @@ TEST(service_set_deadzone_override_honours_flags) {
   CHECK_NEAR(s.manual_range_deadzone.value_or(0), 0.06f, 1e-6);
 }
 
+TEST(service_rejects_non_finite_manual_offset) {
+  int changed = 0;
+  Fixture fx("svc_offset_nan", {.on_calibration_changed = [&]() { ++changed; }});
+  const float before_x = fx.store.center().manual_offset_x;
+  for (const float bad :
+       {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()}) {
+    std::vector<uint8_t> payload;
+    support::put_f32(payload, 0.25f);
+    support::put_f32(payload, bad);
+    const auto reply = fx.request(Msg::SetManualOffset, payload);
+    CHECK(is(reply, Msg::Error));
+    CHECK(support::error_message(reply).find("finite") != std::string::npos);
+  }
+  CHECK_EQ(changed, 0);
+  CHECK_NEAR(fx.store.center().manual_offset_x, before_x, 1e-6);
+}
+
+TEST(service_rejects_invalid_deadzone_override_values) {
+  Fixture fx("svc_dz_bad");
+  for (const float bad :
+       {-0.01f, std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()}) {
+    std::vector<uint8_t> payload{0x01};
+    support::put_f32(payload, bad); // center, flag set
+    support::put_f32(payload, 0.0f);
+    CHECK(is(fx.request(Msg::SetDeadzoneOverride, payload), Msg::Error));
+  }
+  CHECK(!fx.store.settings().manual_center_deadzone.has_value());
+
+  // A bad value under a CLEAR flag is ignored, as the protocol documents.
+  std::vector<uint8_t> payload{0x02};
+  support::put_f32(payload, std::numeric_limits<float>::quiet_NaN());
+  support::put_f32(payload, 0.05f);
+  CHECK(is(fx.request(Msg::SetDeadzoneOverride, payload), Msg::Ok));
+  CHECK_NEAR(fx.store.settings().manual_range_deadzone.value_or(0), 0.05f, 1e-6);
+}
+
 TEST(service_set_nudge_settings_validates_ranges) {
   Fixture fx("svc_nudge");
   auto build = [](float enter, float exit, uint32_t ms) {
@@ -165,10 +202,9 @@ TEST(service_set_input_mode_switches_store_and_notifies) {
   CHECK(fx.store.settings().input_mode == OmegaStore::InputMode::XAC);
 }
 
-XFAIL_TEST(service_ok_reply_is_sent_before_mode_change_callback_runs,
-           "set_input_mode fires on_mode_changed synchronously inside handle_frame_locked, "
-           "before the OK reply is built; main.cpp's callback calls esp_restart(), so the "
-           "console never receives the OK and reports a timeout for a switch that worked") {
+// main.cpp's on_mode_changed calls esp_restart(), so the OK must already be sent
+// when it runs, or the console reports a timeout for a switch that worked.
+TEST(service_ok_reply_is_sent_before_mode_change_callback_runs) {
   int sends_seen_from_callback = -1;
   const Fixture *self = nullptr;
   Fixture fx("svc_mode_order", {.on_mode_changed = [&](OmegaStore::InputMode) {
