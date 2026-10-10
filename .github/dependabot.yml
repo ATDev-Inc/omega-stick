@@ -1,0 +1,20 @@
+# Dependabot covers GitHub Actions only. ESP-IDF component-manager dependencies
+# (dependencies.lock) are not covered by Dependabot and are bumped by hand; see
+# D20 in docs/decisions.md for the espp 1.3.6 decision.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "ci"
+      include: "scope"

@@ -2,13 +2,17 @@
 
 <img src="assets/logo/lockup.svg" alt="Omega Stick" width="360">
 
-**A low-force joystick for people with disabilities.** Omega Stick is an
-accessible input device for computer control and gaming. Actuation force is
-adjustable across roughly 5 to 25 grams and defaults to under 10.
+**A low-force joystick for accessible computer control and gaming.** Omega
+Stick is an accessible input device that presents itself as a standard USB
+mouse or gamepad. Its actuation force is designed to be adjustable across
+roughly 5 to 25 grams, defaulting below 10 (a design target until the
+measurements in [docs/status.md](docs/status.md) are published).
 
 [![Build and Package Main](https://github.com/ATDev-Inc/omega-stick/actions/workflows/package_main.yml/badge.svg)](https://github.com/ATDev-Inc/omega-stick/actions/workflows/package_main.yml)
 [![Static analysis](https://github.com/ATDev-Inc/omega-stick/actions/workflows/static_analysis.yml/badge.svg)](https://github.com/ATDev-Inc/omega-stick/actions/workflows/static_analysis.yml)
 [![Host tests](https://github.com/ATDev-Inc/omega-stick/actions/workflows/host_tests.yml/badge.svg)](https://github.com/ATDev-Inc/omega-stick/actions/workflows/host_tests.yml)
+[![Web tests](https://github.com/ATDev-Inc/omega-stick/actions/workflows/web_tests.yml/badge.svg)](https://github.com/ATDev-Inc/omega-stick/actions/workflows/web_tests.yml)
+[![Fuzz](https://github.com/ATDev-Inc/omega-stick/actions/workflows/fuzz.yml/badge.svg)](https://github.com/ATDev-Inc/omega-stick/actions/workflows/fuzz.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
 This repository holds the **firmware**: an ESP-IDF project for the ESP32-S3,
@@ -30,6 +34,7 @@ component library.
   - [Build options](#build-options)
 - [Repository layout](#repository-layout)
 - [Contributing](#contributing)
+- [Getting help](#getting-help)
 - [License](#license)
 - [Acknowledgements](#acknowledgements)
 
@@ -45,8 +50,10 @@ Omega Stick removes the mechanical resistance from the sensing path. It uses a
 **contactless 3-axis Hall-effect sensor** (TI TMAG5273) that measures the
 position of a small magnet, so nothing has to be depressed, wiped, or deflected
 against a spring to register movement. The actuation force is set by the return
-mechanism alone, and is **adjustable from roughly 5 to 25 grams, defaulting
-below 10**.
+mechanism alone, and is designed to be **adjustable from roughly 5 to 25
+grams, defaulting below 10**. Those figures are design targets: the force and
+throw measurements are not published yet (see
+[docs/status.md](docs/status.md)).
 
 Adjustability matters as much as the floor. Vendors at the low-force frontier
 report that a stick can be *too* light to control well, so the usable range
@@ -80,7 +87,15 @@ What works today:
   and scroll.
 - **Browser calibration console**: WebUSB and Web Serial, for viewing and tuning
   settings, switching input mode, and re-running calibration.
-- Host unit tests for the calibration component and the XAC report, run in CI.
+- **Firmware updates over USB** from the console, with automatic rollback if a
+  new image does not come up healthy, and a button to revert to the previous
+  firmware. See [Firmware updates and versioning](#firmware-updates-and-versioning).
+- **Sensor fault handling**: if the sensor stops answering or freezes, the
+  device reports a centered stick until it recovers.
+- **Tests in CI**: host unit tests against the real espp code (calibration,
+  control loop, console protocol, sensor driver, HID reports), Node tests for
+  the console, and fuzzing of the frame parser. No hardware-in-the-loop tests
+  yet.
 
 Experimental: **XAC (Xbox Adaptive Controller) gamepad mode** is implemented but
 has not been verified on real XAC hardware.
@@ -103,6 +118,7 @@ Product and planning documents live in [docs/](docs/):
 | [compliance.md](docs/compliance.md) | What the project may and may not claim about itself |
 | [status.md](docs/status.md) | Current working status |
 | [firmware-updates.md](docs/firmware-updates.md) | USB firmware updates, rollback, and versioning |
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each release |
 | [research/](docs/research/) | Background research these were built from |
 | [assets/logo/](assets/logo/) | Brand marks, wordmark, the animated hero scene, and usage notes |
 
@@ -286,9 +302,19 @@ Everyone participating in this project is expected to follow the [Code of
 Conduct](./CODE_OF_CONDUCT.md). To report a security issue, see
 [SECURITY.md](./SECURITY.md).
 
+## Getting help
+
+Questions go to [GitHub Discussions](https://github.com/ATDev-Inc/omega-stick/discussions),
+bugs and requests to the [issue forms](https://github.com/ATDev-Inc/omega-stick/issues/new/choose),
+and security reports privately as described in [SECURITY.md](SECURITY.md). See
+[SUPPORT.md](SUPPORT.md) for what this project can and cannot help with.
+
 ## License
 
-Released under the [MIT License](./LICENSE).
+Released under the [MIT License](./LICENSE). The firmware image also contains
+third-party code under its own licenses (MIT, Apache-2.0, BSD-3-Clause,
+MPL-2.0 and BSL-1.0); see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Acknowledgements
 

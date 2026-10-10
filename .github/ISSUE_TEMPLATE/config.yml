@@ -6,3 +6,6 @@ contact_links:
   - name: Report a security vulnerability
     url: https://github.com/ATDev-Inc/omega-stick/security/advisories/new
     about: Please report security vulnerabilities privately here instead of opening a public issue.
+  - name: Support and getting help
+    url: https://github.com/ATDev-Inc/omega-stick/blob/main/SUPPORT.md
+    about: Where to ask questions, report bugs, and give accessibility feedback. This project is not a medical device or a support service.
