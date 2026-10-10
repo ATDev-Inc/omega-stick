@@ -224,8 +224,10 @@ SHA identifies the exact image.
 
 ### Cutting a release
 
-1. Open a PR that bumps `version.txt` (and adds the changelog entry, if you keep
-   one). Make sure it builds and the host tests pass.
+1. Open a PR that bumps `version.txt` and turns the `[Unreleased]` section of
+   [CHANGELOG.md](../CHANGELOG.md) into `[MAJOR.MINOR.PATCH] - YYYY-MM-DD`,
+   with a fresh empty `[Unreleased]` above it and the compare links at the
+   bottom updated. Make sure it builds and the host tests pass.
 2. Merge it to `main`.
 3. Tag the merge commit `vMAJOR.MINOR.PATCH` (for example `v0.1.0`), push the tag,
    and publish a GitHub release for it. CI refuses to publish if the tag does
@@ -236,9 +238,9 @@ SHA identifies the exact image.
    `flasher_args.json` and `flash_args`. The release's `omega_stick.bin` reports
    exactly `MAJOR.MINOR.PATCH`.
 
-Users then upload `omega_stick.bin` from the release through the console. A
-CHANGELOG with one short entry per tagged release, listing user-visible changes
-and any update that needs a serial flash, would be a good convention.
+Users then upload `omega_stick.bin` from the release through the console.
+Paste the release's CHANGELOG section into the release notes, and call out any
+update that needs a serial flash (a partition table change) at the top.
 
 ## Limitations
 
