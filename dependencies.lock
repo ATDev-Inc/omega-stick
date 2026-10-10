@@ -38,7 +38,7 @@ dependencies:
       require: private
       version: '>=5.0'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.3.5
   espp/color:
@@ -52,7 +52,7 @@ dependencies:
       require: private
       version: '>=5.0'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.3.5
   espp/coredump:
@@ -124,7 +124,7 @@ dependencies:
       require: private
       version: '>=5.0'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.3.5
   espp/hid-rp:
@@ -178,7 +178,7 @@ dependencies:
       require: private
       version: '>=5.0'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.3.5
   espp/joystick:
@@ -210,7 +210,7 @@ dependencies:
       require: private
       version: '>=5.0'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.3.5
   espp/math:
@@ -246,7 +246,7 @@ dependencies:
       require: private
       version: '>=5.0'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.3.5
   espp/qtpy:
@@ -293,7 +293,7 @@ dependencies:
       require: private
       version: '>=5.0'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.3.5
   espp/stream_frame:
@@ -367,7 +367,7 @@ dependencies:
       require: public
       version: '>=0.17.0~2'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     targets:
     - esp32s2
@@ -409,20 +409,28 @@ dependencies:
 direct_dependencies:
 - espp/base_component
 - espp/base_peripheral
+- espp/cli
+- espp/color
 - espp/coredump
 - espp/dispatcher
 - espp/file_system
+- espp/format
 - espp/hid-rp
 - espp/i2c
+- espp/interrupt
 - espp/joystick
+- espp/logger
 - espp/math
+- espp/neopixel
 - espp/qtpy
+- espp/rmt
 - espp/stream_frame
 - espp/task
 - espp/timer
 - espp/usb_device
+- espressif/esp_tinyusb
 - espressif/tinyusb
 - idf
-manifest_hash: 250ae92cf8fa96351d14f83ae0cd8e8122097163d4c2131f1d481181059ab777
+manifest_hash: 14ecedc39756b22e94702c4785f8fa2887845232afdc85e070ecf5c8beeac614
 target: esp32s3
 version: 3.0.0
