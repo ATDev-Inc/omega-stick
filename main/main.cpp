@@ -14,6 +14,7 @@
 #include <thread>
 #include <vector>
 
+#include "esp_app_desc.h" // esp_app_get_description() -- firmware version banner at boot
 #include "esp_system.h" // esp_restart() -- used to apply a live mode switch (see on_mode_changed below)
 
 #include "calibration_service.hpp"
@@ -26,6 +27,7 @@
 #include "logger.hpp"
 #include "omega_calibration.hpp"
 #include "omega_store.hpp"
+#include "ota.hpp"
 #include "qtpy.hpp"
 #include "task.hpp"
 #include "tmag5273.hpp"
@@ -116,6 +118,85 @@ static const std::string CALIBRATION_FILE_NAME = "omega_calibration.cfg";
 // espp::Task with its own generously-sized stack instead.
 static constexpr size_t MAIN_TASK_STACK_SIZE_BYTES = 16 * 1024;
 
+// ============================================================================
+// OTA rollback health check
+// ============================================================================
+//
+// With CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE (sdkconfig.defaults) a freshly
+// installed image boots in the PENDING_VERIFY state, and the bootloader
+// reverts to the previous image on the next reset unless the app confirms
+// itself. Nothing confirms it automatically (espp::Ota deliberately leaves
+// that to the application), so this is where it happens.
+//
+// The new image is confirmed only once it has demonstrably done its job: USB
+// has enumerated, the magnetic sensor answers, and the polling loop has been
+// running for HEALTHY_UPTIME. If it cannot manage that within
+// ROLLBACK_DEADLINE it is marked invalid and the device reboots into the
+// previous image on purpose, instead of limping along until a power cycle
+// happens to trigger the rollback. The calibration console's MARK_VALID
+// button remains available as a manual override either way.
+//
+// Consequence worth knowing: any reset (mode switch, unplug) during the first
+// HEALTHY_UPTIME after an update reverts to the previous firmware. The
+// console shows the image as "pending verify" until it is confirmed.
+class FirmwareHealthCheck {
+public:
+  static constexpr auto HEALTHY_UPTIME = 10s;
+  static constexpr auto ROLLBACK_DEADLINE = 90s;
+  static constexpr auto CHECK_INTERVAL = 1s;
+
+  explicit FirmwareHealthCheck(espp::Ota &ota)
+      : ota_(ota)
+      , pending_(ota.is_pending_verify())
+      , start_(std::chrono::steady_clock::now())
+      , last_check_(start_) {
+    if (pending_) {
+      printf("OTA: running image is PENDING VERIFY; confirming after %llds of healthy operation\n",
+             static_cast<long long>(HEALTHY_UPTIME.count()));
+    }
+  }
+
+  /// Call once per polling-loop iteration. Free when nothing is pending;
+  /// otherwise `sensor_ok` runs at most once per CHECK_INTERVAL, so it may
+  /// do an I2C transaction.
+  template <typename SensorOk> void tick(bool hid_ready, SensorOk &&sensor_ok) {
+    if (!pending_) {
+      return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_check_ < CHECK_INTERVAL) {
+      return;
+    }
+    last_check_ = now;
+    const bool sensor = sensor_ok();
+    const bool healthy = hid_ready && sensor;
+    std::error_code ec;
+    if (healthy && now - start_ >= HEALTHY_UPTIME) {
+      if (ota_.mark_app_valid(ec)) {
+        printf("OTA: new firmware confirmed healthy; rollback cancelled\n");
+      } else {
+        printf("OTA: mark_app_valid failed (%s); next reset will roll back\n",
+               ec.message().c_str());
+      }
+      pending_ = false;
+      return;
+    }
+    if (now - start_ >= ROLLBACK_DEADLINE) {
+      printf("OTA: new firmware never became healthy (hid_ready=%d sensor_ok=%d); rolling back\n",
+             hid_ready, sensor);
+      ota_.mark_app_invalid_and_rollback(ec); // only returns on failure
+      printf("OTA: rollback failed (%s); next reset will roll back\n", ec.message().c_str());
+      pending_ = false;
+    }
+  }
+
+private:
+  espp::Ota &ota_;
+  bool pending_;
+  std::chrono::steady_clock::time_point start_;
+  std::chrono::steady_clock::time_point last_check_;
+};
+
 // Runs entirely on the dedicated "omega-stick" task (see app_main below),
 // not on the small default main-task stack. Matches espp::Task's callback
 // signature; m/cv are unused since this function never yields back to the
@@ -193,6 +274,18 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   // ==========================================================================
   const std::filesystem::path calibration_path =
       espp::OmegaCalibration::default_path(CALIBRATION_FILE_NAME);
+
+  // OTA engine shared by every CalibrationService instance below (vendor + CDC, mouse + XAC).
+  // Must outlive them; this function never returns, so a local is fine.
+  espp::Ota ota({.reject_same_version = false, .log_level = espp::Logger::Verbosity::ERROR});
+  {
+    // Version banner: the same fields the console reports via GET_FW_INFO, so a
+    // serial log and a bug report can be matched up.
+    const esp_app_desc_t *app = esp_app_get_description();
+    printf("Firmware %s %s (built %s %s, idf %s) running from %s%s\n", app->project_name,
+           app->version, app->date, app->time, app->idf_ver, ota.running_partition_label().c_str(),
+           ota.is_pending_verify() ? " [PENDING VERIFY]" : "");
+  }
 
   // Set once the mouse/XAC Joystick below is constructed, so a live
   // manual-offset or deadzone-override edit from the calibration console
@@ -456,6 +549,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
               }
               return true;
             },
+        .restart = []() { esp_restart(); },
+        .ota = &ota,
         .log_level = espp::Logger::Verbosity::ERROR,
     };
     espp::CalibrationService calibration_vendor(calibration_cfg);
@@ -547,7 +642,14 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     js.update();
     float prev_x = js.x();
     float prev_y = js.y();
+    FirmwareHealthCheck fw_health(ota);
     while (true) {
+      fw_health.tick(usb.is_hid_ready(), [&tmag] {
+        std::error_code read_ec;
+        tmag.read_magnetic(read_ec);
+        return !read_ec;
+      });
+
       // --- Recalibration-on-demand (see the section above) ---
       if (recalibration_requested.exchange(false)) {
         printf("\n=== RE-CALIBRATION REQUESTED (calibration console) ===\n");
@@ -741,6 +843,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
               }
               return true;
             },
+        .restart = []() { esp_restart(); },
+        .ota = &ota,
         .log_level = espp::Logger::Verbosity::ERROR,
     };
     espp::CalibrationService calibration_vendor(calibration_cfg);
@@ -843,7 +947,14 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     // HID polling loop
     // ------------------------------------------------------------
 
+    FirmwareHealthCheck fw_health(ota);
     while (true) {
+      fw_health.tick(usb.is_hid_ready(), [&tmag] {
+        std::error_code read_ec;
+        tmag.read_magnetic(read_ec);
+        return !read_ec;
+      });
+
       // --- Recalibration-on-demand (see the section above the mouse loop) ---
       if (recalibration_requested.exchange(false)) {
         printf("\n=== RE-CALIBRATION REQUESTED (calibration console) ===\n");

@@ -94,6 +94,45 @@
                       f32 nudge_exit_threshold             (absolute)
                       u32 nudge_time_ms                    (measurement window)
                       u8  input_mode                       (0 = mouse, 1 = XAC)
+      0x57 RESTART                (no payload) -- reply OK is sent first, then
+                                   the device reboots ~750 ms later (USB
+                                   re-enumerates; reconnect afterwards).
+      0x58 OTA_BEGIN              u32 image_size -- starts a firmware upload
+                                   session (erases the inactive OTA slot, so
+                                   this reply can take a while)
+      0x59 OTA_DATA               u32 offset (must equal the bytes written so
+                                   far) + raw app-image bytes. Reply OK with
+                                   u32 = total bytes written so far
+      0x5A OTA_FINISH             (no payload) -- validate + activate the new
+                                   image; reply OK, then the device reboots
+      0x5B OTA_ABORT              (no payload) -- abandon the upload session
+      0x5C GET_FW_INFO            (no payload) -- reply FW_INFO
+      0x5D MARK_VALID             (no payload) -- confirm the running image
+                                   (cancels app rollback)
+      0x5E REVERT                 (no payload) -- make the other OTA slot (the
+                                   previously installed firmware) the boot
+                                   partition; reply OK, then reboot ~750 ms later.
+                                   ERROR if an upload is in progress, the other
+                                   slot has no app image, or the bootloader
+                                   selection could not be written. The reverted
+                                   image boots pending verify and must pass the
+                                   same health check.
+      The OTA messages reply ERROR (function_not_supported) if the firmware
+      was built without an OTA engine wired in.
+      0xD2 FW_INFO  (reply to GET_FW_INFO) -- u8 pending_verify (0/1),
+                    u8 session_active (0/1), u8 len + project name,
+                    then length-prefixed strings (u8 len + utf8, no terminators),
+                    in order: project name, version, build_date ("Oct 10 2026"),
+                    build_time ("14:03:11"), idf_version ("v6.0.2"),
+                    running_partition ("ota_0"), elf_sha256_short (first 8 hex
+                    chars of the app ELF SHA-256), boot_partition (partition the
+                    bootloader boots next, "ota_1"), then the previous (other) slot:
+                    prev_label ("ota_1"), prev_version, prev_build_date,
+                    prev_build_time, prev_state ("valid", "new", "pending_verify",
+                    "invalid", "aborted", "undefined", or "empty" when the slot holds
+                    no readable image; version/date/time are then empty). Older
+                    firmware sends fewer strings: hosts must tolerate a shorter
+                    payload and treat missing strings as empty.
       0xDF OK      (reply to any SET_*/SAVE_TO_FLASH/START_CALIBRATION) --
                     payload: u32 (0 on success; a device may also just omit
                     the payload). For START_CALIBRATION this only means
@@ -220,6 +259,9 @@
     .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin: 0 0 10px; }
     .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .muted { color: var(--text-muted); font-size: 12.5px; }
+    .kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0; font-size: 12.5px; }
+    .kv dt { color: var(--text-muted); }
+    .kv dd { margin: 0; font-family: monospace; }
     .warn-text { color: var(--warn); font-size: 12.5px; }
 
     button {
@@ -404,6 +446,52 @@
           <span id="recalInfo" class="muted"></span>
         </div>
       </fieldset>
+
+      <fieldset>
+        <legend>Firmware update</legend>
+        <div class="row">
+          <span class="muted">Running: <span id="fwRunning">-</span></span>
+          <span id="fwPending" class="warn-text" hidden>PENDING VERIFY: rolls back on next reset unless confirmed</span>
+          <button id="markValidBtn" disabled hidden>Mark running image valid</button>
+        </div>
+        <div class="row" style="margin: 6px 0;">
+          <dl class="kv">
+            <dt>Version</dt><dd id="fwVersion">n/a</dd>
+            <dt>Build</dt><dd id="fwBuild">n/a</dd>
+            <dt>ESP-IDF</dt><dd id="fwIdf">n/a</dd>
+            <dt>Running partition</dt><dd id="fwRunPart">n/a</dd>
+            <dt>Boot partition</dt><dd id="fwBootPart">n/a</dd>
+            <dt>Image SHA</dt><dd id="fwSha">n/a</dd>
+          </dl>
+          <button id="fwCopyBtn" disabled>Copy</button>
+        </div>
+        <div class="row" style="margin: 6px 0;">
+          <dl class="kv">
+            <dt>Previous slot</dt><dd id="fwPrevSlot">n/a</dd>
+            <dt>Previous version</dt><dd id="fwPrevVersion">n/a</dd>
+            <dt>Previous build</dt><dd id="fwPrevBuild">n/a</dd>
+            <dt>Previous state</dt><dd id="fwPrevState">n/a</dd>
+          </dl>
+          <button id="fwRevertBtn" class="danger" disabled title="No previous firmware in the other slot">Revert to previous firmware</button>
+        </div>
+        <div class="edit-row">
+          <input type="file" id="fwFile" accept=".bin">
+          <button id="flashBtn" class="danger" disabled>Flash firmware</button>
+        </div>
+        <progress id="fwProgress" value="0" max="1" style="width:100%" hidden></progress>
+        <p class="muted" style="margin: 8px 0 0;">
+          Select the app image (<code>build/&lt;project&gt;.bin</code>, not the .elf). The device
+          validates it, switches slots and reboots, so reconnect afterwards.
+        </p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Device</legend>
+        <div class="edit-row">
+          <button id="restartBtn" class="danger" disabled>Restart device</button>
+          <span class="muted">Software reset. USB re-enumerates, so reconnect afterwards.</span>
+        </div>
+      </fieldset>
     </div>
 
     <div class="panel">
@@ -418,9 +506,9 @@
     <footer>
       Speaks a module-5 extension of the espp OT framing shared with the coredump and OTA
       consoles (magic "OT" + flags + module + type + len + payload + CRC-32; see this page's
-      source comment for the full spec). This page does not flash firmware; use
-      <code>idf.py flash</code> as described in the project README.
-      Everything here runs locally in your browser.
+      source comment for the full spec). Firmware updates (build/omega_stick.bin) are handled
+      in the "Firmware update" section above; see docs/firmware-updates.md for the rollback
+      and versioning rules. Everything here runs locally in your browser.
     </footer>
   </div>
 
@@ -450,19 +538,32 @@
       SET_INPUT_MODE: 0x54,
       SAVE_TO_FLASH: 0x55,
       START_CALIBRATION: 0x56,
+      RESTART: 0x57,
+      OTA_BEGIN: 0x58,
+      OTA_DATA: 0x59,
+      OTA_FINISH: 0x5A,
+      OTA_ABORT: 0x5B,
+      GET_FW_INFO: 0x5C,
+      MARK_VALID: 0x5D,
+      REVERT: 0x5E,
       STATE: 0xD0,
       CALIBRATION_RESULT: 0xD1,
+      FW_INFO: 0xD2,
       OK: 0xDF,
       ERROR: 0xFE,
     };
     const TYPE_NAME = {
       0x50: "GET_STATE", 0x51: "SET_MANUAL_OFFSET", 0x52: "SET_DEADZONE_OVERRIDE",
       0x53: "SET_NUDGE_SETTINGS", 0x54: "SET_INPUT_MODE", 0x55: "SAVE_TO_FLASH",
-      0x56: "START_CALIBRATION",
-      0xD0: "STATE", 0xD1: "CALIBRATION_RESULT", 0xDF: "OK", 0xFE: "ERROR",
+      0x56: "START_CALIBRATION", 0x57: "RESTART", 0x58: "OTA_BEGIN", 0x59: "OTA_DATA",
+      0x5A: "OTA_FINISH", 0x5B: "OTA_ABORT", 0x5C: "GET_FW_INFO", 0x5D: "MARK_VALID", 0x5E: "REVERT",
+      0xD0: "STATE", 0xD1: "CALIBRATION_RESULT", 0xD2: "FW_INFO", 0xDF: "OK", 0xFE: "ERROR",
     };
     const CMD_TIMEOUT_MS = 5000;
     const SAVE_TIMEOUT_MS = 8000; // flash write may take longer than a live-apply
+    const OTA_BEGIN_TIMEOUT_MS = 60000;  // BEGIN erases the target partition
+    const OTA_FINISH_TIMEOUT_MS = 30000; // image validation
+    const OTA_CHUNK = 4000;              // frame payload max is 4096, minus the 4-byte offset
     const SERIAL_BAUD = 115200;
     const INPUT_MODE = { MOUSE: 0, XAC: 1 };
 
@@ -477,6 +578,8 @@
                       "nudgeEnter", "nudgeExit", "nudgeTime", "applyNudgeBtn",
                       "modeMouseBtn", "modeXacBtn",
                       "recalibrateBtn", "recalInfo",
+                      "fwRunning", "fwPending", "markValidBtn",
+                      "fwVersion", "fwBuild", "fwIdf", "fwRunPart", "fwBootPart", "fwSha", "fwCopyBtn", "fwPrevSlot", "fwPrevVersion", "fwPrevBuild", "fwPrevState", "fwRevertBtn", "fwFile", "flashBtn", "fwProgress", "restartBtn",
                       "logFrames", "clearLogBtn", "log", "unsupported"]) {
       els[id] = document.getElementById(id);
     }
@@ -883,6 +986,11 @@
       logLine("sys", "Connected (" + (t.kind === "usb" ? "WebUSB vendor interface" : "Web Serial / CDC") + ").");
       checkModulePresent().catch(() => {});
       refreshState();
+      refreshFwInfo().then((ok) => {
+        if (!ok) return;
+        logLine("sys", fwSummary());
+        if (fwInfo.pending) watchPendingVerify();
+      });
     }
 
     let haveState = false;
@@ -907,6 +1015,12 @@
       els.modeMouseBtn.disabled = !connected || busy || !haveState;
       els.modeXacBtn.disabled = !connected || busy || !haveState;
       els.recalibrateBtn.disabled = !connected || busy;
+      els.flashBtn.disabled = !connected || busy;
+      els.restartBtn.disabled = !connected || busy;
+      els.markValidBtn.disabled = !connected || busy;
+      const canRevert = connected && !busy && prevSlotUsable();
+      els.fwRevertBtn.disabled = !canRevert;
+      els.fwRevertBtn.title = prevSlotUsable() ? "" : "No previous firmware in the other slot";
       if (!connected) { els.devInfo.textContent = "Not connected."; els.recalInfo.textContent = ""; }
     }
 
@@ -1262,6 +1376,179 @@
       } catch (e) {
         logLine("err", "START_CALIBRATION failed: " + e.message);
         els.recalInfo.textContent = "Request failed: " + e.message;
+      } finally {
+        busy = false; updateUI();
+        if (transport) setStatus("connected", "Connected");
+      }
+    });
+
+    let fwInfo = null;
+
+    const REVERTIBLE_STATES = ["valid", "new", "pending_verify", "invalid", "aborted", "undefined"];
+    function prevSlotUsable() {
+      return !!fwInfo && REVERTIBLE_STATES.includes(fwInfo.prevState);
+    }
+
+    function fwSummary() {
+      const f = fwInfo || {};
+      const v = (s) => s || "n/a";
+      return "omega_stick " + v(f.version) + " (built " + v(f.date) + " " + v(f.time) +
+             ", idf " + v(f.idf) + ", sha " + v(f.sha) + ", running " + v(f.running) + ")";
+    }
+
+    // Returns true when FW_INFO was fetched and parsed.
+    async function refreshFwInfo() {
+      if (!transport) return false;
+      try {
+        const r = await transact(TYPE.GET_FW_INFO, null, [TYPE.FW_INFO], CMD_TIMEOUT_MS, 1);
+        const p = r.payload; let i = 2;
+        // Older firmware sends fewer strings: stop gracefully, missing fields are "".
+        const str = () => {
+          if (i >= p.length) return "";
+          const n = p[i++]; const t = new TextDecoder().decode(p.subarray(i, i + n)); i += n; return t;
+        };
+        const pending = p[0] === 1;
+        const f = { pending, project: str(), version: str(), date: str(), time: str(), idf: str(),
+                    running: str(), sha: str(), boot: str(),
+                    prevLabel: str(), prevVersion: str(), prevDate: str(), prevTime: str(), prevState: str() };
+        if (!f.prevState) f.prevState = "unknown (older firmware)";
+        fwInfo = f;
+        const v = (s) => s || "n/a";
+        els.fwRunning.textContent = (f.project + " " + f.version).trim() || "-";
+        els.fwVersion.textContent = v(f.version);
+        els.fwBuild.textContent = (f.date || f.time) ? (f.date + " " + f.time).trim() : "n/a";
+        els.fwIdf.textContent = v(f.idf);
+        els.fwRunPart.textContent = v(f.running);
+        els.fwBootPart.textContent = v(f.boot) + (pending ? " (pending verify)" : "");
+        els.fwSha.textContent = v(f.sha);
+        els.fwPrevSlot.textContent = v(f.prevLabel);
+        els.fwPrevVersion.textContent = v(f.prevVersion);
+        els.fwPrevBuild.textContent = (f.prevDate || f.prevTime) ? (f.prevDate + " " + f.prevTime).trim() : "n/a";
+        els.fwPrevState.textContent = f.prevState;
+        els.fwCopyBtn.disabled = false;
+        updateUI();
+        els.fwPending.hidden = !pending;
+        els.markValidBtn.hidden = !pending;
+        return true;
+      } catch (e) { els.fwRunning.textContent = "(unavailable)"; return false; }
+    }
+
+    // After an update the new image boots "pending verify" and confirms itself
+    // once it has run healthily for ~10 s (FirmwareHealthCheck in main.cpp), or
+    // rolls back if it never does. Poll until the flag clears so the panel and
+    // the log show the outcome without a manual refresh. If the device rolls
+    // back it reboots, the connection drops, and the watch stops on its own.
+    let pendingWatch = null;
+    function watchPendingVerify() {
+      if (pendingWatch) return;
+      logLine("sys", "New firmware is pending verification; waiting for it to confirm itself...");
+      pendingWatch = setInterval(async () => {
+        if (!transport) { clearInterval(pendingWatch); pendingWatch = null; return; }
+        if (busy) return;
+        const ok = await refreshFwInfo();
+        if (!ok || fwInfo.pending) return;
+        clearInterval(pendingWatch); pendingWatch = null;
+        logLine("sys", "Firmware confirmed healthy; rollback cancelled. Running " + fwSummary());
+      }, 3000);
+    }
+
+    els.fwCopyBtn.addEventListener("click", async () => {
+      const text = fwSummary();
+      try {
+        await navigator.clipboard.writeText(text);
+        logLine("sys", "Copied firmware summary: " + text);
+      } catch (e) { logLine("err", "Copy failed: " + e.message); }
+    });
+
+    els.markValidBtn.addEventListener("click", async () => {
+      if (!transport || busy) return;
+      try {
+        await transact(TYPE.MARK_VALID, null, [TYPE.OK], CMD_TIMEOUT_MS, 0);
+        logLine("sys", "Running image marked valid.");
+      } catch (e) { logLine("err", "MARK_VALID failed: " + e.message); }
+      refreshFwInfo();
+    });
+
+    els.fwRevertBtn.addEventListener("click", async () => {
+      if (!transport || busy || !prevSlotUsable()) return;
+      const f = fwInfo;
+      const ver = f.prevVersion || "unknown version";
+      const build = (f.prevDate || f.prevTime) ? (f.prevDate + " " + f.prevTime).trim() : "unknown build";
+      if (!window.confirm("Revert to previous firmware " + ver + " (built " + build + ", slot " +
+        (f.prevLabel || "?") + ", state " + f.prevState + ")?\n\n" +
+        "The device will reboot. The reverted " +
+        "firmware boots pending verify and will have to pass the health check, or it rolls back again."))
+        return;
+      busy = true; updateUI(); setStatus("busy", "Reverting...");
+      try {
+        await transact(TYPE.REVERT, null, [TYPE.OK], CMD_TIMEOUT_MS, 0);
+        logLine("sys", "Reverting to " + ver + " (" + (f.prevLabel || "?") +
+                "). The device is rebooting; reconnect in a few seconds.");
+      } catch (e) {
+        logLine("err", "Revert failed: " + e.message);
+      } finally {
+        busy = false; updateUI();
+        if (transport) setStatus("connected", "Connected");
+      }
+    });
+
+    els.flashBtn.addEventListener("click", async () => {
+      if (!transport || busy) return;
+      const file = els.fwFile.files && els.fwFile.files[0];
+      if (!file) { logLine("err", "Choose a .bin file first."); return; }
+      const img = new Uint8Array(await file.arrayBuffer());
+      if (img.length === 0 || img[0] !== 0xE9) {
+        logLine("err", "That doesn't look like an ESP app image (first byte should be 0xE9). Use the .bin, not the .elf.");
+        return;
+      }
+      if (!window.confirm("Flash " + file.name + " (" + img.length + " bytes)? The device will reboot into it.")) return;
+
+      busy = true; updateUI(); setStatus("busy", "Flashing...");
+      els.fwProgress.hidden = false; els.fwProgress.value = 0;
+      let began = false;
+      try {
+        const begin = new Uint8Array(4);
+        new DataView(begin.buffer).setUint32(0, img.length, true);
+        logLine("sys", "OTA: erasing target partition...");
+        await transact(TYPE.OTA_BEGIN, begin, [TYPE.OK], OTA_BEGIN_TIMEOUT_MS, 0);
+        began = true;
+
+        for (let off = 0; off < img.length; off += OTA_CHUNK) {
+          const chunk = img.subarray(off, Math.min(off + OTA_CHUNK, img.length));
+          const payload = new Uint8Array(4 + chunk.length);
+          new DataView(payload.buffer).setUint32(0, off, true);
+          payload.set(chunk, 4);
+          await transact(TYPE.OTA_DATA, payload, [TYPE.OK], CMD_TIMEOUT_MS * 2, 0);
+          els.fwProgress.value = (off + chunk.length) / img.length;
+        }
+
+        logLine("sys", "OTA: validating and activating...");
+        await transact(TYPE.OTA_FINISH, null, [TYPE.OK], OTA_FINISH_TIMEOUT_MS, 0);
+        began = false;
+        logLine("sys", "Firmware accepted. The device is rebooting; reconnect in a few seconds.");
+      } catch (e) {
+        logLine("err", "Flash failed: " + e.message);
+        if (began && transport) {
+          try { await transact(TYPE.OTA_ABORT, null, [TYPE.OK], CMD_TIMEOUT_MS, 0); } catch (_) { }
+        }
+      } finally {
+        busy = false; updateUI();
+        els.fwProgress.hidden = true;
+        if (transport) setStatus("connected", "Connected");
+      }
+    });
+
+    els.restartBtn.addEventListener("click", async () => {
+      if (!transport || busy) return;
+      if (!window.confirm("Restart the device now? Unsaved live changes (offsets, deadzones, " +
+        "nudge tuning) will be lost. You'll need to reconnect."))
+        return;
+      busy = true; updateUI(); setStatus("busy", "Restarting...");
+      try {
+        await transact(TYPE.RESTART, null, [TYPE.OK], CMD_TIMEOUT_MS, 0);
+        logLine("sys", "Restart accepted; the device is rebooting. Reconnect in a few seconds.");
+      } catch (e) {
+        logLine("err", "RESTART failed: " + e.message);
       } finally {
         busy = false; updateUI();
         if (transport) setStatus("connected", "Connected");

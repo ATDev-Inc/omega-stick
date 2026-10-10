@@ -51,6 +51,36 @@
 //                                 actual pass/fail arrives later as an
 //                                 unsolicited CalibrationResult frame (see
 //                                 notify_calibration_result()).
+//   0x57 RESTART                : no payload. Reply: OK (sent first), then
+//                                 Config::restart runs ~750 ms later from a
+//                                 detached thread. ERROR if Config::restart
+//                                 is unset or a payload is present.
+//   0x58 OTA_BEGIN              : payload: u32 image_size. Starts a firmware
+//                                 upload session. Reply: OK / ERROR.
+//   0x59 OTA_DATA               : payload: u32 offset + raw image bytes
+//                                 (offset must equal the bytes written so
+//                                 far). Reply: OK with u32 = total bytes
+//                                 written so far / ERROR (a failed write
+//                                 aborts the session).
+//   0x5A OTA_FINISH             : no payload. Validates + activates the new
+//                                 image. Reply: OK, then the device reboots
+//                                 ~750 ms later via espp::Ota::restart().
+//   0x5B OTA_ABORT              : no payload. Aborts an upload begun by this
+//                                 service. Reply: OK.
+//   0x5C GET_FW_INFO            : no payload. Reply: FW_INFO.
+//   0x5D MARK_VALID             : no payload. Confirms the running image
+//                                 (cancels app rollback). Reply: OK / ERROR.
+//   0x5E REVERT                 : no payload. Makes the other OTA slot (the
+//                                 previously installed firmware, see FW_INFO)
+//                                 the boot partition. Reply: OK, then the
+//                                 device reboots ~750 ms later. ERROR if an
+//                                 upload is in progress, the other slot holds
+//                                 no valid app image, or the bootloader
+//                                 selection could not be written. The reverted
+//                                 to image boots PENDING_VERIFY again and has
+//                                 to pass the same health check as an update.
+//   The OTA messages (and GET_FW_INFO/MARK_VALID/REVERT) reply ERROR
+//   (function_not_supported) when Config::ota is null.
 //
 // Message types & payloads (device -> host), same module, reply flag set:
 //   0xD0 STATE - payload: fixed 79-byte little-endian struct, in this exact
@@ -70,6 +100,28 @@
 //                  f32 nudge_exit_threshold             (absolute)
 //                  u32 nudge_time_ms                    (measurement window)
 //                  u8  input_mode                       (0 = mouse, 1 = XAC)
+//   0xD2 FW_INFO : payload: u8 pending_verify (0/1), u8 session_active
+//                (0/1), then length-prefixed strings (u8 len + bytes, at
+//                most 255 bytes each, no terminator) in this order:
+//                  project name       (esp_app_desc_t::project_name)
+//                  version            (PROJECT_VER, see top-level CMakeLists)
+//                  build date         ("Oct 10 2026")
+//                  build time         ("14:03:11")
+//                  ESP-IDF version    ("v6.0.2")
+//                  running partition  ("ota_0" / "ota_1")
+//                  image sha          (first 8 hex chars of the ELF SHA-256)
+//                  boot partition     (what the bootloader will run next)
+//                  previous slot      (the other OTA partition, "ota_1")
+//                  previous version   (that slot's PROJECT_VER, "" if empty)
+//                  previous date      ("" if empty)
+//                  previous time      ("" if empty)
+//                  previous state     ("valid", "new", "pending_verify",
+//                                      "invalid", "aborted", "undefined",
+//                                      or "empty" when the slot holds no
+//                                      readable app image)
+//                Hosts must stop parsing when the payload runs out: older
+//                firmware sends only the first two strings, and later
+//                firmware may append more.
 //   0xDF OK    - payload: u32 context-dependent value (0 on plain success).
 //   0xFE ERROR - payload: u32 code + UTF-8 message, same convention as
 //                coredump_service.hpp's ERROR (message is authoritative; the
@@ -89,6 +141,8 @@
 // can take far longer than a normal request-reply round trip and must not
 // block whatever context feed()/handle_frame() runs on.
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -99,6 +153,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -107,6 +162,10 @@
 
 #include "base_component.hpp"
 #include "omega_store.hpp"
+#include "ota.hpp"
+
+#include "esp_app_desc.h"
+#include "esp_ota_ops.h"
 
 namespace espp {
 
@@ -168,9 +227,18 @@ public:
     SetInputMode = 0x54,        ///< switch mouse/XAC mode
     SaveToFlash = 0x55,         ///< persist the current live state to flash
     StartCalibration = 0x56,    ///< ASYNC: kick off an interactive recalibration
+    Restart = 0x57,             ///< reboot the device (reply first, then Config::restart)
+    OtaBegin = 0x58,            ///< u32 image_size
+    OtaData = 0x59,             ///< u32 offset + raw image bytes
+    OtaFinish = 0x5A,           ///< validate + activate, then reboot
+    OtaAbort = 0x5B,            ///< abort an upload begun by this service
+    GetFwInfo = 0x5C,           ///< request FwInfo
+    MarkValid = 0x5D,           ///< confirm running image (cancel rollback)
+    Revert = 0x5E,              ///< boot the other OTA slot (previous firmware), then reboot
     // device -> host
     State = 0xD0,             ///< fixed 79-byte calibration + settings struct
     CalibrationResult = 0xD1, ///< UNSOLICITED: outcome of an async StartCalibration
+    FwInfo = 0xD2,            ///< u8 pending_verify, u8 session_active, str project, str version
     Ok = 0xDF,                ///< u32 context-dependent success value
     Error = 0xFE,             ///< u32 informational code + authoritative UTF-8 message
   };
@@ -219,6 +287,12 @@ public:
     /// way to learn that. When left unset, START_CALIBRATION always replies
     /// with ERROR (function_not_supported).
     std::function<bool(std::error_code &ec)> start_calibration{nullptr};
+    /// Reboot the device (RESTART message). Invoked ~750 ms after the OK reply
+    /// from a detached thread. When unset, RESTART replies with ERROR.
+    std::function<void()> restart{nullptr};
+    /// Optional OTA engine (not owned; must outlive the service and may be
+    /// shared by several services). When null the OTA messages reply ERROR.
+    espp::Ota *ota{nullptr};
     espp::Logger::Verbosity log_level{espp::Logger::Verbosity::WARN}; ///< Logger verbosity.
   };
 
@@ -232,7 +306,9 @@ public:
       , store_(config.store)
       , send_(config.send)
       , module_(config.module)
-      , start_calibration_(config.start_calibration) {}
+      , start_calibration_(config.start_calibration)
+      , restart_(config.restart)
+      , ota_(config.ota) {}
 
   /// @brief The dispatcher module id this service answers on (Config::module;
   ///        kModule by default, which the web console expects).
@@ -243,7 +319,8 @@ public:
     return {.name = "Calibration",
             .app = "calibration_console.html",
             .description = "Live-view and live-edit calibration, deadzones, "
-                           "nudge-click tuning, and mouse/XAC mode"};
+                           "nudge-click tuning, mouse/XAC mode, and firmware update",
+            .protocol = "espp.calibration"};
   }
 
   /**
@@ -318,6 +395,20 @@ public:
     parser_.reset();
   }
 
+  /// True while a firmware upload (by any service sharing the engine) is in
+  /// flight (use it to pause joystick report generation if you want).
+  bool update_in_progress() const { return ota_ && ota_->session_active(); }
+
+  /// Abort an upload this service began (call on transport loss / RX overflow).
+  void abort_update() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (ota_ && ota_owner_) {
+      std::error_code ec;
+      ota_->abort(ec);
+      ota_owner_ = false;
+    }
+  }
+
   /**
    * @brief Send an unsolicited CalibrationResult frame reporting how an
    *        asynchronous recalibration (kicked off via Msg::StartCalibration
@@ -372,6 +463,191 @@ protected:
     case Msg::GetState: {
       const OmegaStore::Snapshot snap = store_.snapshot();
       reply = build(Msg::State, build_state_payload(snap), module_id());
+      return true;
+    }
+    case Msg::OtaBegin: {
+      if (!ota_) {
+        reply = build_error(std::errc::function_not_supported, "OTA not wired on this build");
+        return true;
+      }
+      if (payload.size() != 4) {
+        reply = build_error(std::errc::invalid_argument, "OTA_BEGIN needs u32 image size");
+        return true;
+      }
+      std::error_code ec;
+      if (!ota_->begin(stream::get_u32(payload), ec)) {
+        reply = build_error(ec, "OTA_BEGIN failed");
+        return true;
+      }
+      ota_owner_ = true;
+      logger_.info("OTA_BEGIN {} bytes", stream::get_u32(payload));
+      reply = build_ok();
+      return true;
+    }
+    case Msg::OtaData: {
+      if (!ota_ || !ota_owner_) {
+        reply = build_error(std::errc::operation_not_permitted, "no OTA session started here");
+        return true;
+      }
+      if (payload.size() <= 4) {
+        reply = build_error(std::errc::invalid_argument, "OTA_DATA needs u32 offset + data");
+        return true;
+      }
+      if (stream::get_u32(payload) != ota_->bytes_written()) {
+        reply = build_error(std::errc::invalid_argument, "OTA_DATA offset mismatch");
+        return true;
+      }
+      std::error_code ec;
+      if (!ota_->write(payload.subspan(4), ec)) {
+        ota_owner_ = false; // write() already aborted the session
+        reply = build_error(ec, "OTA_DATA write failed");
+        return true;
+      }
+      reply = build_ok(static_cast<uint32_t>(ota_->bytes_written()));
+      return true;
+    }
+    case Msg::OtaFinish: {
+      if (!ota_ || !ota_owner_) {
+        reply = build_error(std::errc::operation_not_permitted, "no OTA session started here");
+        return true;
+      }
+      std::error_code ec;
+      const bool ok = ota_->finish(ec);
+      ota_owner_ = false;
+      if (!ok) {
+        reply = build_error(ec, "OTA_FINISH (validate/activate) failed");
+        return true;
+      }
+      logger_.info("OTA_FINISH ok; rebooting shortly");
+      // The reply is sent after this returns, so reboot from a short-lived
+      // thread to let it flush first.
+      std::thread([o = ota_] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(750));
+        o->restart();
+      }).detach();
+      reply = build_ok();
+      return true;
+    }
+    case Msg::OtaAbort: {
+      if (ota_ && ota_owner_) {
+        std::error_code ec;
+        ota_->abort(ec);
+        ota_owner_ = false;
+      }
+      reply = build_ok();
+      return true;
+    }
+    case Msg::GetFwInfo: {
+      if (!ota_) {
+        reply = build_error(std::errc::function_not_supported, "OTA not wired on this build");
+        return true;
+      }
+      // Read the app descriptor directly rather than through espp::Ota so the
+      // report also carries the ELF hash, which identifies a build exactly
+      // even when two builds share a version string (e.g. "-dirty" builds).
+      const esp_app_desc_t *desc = esp_app_get_description();
+      char sha[9];
+      snprintf(sha, sizeof(sha), "%02x%02x%02x%02x", desc->app_elf_sha256[0],
+               desc->app_elf_sha256[1], desc->app_elf_sha256[2], desc->app_elf_sha256[3]);
+      const std::string running = ota_->running_partition_label();
+      const std::string boot = ota_->boot_partition_label();
+      // The other OTA slot still holds whatever ran before the last update
+      // (or nothing, right after a serial flash). Report it so the console
+      // can show what REVERT would boot.
+      std::string prev_label, prev_version, prev_date, prev_time, prev_state = "empty";
+      if (const esp_partition_t *other = esp_ota_get_next_update_partition(nullptr)) {
+        prev_label = other->label;
+        esp_app_desc_t od;
+        if (esp_ota_get_partition_description(other, &od) == ESP_OK) {
+          prev_version = od.version;
+          prev_date = od.date;
+          prev_time = od.time;
+          esp_ota_img_states_t st;
+          prev_state =
+              esp_ota_get_state_partition(other, &st) == ESP_OK ? ota_state_name(st) : "undefined";
+        }
+      }
+      std::vector<uint8_t> p;
+      p.push_back(ota_->is_pending_verify() ? 1 : 0);
+      p.push_back(ota_->session_active() ? 1 : 0);
+      for (const std::string_view s :
+           {std::string_view{desc->project_name}, std::string_view{desc->version},
+            std::string_view{desc->date}, std::string_view{desc->time},
+            std::string_view{desc->idf_ver}, std::string_view{running}, std::string_view{sha},
+            std::string_view{boot}, std::string_view{prev_label}, std::string_view{prev_version},
+            std::string_view{prev_date}, std::string_view{prev_time},
+            std::string_view{prev_state}}) {
+        const size_t n = std::min<size_t>(s.size(), 255);
+        p.push_back(static_cast<uint8_t>(n));
+        p.insert(p.end(), s.begin(), s.begin() + n);
+      }
+      reply = build(Msg::FwInfo, p, module_id());
+      return true;
+    }
+    case Msg::Revert: {
+      if (!ota_) {
+        reply = build_error(std::errc::function_not_supported, "OTA not wired on this build");
+        return true;
+      }
+      if (!payload.empty()) {
+        reply = build_error(std::errc::invalid_argument, "REVERT takes no payload");
+        return true;
+      }
+      if (ota_->session_active()) {
+        reply = build_error(std::errc::operation_in_progress,
+                            "REVERT refused: a firmware upload is in progress");
+        return true;
+      }
+      const esp_partition_t *other = esp_ota_get_next_update_partition(nullptr);
+      esp_app_desc_t od;
+      if (!other || esp_ota_get_partition_description(other, &od) != ESP_OK) {
+        reply = build_error(std::errc::no_such_device,
+                            "REVERT refused: the other slot holds no app image");
+        return true;
+      }
+      // Also re-validates the image and resets its state to NEW, so a slot the
+      // health check once marked INVALID can be tried again on purpose.
+      if (const esp_err_t err = esp_ota_set_boot_partition(other); err != ESP_OK) {
+        reply = build_error(std::errc::io_error,
+                            std::string("REVERT: esp_ota_set_boot_partition failed: ") +
+                                esp_err_to_name(err));
+        return true;
+      }
+      logger_.info("REVERT to {} ({}); rebooting shortly", other->label, od.version);
+      std::thread([o = ota_] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(750));
+        o->restart();
+      }).detach();
+      reply = build_ok();
+      return true;
+    }
+    case Msg::MarkValid: {
+      if (!ota_) {
+        reply = build_error(std::errc::function_not_supported, "OTA not wired on this build");
+        return true;
+      }
+      std::error_code ec;
+      if (!ota_->mark_app_valid(ec)) {
+        reply = build_error(ec, "MARK_VALID failed");
+        return true;
+      }
+      reply = build_ok();
+      return true;
+    }
+    case Msg::Restart: {
+      if (!payload.empty()) {
+        reply = build_error(std::errc::invalid_argument, "RESTART takes no payload");
+        return true;
+      }
+      if (!restart_) {
+        reply = build_error(std::errc::function_not_supported, "RESTART not wired on this build");
+        return true;
+      }
+      std::thread([r = restart_] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(750));
+        r();
+      }).detach();
+      reply = build_ok();
       return true;
     }
     case Msg::SetManualOffset: {
@@ -626,6 +902,29 @@ private:
   send_fn send_;
   const uint8_t module_; // Config::module: routing id for requests + replies
   std::function<bool(std::error_code &ec)> start_calibration_; // Config::start_calibration
+  std::function<void()> restart_;                              // Config::restart
+  espp::Ota *ota_;                                             // Config::ota (not owned)
+  bool ota_owner_{
+      false}; // true while an upload begun by this service is active (guarded by mutex_)
+
+  /// The otadata state of an app slot as the FW_INFO "previous state" string.
+  static const char *ota_state_name(esp_ota_img_states_t state) {
+    switch (state) {
+    case ESP_OTA_IMG_NEW:
+      return "new";
+    case ESP_OTA_IMG_PENDING_VERIFY:
+      return "pending_verify";
+    case ESP_OTA_IMG_VALID:
+      return "valid";
+    case ESP_OTA_IMG_INVALID:
+      return "invalid";
+    case ESP_OTA_IMG_ABORTED:
+      return "aborted";
+    case ESP_OTA_IMG_UNDEFINED:
+    default:
+      return "undefined";
+    }
+  }
   std::mutex mutex_; // guards parser_, pending_input_mode_, reply-building; not OmegaStore
   Stream parser_;
   std::optional<InputMode> pending_input_mode_; // set by SET_INPUT_MODE, applied after the reply
