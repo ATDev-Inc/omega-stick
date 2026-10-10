@@ -279,6 +279,18 @@ offers "Revert to previous firmware", so the user can step back deliberately.
 **Consequence.** The first move to the new partition table needs one serial flash
 and loses saved calibration once. See [firmware-updates.md](firmware-updates.md).
 
+**Amended 2026-10-10: crash loops on a confirmed image revert too.** The
+bootloader's rollback only covers a pending image. Once an image has confirmed
+itself, a bug that panics on every boot (a bad calibration file it cannot parse,
+a sensor-init path it never took in the first ten seconds) would leave the user
+with a device that reboots forever. So `FirmwareHealthCheck::revert_if_crash_looping()`
+runs at boot with this slot's recent resets from the reset log: three crashes in
+a row, and an app image in the other slot, switch the boot partition and
+restart. Brownouts are not crashes for this purpose. The threshold is three so a
+single panic, already captured as a core dump, never changes firmware by itself.
+The resets are filtered to the running slot so a crash in the other image cannot
+bounce the device straight back.
+
 ## D19: `version.txt` plus a commit suffix, not `git describe` strings
 
 `version.txt` holds `MAJOR.MINOR.PATCH`, bumped by hand in the PR that warrants

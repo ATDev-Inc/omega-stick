@@ -3,7 +3,9 @@
 // image is confirmed by someone else (console MARK_VALID).
 
 #include <chrono>
+#include <span>
 
+#include "esp_ota_ops.h"
 #include "firmware_health_check.hpp"
 #include "ota.hpp"
 #include "test_harness.hpp"
@@ -105,4 +107,65 @@ TEST(health_reject_if_pending_rolls_back_only_when_pending) {
   auto &settled = settled_fx.ota;
   Health::reject_if_pending(settled, "test failure");
   CHECK_EQ(settled.rollback_calls, 0);
+}
+
+// ---- crash-loop revert (fed from the reset log at boot) ----
+
+TEST(health_crash_loop_switches_to_the_other_slot) {
+  esp_ota_fake().reset();
+  Fixture fx(false);
+  const bool crashes[] = {false, true, true, true};
+  CHECK(Health::revert_if_crash_looping(fx.ota, crashes));
+  CHECK_EQ(esp_ota_fake().set_boot_calls, 1);
+  CHECK(esp_ota_fake().last_set_boot == &esp_ota_fake().other);
+}
+
+TEST(health_crash_loop_needs_consecutive_crashes) {
+  esp_ota_fake().reset();
+  Fixture fx(false);
+  const bool interrupted[] = {true, true, false, true};
+  CHECK(!Health::revert_if_crash_looping(fx.ota, interrupted));
+  const bool too_few[] = {true, true};
+  CHECK(!Health::revert_if_crash_looping(fx.ota, too_few));
+  const bool none[] = {};
+  CHECK(!Health::revert_if_crash_looping(fx.ota, std::span<const bool>(none, 0)));
+  CHECK_EQ(esp_ota_fake().set_boot_calls, 0);
+}
+
+TEST(health_crash_loop_leaves_a_pending_image_to_the_bootloader) {
+  esp_ota_fake().reset();
+  Fixture fx(true);
+  const bool crashes[] = {true, true, true};
+  CHECK(!Health::revert_if_crash_looping(fx.ota, crashes));
+  CHECK_EQ(esp_ota_fake().set_boot_calls, 0);
+}
+
+TEST(health_crash_loop_stays_put_without_another_image) {
+  esp_ota_fake().reset();
+  Fixture fx(false);
+  const bool crashes[] = {true, true, true};
+  esp_ota_fake().other_has_image = false;
+  CHECK(!Health::revert_if_crash_looping(fx.ota, crashes));
+  esp_ota_fake().other_has_image = true;
+  esp_ota_fake().has_other_partition = false;
+  CHECK(!Health::revert_if_crash_looping(fx.ota, crashes));
+  CHECK_EQ(esp_ota_fake().set_boot_calls, 0);
+}
+
+TEST(health_crash_loop_reports_a_failed_switch) {
+  esp_ota_fake().reset();
+  Fixture fx(false);
+  const bool crashes[] = {true, true, true};
+  esp_ota_fake().set_boot_result = ESP_FAIL;
+  CHECK(!Health::revert_if_crash_looping(fx.ota, crashes));
+  CHECK_EQ(esp_ota_fake().set_boot_calls, 1);
+}
+
+TEST(health_crash_loop_threshold_is_adjustable_and_zero_disables) {
+  esp_ota_fake().reset();
+  Fixture fx(false);
+  const bool crashes[] = {true};
+  CHECK(Health::revert_if_crash_looping(fx.ota, crashes, 1));
+  CHECK(!Health::revert_if_crash_looping(fx.ota, crashes, 0));
+  CHECK_EQ(esp_ota_fake().set_boot_calls, 1);
 }
