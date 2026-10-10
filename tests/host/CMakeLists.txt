@@ -88,6 +88,7 @@ add_executable(omega_host_tests
   test_persistence.cpp
   test_store.cpp
   test_service.cpp
+  test_sensor_fault.cpp
   test_xac_report.cpp)
 
 target_include_directories(omega_host_tests PRIVATE

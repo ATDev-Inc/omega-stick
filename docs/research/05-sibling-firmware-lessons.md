@@ -58,8 +58,9 @@ centered stick with no buttons pressed.
   tripped, and expose it on the calibration console so a clinician or user can
   see why the stick went dead.
 
-This should get a decision entry (D13 or similar) and host tests: the read
-callback is already a seam the test suite can fake.
+**Done on this branch** as D13 in [decisions.md](../decisions.md) and
+`OmegaCalibration::SensorFaultMonitor`, with host tests. The console and LED
+reporting of the latched fault is still open (STA-1, STA-2).
 
 ### 2. Persist a reset-reason log and boot counter
 

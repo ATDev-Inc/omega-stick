@@ -7,6 +7,8 @@ no ESP-IDF and no hardware. They cover:
 - `OmegaStore` load-on-construct, live setters, change callbacks, `save_to_flash`
 - `CalibrationService` request decoding, replies, and store side effects,
   including the framing path through the real espp `stream_frame` parser
+- `OmegaCalibration::SensorFaultMonitor`: the trip, latch and recovery rules
+  that center the stick on a sensor fault (D13 in `docs/decisions.md`)
 - `XacInputReport` (`components/xac`): the byte layout `get_report()` hands
   to `write_hid_report()`, checked against the real espp `hid-rp` headers
 

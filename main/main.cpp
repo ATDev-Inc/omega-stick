@@ -485,10 +485,14 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     espp::MouseInputReport<0, 3, true> mouse;
     mouse.reset();
 
+    // Joystick::update() keeps its old output when a read fails, so the read
+    // result is recorded here for the SensorFaultMonitor below (D13).
+    bool sensor_read_ok = true;
     espp::Joystick js(espp::OmegaCalibration::make_joystick_config(
-        center, range, store.settings(), [&tmag](float *x, float *y) {
+        center, range, store.settings(), [&tmag, &sensor_read_ok](float *x, float *y) {
           std::error_code read_ec;
           auto magnetic = tmag.read_magnetic(read_ec);
+          sensor_read_ok = !read_ec;
           if (read_ec) {
             return false;
           }
@@ -512,6 +516,12 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     // persists across polling iterations/loops so a held nudge stays held.
     NudgeDirection current_nudge = NudgeDirection::NONE;
     int scroll_poll_count = 0;
+
+    // Holds the mouse idle while the sensor is dead or frozen, instead of
+    // replaying the last deflection forever (D13 in docs/decisions.md). The
+    // defaults assume this loop's 10 ms tick.
+    espp::OmegaCalibration::SensorFaultMonitor sensor_monitor;
+    bool sensor_was_faulted = false;
 
     auto start = std::chrono::high_resolution_clock::now();
     js.update();
@@ -585,6 +595,36 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
       float raw_y = js.raw().y();
       float jx = js.x();
       float jy = js.y();
+
+      // --- Sensor fault: report an idle mouse until the sensor is back ---
+      const bool sensor_faulted = sensor_monitor.update(sensor_read_ok, raw_x, raw_y);
+      if (sensor_faulted != sensor_was_faulted) {
+        sensor_was_faulted = sensor_faulted;
+        if (sensor_faulted) {
+          printf("WARNING: sensor fault (%s); holding the stick centered\n",
+                 espp::OmegaCalibration::SensorFaultMonitor::to_string(sensor_monitor.fault()));
+          current_nudge = NudgeDirection::NONE;
+          scroll_poll_count = 0;
+        } else {
+          printf("Sensor recovered (fault %u since boot)\n",
+                 static_cast<unsigned>(sensor_monitor.fault_count()));
+          // Same reset as after a recalibration: the next window must not
+          // see a delta against a reading from before the fault.
+          start = std::chrono::high_resolution_clock::now();
+          prev_x = jx;
+          prev_y = jy;
+        }
+      }
+      if (sensor_faulted) {
+        mouse.reset(); // no movement, no buttons, no wheel
+        auto report = mouse.get_report();
+        std::error_code hid_ec;
+        if (!usb.write_hid_report(0, report, hid_ec)) {
+          printf("HID send failed: %s\n", hid_ec.message().c_str());
+        }
+        std::this_thread::sleep_for(10ms);
+        continue;
+      }
 
       auto end = std::chrono::high_resolution_clock::now();
       auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
@@ -761,11 +801,14 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     // Joystick
     // ------------------------------------------------------------
 
+    // See the mouse branch: the read result feeds the SensorFaultMonitor.
+    bool sensor_read_ok = true;
     espp::Joystick js(espp::OmegaCalibration::make_joystick_config(
-        center, range, store.settings(), [&tmag](float *x, float *y) {
+        center, range, store.settings(), [&tmag, &sensor_read_ok](float *x, float *y) {
           std::error_code read_ec;
 
           auto magnetic = tmag.read_magnetic(read_ec);
+          sensor_read_ok = !read_ec;
 
           if (read_ec) {
             return false;
@@ -789,6 +832,20 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     int drift_nudge_count = 0;
 
     static constexpr int SAVE_EVERY_N_NUDGES = 20;
+
+    // ------------------------------------------------------------
+    // Sensor fault handling (D13 in docs/decisions.md)
+    // ------------------------------------------------------------
+
+    // This loop ticks every 5 ms, so the tick counts are doubled to keep
+    // the same 30 ms trip, 5 s stuck window and 100 ms recovery as the
+    // mouse loop's defaults.
+    espp::OmegaCalibration::SensorFaultMonitor sensor_monitor({
+        .trip_after_failed_reads = 6,
+        .stuck_after_samples = 1000,
+        .recover_after_good_reads = 20,
+    });
+    bool sensor_was_faulted = false;
 
     // ------------------------------------------------------------
     // HID polling loop
@@ -847,6 +904,28 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
       const float raw_x = js.raw().x();
       const float raw_y = js.raw().y();
       const float mapped_magnitude = std::hypot(js.x(), js.y());
+
+      // --- Sensor fault: report a centered gamepad until the sensor is back ---
+      const bool sensor_faulted = sensor_monitor.update(sensor_read_ok, raw_x, raw_y);
+      if (sensor_faulted != sensor_was_faulted) {
+        sensor_was_faulted = sensor_faulted;
+        if (sensor_faulted) {
+          printf("WARNING: sensor fault (%s); holding the stick centered\n",
+                 espp::OmegaCalibration::SensorFaultMonitor::to_string(sensor_monitor.fault()));
+        } else {
+          printf("Sensor recovered (fault %u since boot)\n",
+                 static_cast<unsigned>(sensor_monitor.fault_count()));
+        }
+      }
+      if (sensor_faulted) {
+        xac_input_report.reset();
+        auto report = xac_input_report.get_report();
+        if (!usb.write_hid_report(1, report, usb_ec)) {
+          printf("HID send failed: %s\n", usb_ec.message().c_str());
+        }
+        std::this_thread::sleep_for(5ms);
+        continue;
+      }
 
       if (drift_compensator.update(raw_x, raw_y, mapped_magnitude, center)) {
 

@@ -177,6 +177,52 @@ depends on. It now constrains the *minimum* achievable force instead.
 **Consequence.** The README no longer presents "under 10 grams" as the
 differentiator on its own, which matches section 5 of [PRD.md](PRD.md).
 
+## D13: A sensor fault centers the stick, after three failures, not one
+
+When the TMAG5273 stops answering, the firmware reports a centered stick with
+no buttons held until the sensor is back. The HID report keeps going out every
+tick, so the host sees a live but idle device rather than a frozen one.
+
+**Why.** Before this, a failed read left `espp::Joystick` holding its last
+mapped position (its `update()` returns early on a failed `get_values`). A
+sensor that dropped off the I2C bus while the stick was deflected kept the host
+moving in that direction until the device was unplugged, which is exactly the
+failure SEN-6 in [requirements.md](requirements.md) names as actively harmful.
+The sibling motor-control firmware in the RAMMP organization treats "no fresh,
+valid input" as a fault that drives the output to a safe state; see
+[research/05-sibling-firmware-lessons.md](research/05-sibling-firmware-lessons.md).
+
+**The rules**, implemented by `OmegaCalibration::SensorFaultMonitor`:
+
+- **Three consecutive failed reads trip the fault.** One bad I2C transaction is
+  a glitch, and tripping on it would make the stick stutter on a noisy bus.
+  Three at 10 ms per tick is 30 ms, well inside SEN-5's 500 ms budget.
+- **A reading that has not changed at all for 500 ticks also trips.** Real hall
+  readings carry noise, so an exactly identical X and Y pair for five seconds
+  means the conversion engine has stopped, not that the hand is still. The
+  window is deliberately long: the sensor runs with 32-sample averaging, which
+  can flatten the noise at rest, and a false trip while the user holds a
+  deflection would stop the cursor for no reason. A stuck sensor at rest is
+  harmless either way, since the output is already centered. The window is
+  configurable and `0` disables the check.
+- **Recovery needs ten consecutive good reads** (and, for a stuck fault, a
+  changed value first). A sensor that flaps between working and failing stays
+  centered rather than jittering.
+- **The first fault is latched** with a count of every trip since boot, so a
+  later console or LED status (STA-1, STA-2) can say what happened even after
+  the sensor came back. Today it is only printed on the serial console at each
+  transition.
+
+**Consequence.** Drift correction and nudge detection do not run on faulted
+ticks; a dead sensor must not nudge the stored center. The nudge timing resets
+on recovery, the same way it does after a recalibration.
+
+**Not done.** The TMAG5273's `CONV_STATUS` register has a rolling conversion
+counter that is the direct signal for "conversion engine stuck" (the SEN-5
+wording). Reading it costs an extra I2C transaction per tick, or a 7-byte burst
+instead of 6. That belongs with SEN-3 and SEN-4, and would let the stuck window
+shrink to the 500 ms budget.
+
 ---
 
 ## Open question: compete with Willow, or collaborate?
