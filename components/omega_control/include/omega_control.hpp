@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 
 #include "omega_calibration.hpp"
 
@@ -38,6 +39,7 @@ inline constexpr SensorFaultMonitor::Config MOUSE_SENSOR_FAULT_CONFIG{
 inline constexpr SensorFaultMonitor::Config XAC_SENSOR_FAULT_CONFIG{
     .trip_after_failed_reads = 6,
     .stuck_after_samples = 1000,
+    .stuck_after_stale_conversions = 100,
     .recover_after_good_reads = 20,
 };
 
@@ -108,7 +110,9 @@ struct StickSample {
   bool read_ok{true};
   /// The sensor's conversion counter at this read (TMAG5273 CONV_STATUS
   /// SET_COUNT); the fault monitor trips when it stops advancing.
-  std::uint8_t conversion_count{0};
+  /// Unset when the producer has no counter (host fakes, tests), in which
+  /// case the monitor applies only its other checks.
+  std::optional<std::uint8_t> conversion_count{};
 };
 
 struct StepInput {

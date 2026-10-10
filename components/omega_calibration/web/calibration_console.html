@@ -1375,7 +1375,7 @@
     function renderDiagnostics(d) {
       const faultName = (code) => SENSOR_FAULT_NAMES[code] || ("code " + code);
       diagEls.sensorFault.textContent = faultName(d.sensorFault);
-      diagEls.sensorFault.classList.toggle("warn", d.sensorFault !== 0);
+      diagEls.sensorFault.classList.toggle("warn-text", d.sensorFault !== 0);
       diagEls.sensorFirstFault.textContent = faultName(d.sensorFirstFault);
       diagEls.sensorFaultCount.textContent = String(d.sensorFaultCount);
       diagEls.bootCount.textContent = String(d.bootCount);
@@ -1386,7 +1386,7 @@
         for (const r of d.resets) {
           const line = document.createElement("div");
           line.textContent = "boot " + r.boot + ": " + r.name + (r.abnormal ? "  (abnormal)" : "");
-          if (r.abnormal) line.classList.add("warn");
+          if (r.abnormal) line.classList.add("warn-text");
           els.resetList.appendChild(line);
         }
       }

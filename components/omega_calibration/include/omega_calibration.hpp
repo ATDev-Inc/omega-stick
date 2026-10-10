@@ -795,8 +795,10 @@ public:
       failed_streak_ = 0;
       good_streak_++;
 
+      // Streaks saturate at their thresholds so a sensor that stays frozen
+      // for months cannot overflow them.
       if (have_last_ && raw_x == last_x_ && raw_y == last_y_) {
-        identical_streak_++;
+        identical_streak_ = saturating_increment(identical_streak_, config_.stuck_after_samples);
       } else {
         identical_streak_ = 0;
       }
@@ -806,7 +808,8 @@ public:
 
       if (conversion_count) {
         if (have_last_conversion_ && *conversion_count == last_conversion_) {
-          stale_conversion_streak_++;
+          stale_conversion_streak_ =
+              saturating_increment(stale_conversion_streak_, config_.stuck_after_stale_conversions);
         } else {
           stale_conversion_streak_ = 0;
         }
@@ -860,6 +863,10 @@ public:
     void reset() { *this = SensorFaultMonitor(config_); }
 
   private:
+    static int saturating_increment(int streak, int limit) {
+      return (limit > 0 && streak >= limit) ? limit : streak + 1;
+    }
+
     void trip(Fault fault) {
       if (fault_ == fault) {
         return;

@@ -92,12 +92,12 @@
 //   The OTA messages (and GET_FW_INFO/MARK_VALID/REVERT) reply ERROR
 //   (function_not_supported) when Config::ota is null.
 //
-//   0x5F GET_DIAGNOSTICS        — no payload. Reply: DIAGNOSTICS, or ERROR
+//   0x5F GET_DIAGNOSTICS        : no payload. Reply: DIAGNOSTICS, or ERROR
 //                                 (function_not_supported) when
 //                                 Config::diagnostics is unset.
 //
 // Message types & payloads (device -> host), same module, reply flag set:
-//   0xD3 DIAGNOSTICS — payload (see build_diagnostics_payload() below):
+//   0xD3 DIAGNOSTICS : payload (see build_diagnostics_payload() below):
 //                  u8  sensor_fault        (0 none, 1 read failed, 2 stuck)
 //                  u8  sensor_first_fault  (same codes; latched since boot)
 //                  u32 sensor_fault_count  (trips since boot)
