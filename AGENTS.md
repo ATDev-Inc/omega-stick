@@ -16,8 +16,8 @@ input behaviour changes with the care that implies.
 
 ## Commands
 
-Firmware (needs ESP-IDF v5.5.1 or v6.0; `dependencies.lock` was resolved
-against v6.0.2, CI uses `v6.0`):
+Firmware (ESP-IDF v6.0, the version CI builds with; v5.5.1 is untested.
+`dependencies.lock` was resolved against v6.0.2):
 
 ```console
 idf.py set-target esp32s3
@@ -128,8 +128,9 @@ espp.
 - **Known-bug tests.** `XFAIL_TEST` marks a test that documents a current bug.
   When a fix makes it pass, the runner reports `XPASS` and the run fails until
   the marker becomes `TEST`. Change the marker in the same PR as the fix.
-  Never delete an XFAIL test, or weaken it, to make CI green. The current list
-  is in [tests/host/README.md](tests/host/README.md#known-bug-tests-xfail_test).
+  Never delete an XFAIL test, or weaken it, to make CI green. Current entries,
+  if any, are listed in
+  [tests/host/README.md](tests/host/README.md#known-bug-tests-xfail_test).
 - **Known defects** are tracked in
   [docs/requirements.md](docs/requirements.md#11-known-defects-to-fix-first)
   (DEF-1, DEF-2 in the TMAG5273 driver). They are coupled: DEF-2's dead code
