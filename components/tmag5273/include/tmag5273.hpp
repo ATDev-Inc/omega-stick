@@ -76,6 +76,9 @@ public:
   static constexpr uint8_t STATUS_RESULT_READY = 0x01;
   static constexpr uint8_t STATUS_DIAG_FAIL = 0x02;
   static constexpr uint8_t STATUS_POR = 0x10;
+  // CONV_STATUS[7:5] SET_COUNT: rolling count of completed conversion sets.
+  static constexpr uint8_t STATUS_SET_COUNT_SHIFT = 5;
+  static constexpr uint8_t STATUS_SET_COUNT_MASK = 0x07;
 
   // ==========================================================================
   // Operating modes
@@ -155,12 +158,17 @@ public:
     float x{0.0f};
     float y{0.0f};
     float z{0.0f};
+    /// CONV_STATUS.SET_COUNT at the moment of the read: a 3-bit counter the
+    /// sensor advances after every completed conversion set. A value that
+    /// stops changing between polls means the conversion engine has stopped.
+    uint8_t conversion_count{0};
   };
 
   struct RawMagneticData {
     int16_t x{0};
     int16_t y{0};
     int16_t z{0};
+    uint8_t conversion_count{0}; ///< See MagneticData::conversion_count.
   };
 
   // ==========================================================================
@@ -546,7 +554,9 @@ public:
 
   RawMagneticData read_raw(std::error_code &ec) const {
 
-    uint8_t data[6]{};
+    // X, Y, Z results (0x12..0x17) are immediately followed by CONV_STATUS
+    // (0x18), so one 7-byte burst returns the conversion counter for free.
+    uint8_t data[7]{};
 
     read_many_from_register(X_MSB_RESULT, data, sizeof(data), ec);
 
@@ -561,6 +571,8 @@ public:
     result.y = static_cast<int16_t>((static_cast<uint16_t>(data[2]) << 8) | data[3]);
 
     result.z = static_cast<int16_t>((static_cast<uint16_t>(data[4]) << 8) | data[5]);
+
+    result.conversion_count = (data[6] >> STATUS_SET_COUNT_SHIFT) & STATUS_SET_COUNT_MASK;
 
     return result;
   }
@@ -579,7 +591,8 @@ public:
 
     return {.x = convert_raw_to_mT(raw.x, xy_range_),
             .y = convert_raw_to_mT(raw.y, xy_range_),
-            .z = convert_raw_to_mT(raw.z, z_range_)};
+            .z = convert_raw_to_mT(raw.z, z_range_),
+            .conversion_count = raw.conversion_count};
   }
 
   float read_x(std::error_code &ec) const {

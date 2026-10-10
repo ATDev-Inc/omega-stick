@@ -62,6 +62,27 @@ static constexpr float MANUAL_OFFSET_Y = 0.0f;
 // components/omega_control (host-tested). This file only wires hardware to it
 // through EspPorts below.
 
+// Sensor fault state as the control loop last reported it, read by the
+// calibration service's GET_DIAGNOSTICS handler on the USB task. Plain
+// relaxed atomics: each field is independently meaningful and a tick of
+// skew between them does not matter.
+struct SensorFaultStatus {
+  std::atomic<uint8_t> fault{0};
+  std::atomic<uint8_t> first_fault{0};
+  std::atomic<uint32_t> count{0};
+
+  void publish(bool faulted, espp::OmegaCalibration::SensorFaultMonitor::Fault fault_kind,
+               uint32_t fault_count) {
+    using Fault = espp::OmegaCalibration::SensorFaultMonitor::Fault;
+    fault.store(faulted ? static_cast<uint8_t>(fault_kind) : static_cast<uint8_t>(Fault::NONE),
+                std::memory_order_relaxed);
+    if (faulted && first_fault.load(std::memory_order_relaxed) == 0) {
+      first_fault.store(static_cast<uint8_t>(fault_kind), std::memory_order_relaxed);
+    }
+    count.store(fault_count, std::memory_order_relaxed);
+  }
+};
+
 // Hardware side of espp::omega_control::Ports: HID reports, the recalibration
 // sweep, and the store/joystick updates. The control loops themselves are
 // omega_control::mouse_tick / xac_tick.
@@ -75,17 +96,22 @@ struct EspPorts : espp::omega_control::Ports {
   // Set by the joystick's read callback: Joystick::update() keeps its old
   // output when a read fails, so read_stick() learns the result from here.
   const bool &sensor_read_ok;
+  const uint8_t &sensor_conversion_count; ///< same source; CONV_STATUS.SET_COUNT
+  SensorFaultStatus &sensor_status;       ///< published for GET_DIAGNOSTICS
 
   EspPorts(espp::TMAG5273 &tmag_, espp::OmegaStore &store_, espp::Joystick &js_,
            espp::UsbDevice &usb_, espp::CalibrationService &vendor_, espp::CalibrationService &cdc_,
-           const bool &sensor_read_ok_)
+           const bool &sensor_read_ok_, const uint8_t &sensor_conversion_count_,
+           SensorFaultStatus &sensor_status_)
       : tmag(tmag_)
       , store(store_)
       , js(js_)
       , usb(usb_)
       , calibration_vendor(vendor_)
       , calibration_cdc(cdc_)
-      , sensor_read_ok(sensor_read_ok_) {}
+      , sensor_read_ok(sensor_read_ok_)
+      , sensor_conversion_count(sensor_conversion_count_)
+      , sensor_status(sensor_status_) {}
 
   void send_mouse(const espp::omega_control::MouseReport &r) override {
     espp::MouseInputReport<0, 3, true> mouse;
@@ -181,11 +207,12 @@ struct EspPorts : espp::omega_control::Ports {
 
   espp::omega_control::StickSample read_stick() override {
     js.update();
-    return {js.x(), js.y(), js.raw().x(), js.raw().y(), sensor_read_ok};
+    return {js.x(), js.y(), js.raw().x(), js.raw().y(), sensor_read_ok, sensor_conversion_count};
   }
 
   void sensor_fault_changed(bool faulted, espp::OmegaCalibration::SensorFaultMonitor::Fault fault,
                             std::uint32_t fault_count) override {
+    sensor_status.publish(faulted, fault, fault_count);
     if (faulted) {
       printf("WARNING: sensor fault (%s); holding the stick centered\n",
              espp::OmegaCalibration::SensorFaultMonitor::to_string(fault));
@@ -329,9 +356,11 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   const std::string running_slot_label = running_slot ? running_slot->label : "factory";
   const std::string slot_tag = " (" + running_slot_label + ")";
   std::vector<espp::FirmwareHealthCheck<>::BootRecord> boots; // oldest first, filled below
+  // Lives for the whole run (read-only after this block) so the calibration
+  // console's GET_DIAGNOSTICS can report it.
+  espp::ResetLog reset_log(
+      {.path = espp::ResetLog::default_path(), .max_entries = RESET_LOG_ENTRIES});
   {
-    espp::ResetLog reset_log(
-        {.path = espp::ResetLog::default_path(), .max_entries = RESET_LOG_ENTRIES});
     std::error_code log_ec;
     if (!reset_log.load(log_ec)) {
       printf("WARNING: could not read the reset log: %s\n", log_ec.message().c_str());
@@ -382,6 +411,25 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
            app->version, app->date, app->time, app->idf_ver, ota.running_partition_label().c_str(),
            ota.is_pending_verify() ? " [PENDING VERIFY]" : "");
   }
+  // Published by the control loop through EspPorts::sensor_fault_changed;
+  // served to the console together with the reset log by GET_DIAGNOSTICS
+  // (D21, D23).
+  SensorFaultStatus sensor_status;
+  auto make_diagnostics = [&reset_log, &sensor_status]() {
+    espp::CalibrationService::DiagnosticsData d;
+    d.sensor_fault = sensor_status.fault.load(std::memory_order_relaxed);
+    d.sensor_first_fault = sensor_status.first_fault.load(std::memory_order_relaxed);
+    d.sensor_fault_count = sensor_status.count.load(std::memory_order_relaxed);
+    d.boot_count = reset_log.boot_count();
+    d.resets.reserve(reset_log.entries().size());
+    for (const auto &entry : reset_log.entries()) {
+      d.resets.push_back({.boot = entry.boot,
+                          .reason = static_cast<uint8_t>(std::clamp(entry.reason, 0, 255)),
+                          .abnormal = entry.abnormal,
+                          .name = entry.name});
+    }
+    return d;
+  };
 
   // ==========================================================================
   // Create I2C bus
@@ -720,6 +768,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
             },
         .restart = []() { esp_restart(); },
         .ota = &ota,
+        .diagnostics = make_diagnostics,
         .log_level = espp::Logger::Verbosity::ERROR,
     };
     espp::CalibrationService calibration_vendor(calibration_cfg);
@@ -779,11 +828,14 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     printf("HID ready: %s\n", usb.is_hid_ready() ? "yes" : "no");
 
     bool sensor_read_ok = true;
+    uint8_t sensor_conversion_count = 0;
     espp::Joystick js(espp::OmegaCalibration::make_joystick_config(
-        center, range, store.settings(), [&tmag, &sensor_read_ok](float *x, float *y) {
+        center, range, store.settings(),
+        [&tmag, &sensor_read_ok, &sensor_conversion_count](float *x, float *y) {
           std::error_code read_ec;
           auto magnetic = tmag.read_magnetic(read_ec);
           sensor_read_ok = !read_ec;
+          sensor_conversion_count = magnetic.conversion_count;
           if (read_ec) {
             return false;
           }
@@ -797,7 +849,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
     // Nudge-click state, drift compensation and the recalibration hand-off
     // live in omega_control (see components/omega_control).
-    EspPorts ports(tmag, store, js, usb, calibration_vendor, calibration_cdc, sensor_read_ok);
+    EspPorts ports(tmag, store, js, usb, calibration_vendor, calibration_cdc, sensor_read_ok,
+                   sensor_conversion_count, sensor_status);
     espp::omega_control::MouseState state;
     state.common.center = center;
     state.common.range = range;
@@ -879,6 +932,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
             },
         .restart = []() { esp_restart(); },
         .ota = &ota,
+        .diagnostics = make_diagnostics,
         .log_level = espp::Logger::Verbosity::ERROR,
     };
     espp::CalibrationService calibration_vendor(calibration_cfg);
@@ -944,12 +998,15 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     // ------------------------------------------------------------
 
     bool sensor_read_ok = true;
+    uint8_t sensor_conversion_count = 0;
     espp::Joystick js(espp::OmegaCalibration::make_joystick_config(
-        center, range, store.settings(), [&tmag, &sensor_read_ok](float *x, float *y) {
+        center, range, store.settings(),
+        [&tmag, &sensor_read_ok, &sensor_conversion_count](float *x, float *y) {
           std::error_code read_ec;
 
           auto magnetic = tmag.read_magnetic(read_ec);
           sensor_read_ok = !read_ec;
+          sensor_conversion_count = magnetic.conversion_count;
 
           if (read_ec) {
             return false;
@@ -968,7 +1025,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     // HID polling loop
     // ------------------------------------------------------------
 
-    EspPorts ports(tmag, store, js, usb, calibration_vendor, calibration_cdc, sensor_read_ok);
+    EspPorts ports(tmag, store, js, usb, calibration_vendor, calibration_cdc, sensor_read_ok,
+                   sensor_conversion_count, sensor_status);
     espp::omega_control::XacState state;
     state.common.center = center;
     state.common.range = range;

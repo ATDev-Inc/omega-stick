@@ -354,20 +354,21 @@ ticks every 5 ms and doubles each count (6, 1000, 20), so both keep the same
 - **Recovery needs ten consecutive good reads (twenty for XAC)** (and, for a stuck fault, a
   changed value first). A sensor that flaps between working and failing stays
   centered rather than jittering.
-- **The first fault is latched** with a count of every trip since boot, so a
-  later console or LED status (STA-1, STA-2) can say what happened even after
-  the sensor came back. Today it is only printed on the serial console at each
-  transition.
+- **The conversion counter is the fast stuck check.** The TMAG5273's
+  `CONV_STATUS` register carries a 3-bit count of completed conversion sets,
+  and the driver reads it in the same burst as X, Y and Z (7 bytes instead of
+  6, no extra transaction). It normally advances several steps per 10 ms
+  poll; 50 polls (500 ms, SEN-5's budget) with no movement trip the fault.
+  This assumes the poll period is not an exact multiple of eight conversion
+  periods, which at 32-sample averaging it is not.
+- **The first fault is latched** with a count of every trip since boot, and
+  the calibration console shows it under Diagnostics (`GET_DIAGNOSTICS`),
+  together with the reset log (D23). An LED status (STA-1, STA-2) is still
+  open.
 
 **Consequence.** Drift correction and nudge detection do not run on faulted
 ticks; a dead sensor must not nudge the stored center. The nudge timing resets
 on recovery, the same way it does after a recalibration.
-
-**Not done.** The TMAG5273's `CONV_STATUS` register has a rolling conversion
-counter that is the direct signal for "conversion engine stuck" (the SEN-5
-wording). Reading it costs an extra I2C transaction per tick, or a 7-byte burst
-instead of 6. That belongs with SEN-3 and SEN-4, and would let the stuck window
-shrink to the 500 ms budget.
 
 ## D22: Update safety rules, and a register of deferred security controls
 
@@ -423,9 +424,9 @@ this log and it is the first thing read when a unit comes back from the field.
 **Consequence.** `ResetLog` in `components/omega_calibration/include/
 reset_log.hpp` needs nothing from ESP-IDF, so the host tests cover it. The
 reason is stored as the platform's integer plus a name, so a new reason code
-in a later ESP-IDF still logs. Exposing the log on the calibration console,
-and feeding `abnormal_count()` into the OTA health check (D22, rule 2), are
-the next steps.
+in a later ESP-IDF still logs. The calibration console shows the log under
+Diagnostics (`GET_DIAGNOSTICS`). Feeding the log into the OTA path is the
+crash-loop revert amendment under D18.
 
 ---
 

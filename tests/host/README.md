@@ -6,7 +6,8 @@ no ESP-IDF and no hardware. They cover:
 - `OmegaCalibration::save/load` and `DeviceSettings::save/load` round-trips
 - `OmegaStore` load-on-construct, live setters, change callbacks, `save_to_flash`
 - `CalibrationService` request decoding, replies, and store side effects,
-  including the framing path through the real espp `stream_frame` parser
+  including the framing path through the real espp `stream_frame` parser,
+  and the `GET_DIAGNOSTICS` reply layout and fit-to-frame rule
 - Firmware info and OTA through `CalibrationService`: `FW_INFO` flags, strings and
   previous-slot states, the OTA begin/data/finish/abort flow (bad offsets,
   missing session, write failure), and "revert to previous" (error cases, boot
