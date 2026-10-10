@@ -61,18 +61,32 @@ public:
     return espp::FileSystem::get().get_root_path() / filename;
   }
 
+  /// The sibling file save() writes before renaming it over the real one.
+  std::filesystem::path temp_path() const {
+    std::filesystem::path temp = config_.path;
+    temp += ".tmp";
+    return temp;
+  }
+
   /// Reads the file. A missing file is not an error: the log just starts
   /// empty. Returns false only when the file exists and cannot be opened.
+  /// If the log itself is missing but a complete temporary file from save()
+  /// is there, that is read instead: it means a save was interrupted between
+  /// removing the old log and renaming the new one (see save()).
   bool load(std::error_code &ec) {
     ec.clear();
     boot_count_ = 0;
     entries_.clear();
 
     std::error_code exists_ec;
-    if (!std::filesystem::exists(config_.path, exists_ec)) {
-      return true;
+    std::filesystem::path source = config_.path;
+    if (!std::filesystem::exists(source, exists_ec)) {
+      source = temp_path();
+      if (!std::filesystem::exists(source, exists_ec)) {
+        return true;
+      }
     }
-    std::ifstream in(config_.path);
+    std::ifstream in(source);
     if (!in) {
       ec = std::make_error_code(std::errc::io_error);
       return false;
@@ -83,12 +97,13 @@ public:
       if (!line.empty() && line.back() == '\r') {
         line.pop_back();
       }
-      const auto eq = line.find('=');
-      if (eq == std::string::npos) {
+      const std::string_view text(line);
+      const auto eq = text.find('=');
+      if (eq == std::string_view::npos) {
         continue;
       }
-      const std::string_view key(line.data(), eq);
-      const std::string_view value(line.data() + eq + 1, line.size() - eq - 1);
+      const std::string_view key = text.substr(0, eq);
+      const std::string_view value = text.substr(eq + 1);
       if (key == "boot_count") {
         uint32_t parsed = 0;
         if (parse_u32(value, parsed)) {
@@ -113,22 +128,54 @@ public:
     trim();
   }
 
+  /// Writes the log to a temporary sibling file and renames it over the real
+  /// one, so a reset mid-save leaves the previous complete log in place
+  /// instead of a truncated or empty file. Opening the real file for writing
+  /// would truncate it (and LittleFS syncs that truncation immediately), which
+  /// loses the whole history if power drops before the new content lands.
   bool save(std::error_code &ec) const {
     ec.clear();
-    std::ofstream out(config_.path, std::ios::out | std::ios::trunc);
-    if (!out) {
-      ec = std::make_error_code(std::errc::io_error);
-      return false;
+    const std::filesystem::path temp = temp_path();
+    {
+      std::ofstream out(temp, std::ios::out | std::ios::trunc);
+      if (!out) {
+        ec = std::make_error_code(std::errc::io_error);
+        return false;
+      }
+      out << "boot_count=" << boot_count_ << '\n';
+      for (const auto &entry : entries_) {
+        // The name is last so a comma in it cannot break the fixed fields.
+        out << "entry=" << entry.boot << ',' << entry.reason << ',' << (entry.abnormal ? 1 : 0)
+            << ',' << entry.name << '\n';
+      }
+      out.flush();
+      if (!out) {
+        ec = std::make_error_code(std::errc::io_error);
+        std::error_code remove_ec;
+        std::filesystem::remove(temp, remove_ec);
+        return false;
+      }
+      out.close();
+      if (out.fail()) {
+        ec = std::make_error_code(std::errc::io_error);
+        std::error_code remove_ec;
+        std::filesystem::remove(temp, remove_ec);
+        return false;
+      }
     }
-    out << "boot_count=" << boot_count_ << '\n';
-    for (const auto &entry : entries_) {
-      // The name is last so a comma in it cannot break the fixed fields.
-      out << "entry=" << entry.boot << ',' << entry.reason << ',' << (entry.abnormal ? 1 : 0) << ','
-          << entry.name << '\n';
+
+    // LittleFS replaces an existing destination atomically. If the filesystem
+    // refuses, remove the old log and retry; the complete temporary file stays
+    // behind in the gap and load() falls back to it.
+    std::error_code rename_ec;
+    std::filesystem::rename(temp, config_.path, rename_ec);
+    if (rename_ec) {
+      std::error_code remove_ec;
+      std::filesystem::remove(config_.path, remove_ec);
+      std::filesystem::rename(temp, config_.path, rename_ec);
     }
-    out.flush();
-    if (!out) {
-      ec = std::make_error_code(std::errc::io_error);
+    if (rename_ec) {
+      ec = rename_ec;
       return false;
     }
     return true;
@@ -150,11 +197,17 @@ public:
     return count;
   }
 
-  /// Removes the file. Missing is fine.
+  /// Removes the file and any leftover temporary file. Missing is fine.
   bool clear(std::error_code &ec) const {
     ec.clear();
     std::error_code remove_ec;
     std::filesystem::remove(config_.path, remove_ec);
+    if (remove_ec) {
+      ec = remove_ec;
+      return false;
+    }
+    // A leftover temporary file would otherwise resurrect the cleared log.
+    std::filesystem::remove(temp_path(), remove_ec);
     if (remove_ec) {
       ec = remove_ec;
       return false;

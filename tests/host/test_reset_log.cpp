@@ -146,3 +146,62 @@ TEST(reset_log_clear_removes_the_file_and_tolerates_absence) {
   CHECK(log.clear(ec));
   CHECK(!ec);
 }
+
+TEST(reset_log_save_leaves_no_temporary_file_behind) {
+  TempDir dir("reset_log_no_temp");
+  ResetLog log({.path = dir.file("omega_resets.log")});
+  std::error_code ec;
+  log.record(1, "power-on", false);
+  CHECK(log.save(ec));
+  CHECK(std::filesystem::exists(dir.file("omega_resets.log")));
+  CHECK(!std::filesystem::exists(log.temp_path()));
+}
+
+TEST(reset_log_interrupted_save_keeps_the_last_complete_history) {
+  TempDir dir("reset_log_interrupted");
+  const auto path = dir.file("omega_resets.log");
+  std::error_code ec;
+  {
+    ResetLog log({.path = path});
+    log.record(1, "power-on", false);
+    log.record(9, "brownout", true);
+    CHECK(log.save(ec));
+  }
+  // A reset partway through the next save: the temporary file is half
+  // written and never renamed over the real log.
+  ResetLog log({.path = path});
+  {
+    std::ofstream out(log.temp_path());
+    out << "boot_count=3\nentry=3,1,0,pow";
+  }
+  CHECK(log.load(ec));
+  CHECK_EQ(log.boot_count(), 2u);
+  CHECK_EQ(log.entries().size(), std::size_t{2});
+  CHECK(log.entries()[1].name == "brownout");
+
+  // The next save replaces the stale temporary file cleanly.
+  log.record(1, "power-on", false);
+  CHECK(log.save(ec));
+  CHECK(!std::filesystem::exists(log.temp_path()));
+  ResetLog reloaded({.path = path});
+  CHECK(reloaded.load(ec));
+  CHECK_EQ(reloaded.boot_count(), 3u);
+  CHECK_EQ(reloaded.entries().size(), std::size_t{3});
+}
+
+TEST(reset_log_recovers_from_the_temporary_file_when_the_log_is_missing) {
+  TempDir dir("reset_log_temp_fallback");
+  const auto path = dir.file("omega_resets.log");
+  std::error_code ec;
+  ResetLog log({.path = path});
+  log.record(9, "brownout", true);
+  CHECK(log.save(ec));
+  // A save that removed the old log but was interrupted before the rename.
+  std::filesystem::rename(path, log.temp_path());
+  ResetLog reloaded({.path = path});
+  CHECK(reloaded.load(ec));
+  CHECK_EQ(reloaded.boot_count(), 1u);
+  CHECK_EQ(reloaded.entries().size(), std::size_t{1});
+  CHECK(reloaded.clear(ec));
+  CHECK(!std::filesystem::exists(log.temp_path()));
+}

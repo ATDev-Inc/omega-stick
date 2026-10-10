@@ -178,6 +178,41 @@ static bool reset_reason_is_abnormal(esp_reset_reason_t reason) {
 
 static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/) {
   // ==========================================================================
+  // Reset-reason log (D16): why did we boot, and how have recent boots gone?
+  // ==========================================================================
+  // Recorded before anything that can fail, so a boot that dies in sensor
+  // or USB setup still leaves its reason behind for the next one to print.
+  // ResetLog::default_path() is the first use of espp::FileSystem, which
+  // mounts the filesystem, so this has to come before the I2C and sensor
+  // setup below.
+  {
+    espp::ResetLog reset_log(
+        {.path = espp::ResetLog::default_path(), .max_entries = RESET_LOG_ENTRIES});
+    std::error_code log_ec;
+    if (!reset_log.load(log_ec)) {
+      printf("WARNING: could not read the reset log: %s\n", log_ec.message().c_str());
+    }
+    const esp_reset_reason_t reason = esp_reset_reason();
+    reset_log.record(static_cast<int>(reason), reset_reason_name(reason),
+                     reset_reason_is_abnormal(reason));
+    if (!reset_log.save(log_ec)) {
+      printf("WARNING: could not save the reset log: %s\n", log_ec.message().c_str());
+    }
+    printf("Boot %u, reset reason: %s%s\n", static_cast<unsigned>(reset_log.boot_count()),
+           reset_reason_name(reason), reset_reason_is_abnormal(reason) ? " (abnormal)" : "");
+    if (reset_log.abnormal_count() > 0) {
+      printf("%u of the last %u resets were abnormal:\n",
+             static_cast<unsigned>(reset_log.abnormal_count()),
+             static_cast<unsigned>(reset_log.entries().size()));
+      for (const auto &entry : reset_log.entries()) {
+        if (entry.abnormal) {
+          printf("  boot %u: %s\n", static_cast<unsigned>(entry.boot), entry.name.c_str());
+        }
+      }
+    }
+  }
+
+  // ==========================================================================
   // Create I2C bus
   // ==========================================================================
   std::error_code ec;
@@ -283,38 +318,6 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
           },
       .log_level = espp::Logger::Verbosity::ERROR,
   });
-
-  // ==========================================================================
-  // Reset-reason log (D16): why did we boot, and how have recent boots gone?
-  // ==========================================================================
-  // Recorded before anything that can fail, so a boot that dies in sensor
-  // or USB setup still leaves its reason behind for the next one to print.
-  {
-    espp::ResetLog reset_log(
-        {.path = espp::ResetLog::default_path(), .max_entries = RESET_LOG_ENTRIES});
-    std::error_code log_ec;
-    if (!reset_log.load(log_ec)) {
-      printf("WARNING: could not read the reset log: %s\n", log_ec.message().c_str());
-    }
-    const esp_reset_reason_t reason = esp_reset_reason();
-    reset_log.record(static_cast<int>(reason), reset_reason_name(reason),
-                     reset_reason_is_abnormal(reason));
-    if (!reset_log.save(log_ec)) {
-      printf("WARNING: could not save the reset log: %s\n", log_ec.message().c_str());
-    }
-    printf("Boot %u, reset reason: %s%s\n", static_cast<unsigned>(reset_log.boot_count()),
-           reset_reason_name(reason), reset_reason_is_abnormal(reason) ? " (abnormal)" : "");
-    if (reset_log.abnormal_count() > 0) {
-      printf("%u of the last %u resets were abnormal:\n",
-             static_cast<unsigned>(reset_log.abnormal_count()),
-             static_cast<unsigned>(reset_log.entries().size()));
-      for (const auto &entry : reset_log.entries()) {
-        if (entry.abnormal) {
-          printf("  boot %u: %s\n", static_cast<unsigned>(entry.boot), entry.name.c_str());
-        }
-      }
-    }
-  }
 
   espp::OmegaCalibration::CenterResult center;
   espp::OmegaCalibration::RangeResult range;
