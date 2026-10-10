@@ -14,11 +14,13 @@
 #include <thread>
 #include <vector>
 
+#include "esp_app_desc.h" // esp_app_get_description() -- firmware version banner at boot
 #include "esp_system.h" // esp_restart() -- used to apply a live mode switch (see on_mode_changed below)
 
 #include "calibration_service.hpp"
 #include "dispatcher_worker.hpp"
 #include "file_system.hpp"
+#include "firmware_health_check.hpp"
 #include "hid-rp-mouse.hpp"
 #include "hid-rp.hpp"
 #include "i2c.hpp"
@@ -26,6 +28,7 @@
 #include "logger.hpp"
 #include "omega_calibration.hpp"
 #include "omega_store.hpp"
+#include "ota.hpp"
 #include "qtpy.hpp"
 #include "task.hpp"
 #include "tmag5273.hpp"
@@ -116,6 +119,12 @@ static const std::string CALIBRATION_FILE_NAME = "omega_calibration.cfg";
 // espp::Task with its own generously-sized stack instead.
 static constexpr size_t MAIN_TASK_STACK_SIZE_BYTES = 16 * 1024;
 
+// A firmware upload whose console vanished mid-transfer (cable pulled, tab
+// closed) keeps the OTA engine claimed, which blocks a retry and REVERT. The
+// polling loops drop such a session after this long without OTA traffic (see
+// CalibrationService::expire_stale_update()).
+static constexpr auto OTA_IDLE_TIMEOUT = 30s;
+
 // Runs entirely on the dedicated "omega-stick" task (see app_main below),
 // not on the small default main-task stack. Matches espp::Task's callback
 // signature; m/cv are unused since this function never yields back to the
@@ -164,6 +173,18 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
   });
 
+  // OTA engine shared by every CalibrationService instance below (vendor + CDC, mouse + XAC).
+  // Must outlive them; this function never returns, so a local is fine.
+  espp::Ota ota({.reject_same_version = false, .log_level = espp::Logger::Verbosity::ERROR});
+  {
+    // Version banner: the same fields the console reports via GET_FW_INFO, so a
+    // serial log and a bug report can be matched up.
+    const esp_app_desc_t *app = esp_app_get_description();
+    printf("Firmware %s %s (built %s %s, idf %s) running from %s%s\n", app->project_name,
+           app->version, app->date, app->time, app->idf_ver, ota.running_partition_label().c_str(),
+           ota.is_pending_verify() ? " [PENDING VERIFY]" : "");
+  }
+
   // ==========================================================================
   // Initialize
   // ==========================================================================
@@ -172,6 +193,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
   if (!tmag.initialize(ec)) {
     printf("ERROR: TMAG5273 initialization failed: %s\n", ec.message().c_str());
+    espp::FirmwareHealthCheck<>::reject_if_pending(ota, "TMAG5273 init failed");
 
     while (true) {
       std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -271,6 +293,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
     if (!calibration.center_calibration(center, cal_ec)) {
       printf("ERROR: Center calibration failed: %s\n", cal_ec.message().c_str());
+      espp::FirmwareHealthCheck<>::reject_if_pending(ota, "center calibration failed");
       while (true) {
         std::this_thread::sleep_for(1s);
       }
@@ -283,6 +306,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
     if (!calibration.range_calibration(center, range, cal_ec)) {
       printf("ERROR: Range calibration failed: %s\n", cal_ec.message().c_str());
+      espp::FirmwareHealthCheck<>::reject_if_pending(ota, "range calibration failed");
       while (true) {
         std::this_thread::sleep_for(1s);
       }
@@ -456,6 +480,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
               }
               return true;
             },
+        .restart = []() { esp_restart(); },
+        .ota = &ota,
         .log_level = espp::Logger::Verbosity::ERROR,
     };
     espp::CalibrationService calibration_vendor(calibration_cfg);
@@ -500,6 +526,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     std::error_code usb_ec;
     if (!usb.initialize(usb_ec)) {
       printf("ERROR: USB init failed: %s\n", usb_ec.message().c_str());
+      espp::FirmwareHealthCheck<>::reject_if_pending(ota, "USB init failed");
       while (true) {
         std::this_thread::sleep_for(1s);
       }
@@ -547,7 +574,17 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     js.update();
     float prev_x = js.x();
     float prev_y = js.y();
+    espp::FirmwareHealthCheck<> fw_health(ota);
     while (true) {
+      fw_health.tick(usb.is_hid_ready(), [&tmag] {
+        std::error_code read_ec;
+        tmag.read_magnetic(read_ec);
+        return !read_ec;
+      });
+      // Cheap when idle: a try_lock and a timestamp compare per service.
+      calibration_vendor.expire_stale_update(OTA_IDLE_TIMEOUT);
+      calibration_cdc.expire_stale_update(OTA_IDLE_TIMEOUT);
+
       // --- Recalibration-on-demand (see the section above) ---
       if (recalibration_requested.exchange(false)) {
         printf("\n=== RE-CALIBRATION REQUESTED (calibration console) ===\n");
@@ -741,6 +778,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
               }
               return true;
             },
+        .restart = []() { esp_restart(); },
+        .ota = &ota,
         .log_level = espp::Logger::Verbosity::ERROR,
     };
     espp::CalibrationService calibration_vendor(calibration_cfg);
@@ -785,6 +824,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
     if (!usb.initialize(usb_ec)) {
       printf("ERROR: USB init failed: %s\n", usb_ec.message().c_str());
+      espp::FirmwareHealthCheck<>::reject_if_pending(ota, "USB init failed");
 
       while (true) {
         std::this_thread::sleep_for(1s);
@@ -843,7 +883,17 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     // HID polling loop
     // ------------------------------------------------------------
 
+    espp::FirmwareHealthCheck<> fw_health(ota);
     while (true) {
+      fw_health.tick(usb.is_hid_ready(), [&tmag] {
+        std::error_code read_ec;
+        tmag.read_magnetic(read_ec);
+        return !read_ec;
+      });
+      // Cheap when idle: a try_lock and a timestamp compare per service.
+      calibration_vendor.expire_stale_update(OTA_IDLE_TIMEOUT);
+      calibration_cdc.expire_stale_update(OTA_IDLE_TIMEOUT);
+
       // --- Recalibration-on-demand (see the section above the mouse loop) ---
       if (recalibration_requested.exchange(false)) {
         printf("\n=== RE-CALIBRATION REQUESTED (calibration console) ===\n");

@@ -20,6 +20,7 @@ component library.
 - [Why low force](#why-low-force)
 - [Project status](#project-status)
 - [Documentation](#documentation)
+- [Firmware updates and versioning](#firmware-updates-and-versioning)
 - [Hardware](#hardware)
 - [Getting started](#getting-started)
   - [Prerequisites](#prerequisites)
@@ -101,10 +102,25 @@ Product and planning documents live in [docs/](docs/):
 | [decisions.md](docs/decisions.md) | Product decisions with rationale, and what is still open |
 | [compliance.md](docs/compliance.md) | What the project may and may not claim about itself |
 | [status.md](docs/status.md) | Current working status |
+| [firmware-updates.md](docs/firmware-updates.md) | USB firmware updates, rollback, and versioning |
 | [research/](docs/research/) | Background research these were built from |
 | [assets/logo/](assets/logo/) | Brand marks, wordmark, the animated hero scene, and usage notes |
 
 Research documents are point-in-time snapshots and are not maintained.
+
+## Firmware updates and versioning
+
+After a one-time serial flash (`idf.py -p PORT flash`) onto the two-slot OTA
+partition table, firmware is updated over USB from the calibration console:
+open it, connect, and upload `build/omega_stick.bin` in the "Firmware update"
+section. A new image must prove itself (USB enumerated, sensor answering, ten
+seconds of running) before it is kept; otherwise the device reverts to the
+previous image, and the console's "Revert to previous firmware" button goes
+back on demand. Versions are `MAJOR.MINOR.PATCH` from `version.txt` (release
+builds report exactly that; other builds append `+<commit>`). Please paste the
+console's Copy line in bug reports. Moving to the OTA layout loses saved
+calibration once. Details are in
+[docs/firmware-updates.md](docs/firmware-updates.md).
 
 ## Hardware
 
