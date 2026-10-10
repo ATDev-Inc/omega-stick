@@ -21,6 +21,84 @@ set(
   "List of components to include"
   )
 
+# Firmware version string, embedded in the app image (esp_app_desc_t::version),
+# printed at boot and reported by the calibration console's GET_FW_INFO. Set
+# before project() so ESP-IDF picks it up as PROJECT_VER.
+#
+# Numbering scheme (see docs/firmware-updates.md):
+#   version.txt holds MAJOR.MINOR.PATCH, bumped by hand in the PR that warrants
+#   it. MAJOR: saved calibration/settings or the console protocol become
+#   incompatible. MINOR: new user-visible feature. PATCH: fixes only.
+#
+# What a build embeds:
+#   "0.1.0"               release: clean tree, HEAD tagged exactly v0.1.0
+#   "0.1.0+1a2b3c4"       any other build of commit 1a2b3c4
+#   "0.1.0+1a2b3c4.dirty" built with uncommitted changes
+#   "0.1.0+unknown"       git unavailable (e.g. a source tarball)
+# `idf.py -DPROJECT_VER=...` overrides all of this.
+#
+# Keep the result under esp_app_desc_t's 32-byte limit (31 characters).
+if(NOT DEFINED PROJECT_VER)
+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/version.txt" _base_version)
+  string(STRIP "${_base_version}" _base_version)
+  if(NOT _base_version MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+    message(FATAL_ERROR "version.txt must contain MAJOR.MINOR.PATCH, got '${_base_version}'")
+  endif()
+
+  set(_sha "")
+  set(_dirty FALSE)
+  set(_at_release_tag FALSE)
+  find_package(Git QUIET)
+  if(GIT_FOUND)
+    execute_process(
+      COMMAND ${GIT_EXECUTABLE} rev-parse --short=7 HEAD
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      OUTPUT_VARIABLE _sha OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET RESULT_VARIABLE _rc)
+    if(NOT _rc EQUAL 0)
+      set(_sha "")
+    endif()
+    execute_process(
+      COMMAND ${GIT_EXECUTABLE} status --porcelain --untracked-files=no
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      OUTPUT_VARIABLE _status OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET RESULT_VARIABLE _rc)
+    if(_rc EQUAL 0 AND NOT _status STREQUAL "")
+      set(_dirty TRUE)
+    endif()
+    execute_process(
+      COMMAND ${GIT_EXECUTABLE} describe --tags --exact-match HEAD
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      OUTPUT_VARIABLE _tag OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET RESULT_VARIABLE _rc)
+    if(_rc EQUAL 0 AND _tag STREQUAL "v${_base_version}")
+      set(_at_release_tag TRUE)
+    endif()
+  endif()
+  # GitHub Actions: git may refuse to run in the checkout (ownership checks),
+  # so fall back to the environment for the commit and the release tag.
+  if(_sha STREQUAL "" AND DEFINED ENV{GITHUB_SHA})
+    string(SUBSTRING "$ENV{GITHUB_SHA}" 0 7 _sha)
+    if(DEFINED ENV{GITHUB_REF_TYPE} AND "$ENV{GITHUB_REF_TYPE}" STREQUAL "tag"
+       AND "$ENV{GITHUB_REF_NAME}" STREQUAL "v${_base_version}")
+      set(_at_release_tag TRUE)
+    endif()
+  endif()
+  if(_sha STREQUAL "")
+    set(_sha "unknown")
+  endif()
+
+  if(_at_release_tag AND NOT _dirty)
+    set(PROJECT_VER "${_base_version}")
+  else()
+    set(PROJECT_VER "${_base_version}+${_sha}")
+    if(_dirty)
+      string(APPEND PROJECT_VER ".dirty")
+    endif()
+  endif()
+endif()
+message(STATUS "omega_stick firmware version: ${PROJECT_VER}")
+
 project(omega_stick)
 
 set(CMAKE_CXX_STANDARD 20)
