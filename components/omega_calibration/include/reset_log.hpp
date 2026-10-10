@@ -71,22 +71,25 @@ public:
   /// Reads the file. A missing file is not an error: the log just starts
   /// empty. Returns false only when the file exists and cannot be opened.
   /// If the log itself is missing but a complete temporary file from save()
-  /// is there, that is read instead: it means a save was interrupted between
-  /// removing the old log and renaming the new one (see save()).
+  /// is there, a save was interrupted between removing the old log and
+  /// renaming the new one (see save()). That file is moved into place before
+  /// it is read, so the next save() does not truncate the only copy.
   bool load(std::error_code &ec) {
     ec.clear();
     boot_count_ = 0;
     entries_.clear();
 
     std::error_code exists_ec;
-    std::filesystem::path source = config_.path;
-    if (!std::filesystem::exists(source, exists_ec)) {
-      source = temp_path();
-      if (!std::filesystem::exists(source, exists_ec)) {
+    if (!std::filesystem::exists(config_.path, exists_ec)) {
+      if (!std::filesystem::exists(temp_path(), exists_ec)) {
         return true;
       }
+      std::filesystem::rename(temp_path(), config_.path, ec);
+      if (ec) {
+        return false;
+      }
     }
-    std::ifstream in(source);
+    std::ifstream in(config_.path);
     if (!in) {
       ec = std::make_error_code(std::errc::io_error);
       return false;

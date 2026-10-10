@@ -202,6 +202,10 @@ TEST(reset_log_recovers_from_the_temporary_file_when_the_log_is_missing) {
   CHECK(reloaded.load(ec));
   CHECK_EQ(reloaded.boot_count(), 1u);
   CHECK_EQ(reloaded.entries().size(), std::size_t{1});
+  // load() moved it back into place, so the next save writes a new
+  // temporary file instead of truncating the only copy.
+  CHECK(std::filesystem::exists(path));
+  CHECK(!std::filesystem::exists(log.temp_path()));
   CHECK(reloaded.clear(ec));
   CHECK(!std::filesystem::exists(log.temp_path()));
 }
