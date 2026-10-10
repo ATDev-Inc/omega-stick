@@ -88,7 +88,7 @@ in `version.txt`.
   and as expected-failure tests in
   [tests/host/README.md](tests/host/README.md#known-bug-tests-xfail_test).
 
-[Unreleased]: https://github.com/ATDev-Inc/omega-stick/commits/main
+[Unreleased]: https://github.com/ATDev-Inc/omega-stick/commits/owen-updates
 [#1]: https://github.com/ATDev-Inc/omega-stick/pull/1
 [#6]: https://github.com/ATDev-Inc/omega-stick/pull/6
 [#8]: https://github.com/ATDev-Inc/omega-stick/pull/8

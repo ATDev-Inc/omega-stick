@@ -10,8 +10,3 @@ useStlAlgorithm
 // Specific suppressions of the form:
 //   [error id]:[filename]:[line]
 *:components/espp/*
-// The TMAG5273 tests flip fields on a fake bus that the driver reads back through
-// std::function callbacks, which cppcheck cannot follow, so it sees every such
-// assignment as dead.
-unreadVariable:tests/host/test_tmag5273.cpp
-redundantAssignment:tests/host/test_tmag5273.cpp

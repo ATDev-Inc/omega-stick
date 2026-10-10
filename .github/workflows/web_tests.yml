@@ -1,6 +1,10 @@
 name: Web tests
 
-on: [pull_request]
+on:
+  pull_request:
+  # Also on the default branch, so the README badge reflects it.
+  push:
+    branches: [main]
 
 permissions:
   contents: read

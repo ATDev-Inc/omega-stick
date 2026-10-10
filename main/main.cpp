@@ -613,8 +613,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     cdc_fn.on_receive = [&cdc_link](std::span<const uint8_t> data) { cdc_link.push(data); };
     usb_cfg.cdc = cdc_fn; // re-assign now that on_receive is set
 
-    // Static so the address in the static usb_ptr never refers to a stack object.
-    static espp::UsbDevice usb(usb_cfg);
+    espp::UsbDevice usb(usb_cfg);
+    // cppcheck-suppress danglingLifetime ; run_omega_stick() never returns, so usb outlives usb_ptr
     usb_ptr = &usb;
 
     std::error_code usb_ec;
@@ -771,8 +771,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     cdc_fn.on_receive = [&cdc_link](std::span<const uint8_t> data) { cdc_link.push(data); };
     usb_cfg.cdc = cdc_fn;
 
-    // Static so the address in the static usb_ptr never refers to a stack object.
-    static espp::UsbDevice usb(usb_cfg);
+    espp::UsbDevice usb(usb_cfg);
+    // cppcheck-suppress danglingLifetime ; run_omega_stick() never returns, so usb outlives usb_ptr
     usb_ptr = &usb;
 
     std::error_code usb_ec;

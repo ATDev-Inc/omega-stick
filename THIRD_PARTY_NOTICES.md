@@ -14,9 +14,17 @@ is adapted from espp (see [Code in this repository](#code-in-this-repository)).
 Licenses were checked against the `license:` field of each component's
 `idf_component.yml` and its LICENSE file or source headers.
 
+ESP-IDF is one row below, but the linked image also contains the third-party
+code ESP-IDF itself bundles: the FreeRTOS kernel (MIT), newlib (BSD-style),
+lwIP (BSD-3-Clause), mbedTLS (Apache-2.0) and others. Those are enumerated,
+with their license texts, in ESP-IDF's own
+[COPYRIGHT.rst](https://github.com/espressif/esp-idf/blob/v6.0/COPYRIGHT.rst),
+which this file does not duplicate; the table below is therefore not an
+exhaustive list of everything in the binary.
+
 | Component | Version | License | Copyright | Source |
 | --- | --- | --- | --- | --- |
-| ESP-IDF | 6.0.2 | Apache-2.0 | Espressif Systems (Shanghai) CO LTD | https://github.com/espressif/esp-idf |
+| ESP-IDF | 6.0.x (6.0.2 in the lock; CI builds the `v6.0` image) | Apache-2.0 | Espressif Systems (Shanghai) CO LTD | https://github.com/espressif/esp-idf |
 | espp/base_component | 1.3.6 | MIT | esp-cpp (see note) | https://github.com/esp-cpp/espp/tree/main/components/base_component |
 | espp/base_peripheral | 1.3.6 | MIT | esp-cpp (see note) | https://github.com/esp-cpp/espp/tree/main/components/base_peripheral |
 | espp/cli | 1.3.6 | MIT | esp-cpp (see note) | https://github.com/esp-cpp/espp/tree/main/components/cli |

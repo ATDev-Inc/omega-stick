@@ -326,6 +326,7 @@ XFAIL_TEST(tmag_angle_conversion_getter_reads_back_what_the_setter_wrote,
 TEST(tmag_setters_do_not_write_when_the_read_fails) {
   FakeBus bus;
   Tmag dev(bus.config());
+  // cppcheck-suppress unreadVariable ; read back through the fake bus callbacks
   bus.fail_reads = true;
   std::error_code ec;
   CHECK(!dev.set_operating_mode(Tmag::OperatingMode::SLEEP, ec));
@@ -344,6 +345,7 @@ TEST(tmag_failed_write_leaves_the_cached_range_unchanged) {
   Tmag::Config cfg = bus.config();
   cfg.xy_range = Tmag::MagneticRange::HIGH;
   Tmag dev(cfg);
+  // cppcheck-suppress unreadVariable ; read back through the fake bus callbacks
   bus.fail_writes = true;
   std::error_code ec;
   CHECK(!dev.set_xy_range(Tmag::MagneticRange::LOW, ec));
@@ -534,6 +536,7 @@ TEST(tmag_reads_report_io_error_and_return_zero_when_the_bus_fails) {
   FakeBus bus;
   bus.set16(Tmag::X_MSB_RESULT, 1234);
   Tmag dev(bus.config());
+  // cppcheck-suppress unreadVariable ; read back through the fake bus callbacks
   bus.fail_reads = true;
 
   std::error_code ec;
@@ -573,6 +576,8 @@ TEST(tmag_recovers_once_the_bus_works_again) {
   bus.fail_reads = true;
   dev.read_magnetic(ec);
   CHECK(bool(ec));
+  // cppcheck-suppress [unreadVariable, redundantAssignment] ; read back through the fake bus
+  // callbacks
   bus.fail_reads = false;
   const auto m = dev.read_magnetic(ec);
   CHECK(!ec);

@@ -313,7 +313,7 @@ and security reports privately as described in [SECURITY.md](SECURITY.md). See
 
 Released under the [MIT License](./LICENSE). The firmware image also contains
 third-party code under its own licenses (MIT, Apache-2.0, BSD-3-Clause,
-MPL-2.0 and BSL-1.0); see
+MPL-2.0 and BSL-1.0), plus the libraries ESP-IDF itself bundles; see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Acknowledgements
