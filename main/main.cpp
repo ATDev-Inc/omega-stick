@@ -10,11 +10,13 @@
 #include <mutex>
 #include <sdkconfig.h>
 #include <span>
+#include <string>
 #include <system_error>
 #include <thread>
 #include <vector>
 
 #include "esp_app_desc.h" // esp_app_get_description() -- firmware version banner at boot
+#include "esp_ota_ops.h"  // esp_ota_get_running_partition() -- slot tag in the reset log
 #include "esp_system.h" // esp_restart() -- used to apply a live mode switch (see on_mode_changed below)
 
 #include "calibration_service.hpp"
@@ -281,6 +283,32 @@ static const char *reset_reason_name(esp_reset_reason_t reason) {
   }
 }
 
+// The subset of abnormal resets that point at the firmware itself: the kind a
+// different image might not have. Brownouts and power glitches are left out,
+// since the other slot would not survive them either (D18 amendment).
+static bool reset_reason_is_crash(esp_reset_reason_t reason) {
+  switch (reason) {
+  case ESP_RST_PANIC:
+  case ESP_RST_INT_WDT:
+  case ESP_RST_TASK_WDT:
+  case ESP_RST_WDT:
+  case ESP_RST_CPU_LOCKUP:
+    return true;
+  default:
+    return false;
+  }
+}
+
+// The slot a reset-log entry was tagged with ("panic (ota_0)" -> "ota_0"), or
+// "" for entries written before slots were recorded.
+static std::string slot_from_reset_name(const std::string &name) {
+  const auto open = name.rfind(" (");
+  if (open == std::string::npos || name.back() != ')') {
+    return "";
+  }
+  return name.substr(open + 2, name.size() - open - 3);
+}
+
 // A reset nobody asked for: the firmware crashed, hung, or lost power
 // unexpectedly. Power-on, the mode-switch esp_restart() and a USB or JTAG
 // reset are all deliberate.
@@ -321,6 +349,13 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   // ResetLog::default_path() is the first use of espp::FileSystem, which
   // mounts the filesystem, so this has to come before the I2C and sensor
   // setup below.
+  // Each entry's name carries the slot that boot ran in ("panic (ota_0)"), so
+  // the crash-loop check below can tell this image's crashes from the other
+  // image's (see FirmwareHealthCheck::crashes_while_running).
+  const esp_partition_t *running_slot = esp_ota_get_running_partition();
+  const std::string running_slot_label = running_slot ? running_slot->label : "factory";
+  const std::string slot_tag = " (" + running_slot_label + ")";
+  std::vector<espp::FirmwareHealthCheck<>::BootRecord> boots; // oldest first, filled below
   // Lives for the whole run (read-only after this block) so the calibration
   // console's GET_DIAGNOSTICS can report it.
   espp::ResetLog reset_log(
@@ -331,8 +366,13 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
       printf("WARNING: could not read the reset log: %s\n", log_ec.message().c_str());
     }
     const esp_reset_reason_t reason = esp_reset_reason();
-    reset_log.record(static_cast<int>(reason), reset_reason_name(reason),
+    reset_log.record(static_cast<int>(reason), reset_reason_name(reason) + slot_tag,
                      reset_reason_is_abnormal(reason));
+    for (const auto &entry : reset_log.entries()) {
+      boots.push_back(
+          {.slot = slot_from_reset_name(entry.name),
+           .crash = reset_reason_is_crash(static_cast<esp_reset_reason_t>(entry.reason))});
+    }
     if (!reset_log.save(log_ec)) {
       printf("WARNING: could not save the reset log: %s\n", log_ec.message().c_str());
     }
@@ -350,6 +390,27 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     }
   }
 
+  // OTA engine shared by every CalibrationService instance below (vendor + CDC, mouse + XAC).
+  // Must outlive them; this function never returns, so a local is fine.
+  espp::Ota ota({.reject_same_version = false, .log_level = espp::Logger::Verbosity::ERROR});
+
+  // A confirmed image that has crashed on its last few boots hands the device
+  // to the other slot (D18 amendment); a pending one is the bootloader's job.
+  // It runs here, before any peripheral is touched, because a crash loop in
+  // the I2C or sensor setup is exactly the case it exists for.
+  if (espp::FirmwareHealthCheck<>::revert_if_crash_looping(
+          ota, espp::FirmwareHealthCheck<>::crashes_while_running(boots, running_slot_label))) {
+    std::this_thread::sleep_for(100ms); // let the message leave the console
+    esp_restart();
+  }
+  {
+    // Version banner: the same fields the console reports via GET_FW_INFO, so a
+    // serial log and a bug report can be matched up.
+    const esp_app_desc_t *app = esp_app_get_description();
+    printf("Firmware %s %s (built %s %s, idf %s) running from %s%s\n", app->project_name,
+           app->version, app->date, app->time, app->idf_ver, ota.running_partition_label().c_str(),
+           ota.is_pending_verify() ? " [PENDING VERIFY]" : "");
+  }
   // Published by the control loop through EspPorts::sensor_fault_changed;
   // served to the console together with the reset log by GET_DIAGNOSTICS
   // (D21, D23).
@@ -409,18 +470,6 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
       .auto_init = false,
 
   });
-
-  // OTA engine shared by every CalibrationService instance below (vendor + CDC, mouse + XAC).
-  // Must outlive them; this function never returns, so a local is fine.
-  espp::Ota ota({.reject_same_version = false, .log_level = espp::Logger::Verbosity::ERROR});
-  {
-    // Version banner: the same fields the console reports via GET_FW_INFO, so a
-    // serial log and a bug report can be matched up.
-    const esp_app_desc_t *app = esp_app_get_description();
-    printf("Firmware %s %s (built %s %s, idf %s) running from %s%s\n", app->project_name,
-           app->version, app->date, app->time, app->idf_ver, ota.running_partition_label().c_str(),
-           ota.is_pending_verify() ? " [PENDING VERIFY]" : "");
-  }
 
   // ==========================================================================
   // Initialize

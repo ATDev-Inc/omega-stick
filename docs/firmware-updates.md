@@ -137,6 +137,17 @@ Things to know:
   never rolls it back, even if the sensor later fails.
 - The console also shows the running partition and the boot partition (the one
   the bootloader will start next). They differ while an update is pending.
+- **A confirmed image that crashes three boots in a row hands over to the other
+  slot.** The bootloader only protects a pending image, so once an image is
+  confirmed a crash loop would otherwise run until someone re-flashed over
+  serial. At boot the firmware reads its reset log; if the last three resets of
+  this slot were crashes (panic, watchdog, CPU lockup; brownouts do not count,
+  since the other image would not survive them either) and the other slot holds
+  an app image that has not already been rejected, it switches the boot
+  partition and restarts. The other image then boots pending, under the usual
+  rules. One crash does nothing beyond the core dump. A crash in the other
+  image is charged to that image (the reset that starts a boot ended the
+  previous one), so the two slots cannot bounce the device between them.
 
 ### Going back deliberately
 
