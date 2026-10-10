@@ -54,26 +54,27 @@ That keeps the fix and its regression test tied together.
 
 Current XFAIL entries:
 
-- `store_input_mode_same_value_is_a_no_op`: re-selecting the active mode
-  still fires `on_mode_changed`, which saves and reboots.
 - `store_set_calibration_preserves_live_manual_offset`: a drift nudge or
   recalibration pushed from a stale local `CenterResult` reverts a manual
   offset the console set.
-- `service_ok_reply_is_sent_before_mode_change_callback_runs`: the mode
-  change callback (which reboots) runs before the OK reply is built, so the
-  console always times out on `SET_INPUT_MODE`.
+
+Fixed, now plain tests:
+
+- `store_input_mode_same_value_is_a_no_op` and
+  `service_ok_reply_is_sent_before_mode_change_callback_runs`: re-selecting
+  the active mode is ignored, and `CalibrationService` applies a mode change
+  only after the OK reply has been sent, so the console sees the OK before
+  the device restarts.
 - `xac_report_bytes_follow_descriptor_order`,
   `xac_centered_report_is_neutral`, `xac_stick_x_moves_report_x`: espp's
-  `GamepadInputReport::get_report()` (and `set_data()`) skip a fixed 2 bytes
-  at the front of the object. With the default `uint16_t` axes that is the
-  report ID plus one byte of alignment padding, but `XacInputReport` uses
-  `uint8_t` axes, which have no padding, so the copy starts one byte late:
-  X is dropped, every later field moves down a slot, RZ reads 0 (right
-  stick pinned to an edge) and the last byte is read from past the end of
-  the object. This is the "drifts up, only moves in X" behaviour seen on
-  the Xbox Adaptive Controller. The fix belongs upstream in espp
-  (`hid-rp-gamepad.hpp`); until then `XacInputReport` should override
-  `get_report()` with a 1-byte offset (0 when `REPORT_ID` is 0).
+  `GamepadInputReport::get_report()` skips a fixed 2 bytes at the front of
+  the object (report ID plus padding for the default `uint16_t` axes).
+  `XacInputReport` uses `uint8_t` axes, which have no padding, so it
+  overrides `get_report()` to skip only the report ID. Without that, X was
+  dropped and every later field moved down a slot: the "drifts up, only
+  moves in X" behaviour seen on the Xbox Adaptive Controller. Full
+  deflection reads 0 and 254, not 255: hid-rp maps [-1, 1] to center 127
+  plus or minus 127.
 
 ## Component quirks the host build surfaced
 
