@@ -34,9 +34,11 @@
     GET_FW_INFO: 0x5C,
     MARK_VALID: 0x5D,
     REVERT: 0x5E,
+    GET_DIAGNOSTICS: 0x5F,
     STATE: 0xD0,
     CALIBRATION_RESULT: 0xD1,
     FW_INFO: 0xD2,
+    DIAGNOSTICS: 0xD3,
     OK: 0xDF,
     ERROR: 0xFE,
   };
@@ -188,6 +190,27 @@
     return s;
   }
 
+  // Variable-length DIAGNOSTICS reply; see calibration_service.hpp.
+  function decodeDiagnostics(payload) {
+    if (payload.length < 11) throw new Error("malformed DIAGNOSTICS reply (" + payload.length + " B, expected at least 11)");
+    const v = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    let o = 0;
+    const u8 = () => payload[o++];
+    const u32 = () => { const x = v.getUint32(o, true); o += 4; return x; };
+    const d = { sensorFault: u8(), sensorFirstFault: u8(), sensorFaultCount: u32(), bootCount: u32(), resets: [] };
+    const count = u8();
+    const utf8 = new TextDecoder();
+    for (let i = 0; i < count; i++) {
+      if (payload.length < o + 7) throw new Error("malformed DIAGNOSTICS reply: reset entry " + i + " truncated");
+      const r = { boot: u32(), reason: u8(), abnormal: u8() !== 0 };
+      const nameLen = u8();
+      if (payload.length < o + nameLen) throw new Error("malformed DIAGNOSTICS reply: reset name " + i + " truncated");
+      r.name = utf8.decode(payload.subarray(o, o + nameLen)); o += nameLen;
+      d.resets.push(r);
+    }
+    return d;
+  }
+
   // Request payload encoders (GET_STATE, SAVE_TO_FLASH and START_CALIBRATION
   // carry no payload, so the console passes null for them).
   function encodeSetManualOffset(x, y) {
@@ -223,7 +246,7 @@
     FLAGS_REQUEST, FLAGS_REPLY_BIT, FLAG_CORRELATION,
     TYPE, INPUT_MODE,
     crc32, buildFrame, FrameParser, readU32,
-    parseErrorReply, parseDiscovery, decodeState,
+    parseErrorReply, parseDiscovery, decodeState, decodeDiagnostics,
     encodeSetManualOffset, encodeSetDeadzoneOverride,
     encodeSetNudgeSettings, encodeSetInputMode,
   };

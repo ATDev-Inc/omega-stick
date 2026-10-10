@@ -106,6 +106,9 @@ struct StickSample {
   /// (espp::Joystick::update() keeps its old output), so they are not to be
   /// trusted; the SensorFaultMonitor decides when to stop acting on them.
   bool read_ok{true};
+  /// The sensor's conversion counter at this read (TMAG5273 CONV_STATUS
+  /// SET_COUNT); the fault monitor trips when it stops advancing.
+  std::uint8_t conversion_count{0};
 };
 
 struct StepInput {
@@ -369,7 +372,8 @@ struct FaultEdge {
 // Called first on every tick, whatever else the tick does.
 inline FaultEdge sensor_fault_update(CommonState &common, const StepInput &in, Ports &ports) {
   FaultEdge edge;
-  edge.faulted = common.sensor.update(in.stick.read_ok, in.stick.raw_x, in.stick.raw_y);
+  edge.faulted = common.sensor.update(in.stick.read_ok, in.stick.raw_x, in.stick.raw_y,
+                                      in.stick.conversion_count);
   if (edge.faulted != common.sensor_was_faulted) {
     common.sensor_was_faulted = edge.faulted;
     edge.tripped = edge.faulted;

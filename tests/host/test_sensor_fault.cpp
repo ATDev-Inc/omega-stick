@@ -150,6 +150,51 @@ TEST(fault_monitor_reset_forgets_everything) {
   CHECK(!m.update(false, 0, 0));
 }
 
+TEST(fault_monitor_trips_when_conversion_counter_stops) {
+  Monitor m({.stuck_after_samples = 0, .stuck_after_stale_conversions = 50});
+  // A live sensor: the 3-bit counter walks, the reading wobbles.
+  for (int i = 0; i < 200; i++) {
+    CHECK(!m.update(true, 100.0f + (i % 2), 50.0f, static_cast<uint8_t>((i * 3) % 8)));
+  }
+  // The counter freezes (at a value different from the last live one, 5)
+  // but the reading still carries noise: the first frozen poll is a change,
+  // the next 49 are repeats, and the 50th repeat trips the fault.
+  for (int i = 0; i < 50; i++) {
+    CHECK(!m.update(true, 100.0f + (i % 2), 50.0f, uint8_t{6}));
+  }
+  CHECK(m.update(true, 100.0f, 50.0f, uint8_t{6}));
+  CHECK(m.fault() == Fault::STUCK);
+  CHECK_EQ(m.fault_count(), 1u);
+}
+
+TEST(fault_monitor_conversion_counter_recovers_like_a_stuck_reading) {
+  Monitor m({.stuck_after_samples = 0,
+             .stuck_after_stale_conversions = 10,
+             .recover_after_good_reads = 5});
+  for (int i = 0; i < 12; i++) {
+    m.update(true, 100.0f + (i % 2), 50.0f, uint8_t{2});
+  }
+  CHECK(m.fault() == Fault::STUCK);
+  // Counter moves again: still faulted until the good-read count is met.
+  for (int i = 0; i < 4; i++) {
+    CHECK(m.update(true, 100.0f + (i % 2), 50.0f, static_cast<uint8_t>(i)));
+  }
+  CHECK(!m.update(true, 101.0f, 50.0f, uint8_t{7}));
+  CHECK(m.fault() == Fault::NONE);
+}
+
+TEST(fault_monitor_conversion_counter_check_can_be_disabled) {
+  Monitor m({.stuck_after_samples = 0, .stuck_after_stale_conversions = 0});
+  for (int i = 0; i < 1000; i++) {
+    CHECK(!m.update(true, 100.0f + (i % 2), 50.0f, uint8_t{3}));
+  }
+}
+
+TEST(fault_monitor_without_counter_ignores_counter_rules) {
+  Monitor m({.stuck_after_samples = 0, .stuck_after_stale_conversions = 5});
+  CHECK(!feed_noisy(m, 1000));
+}
+
 TEST(fault_monitor_names_faults) {
   CHECK(std::string(Monitor::to_string(Fault::NONE)) == "none");
   CHECK(std::string(Monitor::to_string(Fault::READ_FAILED)) == "read failed");

@@ -92,7 +92,19 @@
 //   The OTA messages (and GET_FW_INFO/MARK_VALID/REVERT) reply ERROR
 //   (function_not_supported) when Config::ota is null.
 //
+//   0x5F GET_DIAGNOSTICS        — no payload. Reply: DIAGNOSTICS, or ERROR
+//                                 (function_not_supported) when
+//                                 Config::diagnostics is unset.
+//
 // Message types & payloads (device -> host), same module, reply flag set:
+//   0xD3 DIAGNOSTICS — payload (see build_diagnostics_payload() below):
+//                  u8  sensor_fault        (0 none, 1 read failed, 2 stuck)
+//                  u8  sensor_first_fault  (same codes; latched since boot)
+//                  u32 sensor_fault_count  (trips since boot)
+//                  u32 boot_count
+//                  u8  reset_count         (N, oldest first)
+//                  N × { u32 boot, u8 reason, u8 abnormal, u8 name_len,
+//                        name_len bytes of UTF-8 name }
 //   0xD0 STATE - payload: fixed 79-byte little-endian struct, in this exact
 //                order (see build_state_payload() below):
 //                  f32 center_x, center_y, center_noise_radius,
@@ -245,10 +257,12 @@ public:
     GetFwInfo = 0x5C,           ///< request FwInfo
     MarkValid = 0x5D,           ///< confirm running image (cancel rollback)
     Revert = 0x5E,              ///< boot the other OTA slot (previous firmware), then reboot
+    GetDiagnostics = 0x5F,      ///< request the sensor fault status and reset log
     // device -> host
     State = 0xD0,             ///< fixed 79-byte calibration + settings struct
     CalibrationResult = 0xD1, ///< UNSOLICITED: outcome of an async StartCalibration
     FwInfo = 0xD2,            ///< u8 pending_verify, u8 session_active, str project, str version
+    Diagnostics = 0xD3,       ///< variable-length sensor fault status + reset log
     Ok = 0xDF,                ///< u32 context-dependent success value
     Error = 0xFE,             ///< u32 informational code + authoritative UTF-8 message
   };
@@ -267,6 +281,24 @@ public:
    * @param frame The complete encoded frame bytes (header + payload + CRC).
    */
   using send_fn = std::function<void(std::span<const uint8_t> frame)>;
+
+  /// What GET_DIAGNOSTICS reports: the sensor fault state the polling loop
+  /// publishes (SensorFaultMonitor, D21) and the reset log (ResetLog, D23).
+  /// Gathered by Config::diagnostics so this service needs neither object.
+  struct DiagnosticsData {
+    uint8_t sensor_fault{0};       ///< SensorFaultMonitor::Fault in effect now
+    uint8_t sensor_first_fault{0}; ///< first fault since boot, latched
+    uint32_t sensor_fault_count{0};
+    uint32_t boot_count{0};
+    struct Reset {
+      uint32_t boot{0};
+      uint8_t reason{0}; ///< platform reset-reason code
+      bool abnormal{false};
+      std::string name;
+    };
+    std::vector<Reset> resets; ///< oldest first
+  };
+  using diagnostics_fn = std::function<DiagnosticsData()>;
 
   /// Configuration for the CalibrationService.
   struct Config {
@@ -303,6 +335,11 @@ public:
     /// Optional OTA engine (not owned; must outlive the service and may be
     /// shared by several services). When null the OTA messages reply ERROR.
     espp::Ota *ota{nullptr};
+    /// Optional: answers Msg::GetDiagnostics. Called under this service's
+    /// internal mutex, so it must be quick and must not block on the
+    /// control loop (copy out atomics or a snapshot; see main.cpp). When
+    /// left unset, GET_DIAGNOSTICS replies with ERROR (function_not_supported).
+    diagnostics_fn diagnostics{nullptr};
     espp::Logger::Verbosity log_level{espp::Logger::Verbosity::WARN}; ///< Logger verbosity.
   };
 
@@ -317,6 +354,7 @@ public:
       , send_(config.send)
       , module_(config.module)
       , start_calibration_(config.start_calibration)
+      , diagnostics_(config.diagnostics)
       , restart_(config.restart)
       , ota_(config.ota) {}
 
@@ -503,6 +541,15 @@ protected:
                            std::vector<uint8_t> &reply) {
     namespace stream = espp::stream_frame;
     switch (static_cast<Msg>(type)) {
+    case Msg::GetDiagnostics: {
+      if (!diagnostics_) {
+        reply = build_error(std::errc::function_not_supported,
+                            "GET_DIAGNOSTICS: this device does not publish diagnostics");
+        return true;
+      }
+      reply = build(Msg::Diagnostics, build_diagnostics_payload(diagnostics_()), module_id());
+      return true;
+    }
     case Msg::GetState: {
       const OmegaStore::Snapshot snap = store_.snapshot();
       reply = build(Msg::State, build_state_payload(snap), module_id());
@@ -866,6 +913,43 @@ protected:
     return payload;
   }
 
+  /// Encode DiagnosticsData into the DIAGNOSTICS payload (see the header
+  /// comment for the field order). Names are clipped to 255 bytes and the
+  /// reset list to what fits in one frame, newest entries kept.
+  static std::vector<uint8_t> build_diagnostics_payload(const DiagnosticsData &d) {
+    namespace stream = espp::stream_frame;
+    std::vector<uint8_t> payload;
+    payload.push_back(d.sensor_fault);
+    payload.push_back(d.sensor_first_fault);
+    stream::put_u32(payload, d.sensor_fault_count);
+    stream::put_u32(payload, d.boot_count);
+
+    // Work out how many of the newest resets fit, then emit them in order.
+    const size_t header_size = payload.size() + 1; // + u8 reset_count
+    size_t first = d.resets.size();
+    size_t used = header_size;
+    while (first > 0) {
+      const auto &r = d.resets[first - 1];
+      const size_t entry_size = 4 + 1 + 1 + 1 + std::min<size_t>(r.name.size(), 255);
+      if (used + entry_size > stream::kMaxPayloadSize || d.resets.size() - (first - 1) > 255) {
+        break;
+      }
+      used += entry_size;
+      first--;
+    }
+    payload.push_back(static_cast<uint8_t>(d.resets.size() - first));
+    for (size_t i = first; i < d.resets.size(); i++) {
+      const auto &r = d.resets[i];
+      const size_t name_len = std::min<size_t>(r.name.size(), 255);
+      stream::put_u32(payload, r.boot);
+      payload.push_back(r.reason);
+      payload.push_back(r.abnormal ? 1 : 0);
+      payload.push_back(static_cast<uint8_t>(name_len));
+      payload.insert(payload.end(), r.name.begin(), r.name.begin() + name_len);
+    }
+    return payload;
+  }
+
   /// Appends a little-endian f32 to @p out. The ESP32 targets espp builds
   /// for are little-endian, matching the wire format and the reference
   /// client's `DataView.getFloat32(offset, true)` reads, so this is a
@@ -962,6 +1046,7 @@ private:
   send_fn send_;
   const uint8_t module_; // Config::module: routing id for requests + replies
   std::function<bool(std::error_code &ec)> start_calibration_; // Config::start_calibration
+  diagnostics_fn diagnostics_;                                 // Config::diagnostics
   std::function<void()> restart_;                              // Config::restart
   espp::Ota *ota_;                                             // Config::ota (not owned)
   bool ota_owner_{

@@ -41,6 +41,7 @@ function normalise(value) {
 function decodeReply(frame) {
   switch (frame.type) {
     case P.TYPE.STATE: return P.decodeState(frame.payload);
+    case P.TYPE.DIAGNOSTICS: return P.decodeDiagnostics(frame.payload);
     case P.TYPE.OK: return { value: P.readU32(frame.payload, 0) };
     case P.TYPE.ERROR: return P.parseErrorReply(frame.payload);
     case P.TYPE.CALIBRATION_RESULT: return { success: frame.payload[0] === 1 };

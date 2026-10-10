@@ -758,6 +758,13 @@ public:
     struct Config {
       int trip_after_failed_reads{3};
       int stuck_after_samples{500};
+      /// Consecutive polls on which the sensor's conversion counter did not
+      /// advance (see TMAG5273::MagneticData::conversion_count). The
+      /// counter normally moves several steps per 10 ms poll, so 50 polls
+      /// (500 ms, the SEN-5 budget) with no movement means the conversion
+      /// engine has stopped. Only applies to the update() overload that is
+      /// given the counter; 0 disables.
+      int stuck_after_stale_conversions{50};
       int recover_after_good_reads{10};
     };
 
@@ -769,6 +776,13 @@ public:
 
     /// Returns true while the output must be held neutral.
     bool update(bool read_ok, float raw_x, float raw_y) {
+      return update(read_ok, raw_x, raw_y, std::nullopt);
+    }
+
+    /// As above, also watching the sensor's conversion counter. A counter
+    /// that stops advancing is the direct "conversion engine stuck" signal
+    /// and trips far sooner than the identical-sample check can.
+    bool update(bool read_ok, float raw_x, float raw_y, std::optional<uint8_t> conversion_count) {
       if (!read_ok) {
         failed_streak_++;
         good_streak_ = 0;
@@ -790,7 +804,22 @@ public:
       last_x_ = raw_x;
       last_y_ = raw_y;
 
-      if (config_.stuck_after_samples > 0 && identical_streak_ >= config_.stuck_after_samples) {
+      if (conversion_count) {
+        if (have_last_conversion_ && *conversion_count == last_conversion_) {
+          stale_conversion_streak_++;
+        } else {
+          stale_conversion_streak_ = 0;
+        }
+        have_last_conversion_ = true;
+        last_conversion_ = *conversion_count;
+      }
+
+      const bool samples_stuck =
+          config_.stuck_after_samples > 0 && identical_streak_ >= config_.stuck_after_samples;
+      const bool conversions_stuck =
+          config_.stuck_after_stale_conversions > 0 &&
+          stale_conversion_streak_ >= config_.stuck_after_stale_conversions;
+      if (samples_stuck || conversions_stuck) {
         trip(Fault::STUCK);
         // Recovery is counted from the first sample that changes again.
         good_streak_ = 0;
@@ -853,6 +882,9 @@ public:
     bool have_last_{false};
     float last_x_{0};
     float last_y_{0};
+    int stale_conversion_streak_{0};
+    bool have_last_conversion_{false};
+    uint8_t last_conversion_{0};
   };
 
   /// Applies completed calibration results to an already-constructed
