@@ -52,14 +52,13 @@ do. When the underlying bug is fixed the test starts passing, the runner
 reports `XPASS`, and the run fails until the marker is changed to `TEST`.
 That keeps the fix and its regression test tied together.
 
-Current XFAIL entries:
+There are no XFAIL entries at the moment. Fixed, now plain tests:
 
-- `store_set_calibration_preserves_live_manual_offset`: a drift nudge or
-  recalibration pushed from a stale local `CenterResult` reverts a manual
-  offset the console set.
-
-Fixed, now plain tests:
-
+- `store_set_measured_calibration_preserves_live_manual_offset`: a drift
+  nudge or recalibration pushed from the control loop's stale local
+  `CenterResult` reverted a manual offset the console set. The loop now
+  pushes through `OmegaStore::set_measured_calibration()`, which keeps the
+  live offset, and reads `center()` back.
 - `store_input_mode_same_value_is_a_no_op` and
   `service_ok_reply_is_sent_before_mode_change_callback_runs`: re-selecting
   the active mode is ignored, and `CalibrationService` applies a mode change

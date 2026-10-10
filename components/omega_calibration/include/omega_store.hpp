@@ -132,14 +132,34 @@ public:
     return settings_;
   }
 
-  /// Replaces center/range outright -- e.g. right after an interactive
-  /// recalibration (center_calibration() + range_calibration() +
-  /// finalize_center_deadzone(), run from the main task or a console
-  /// command). Fires on_calibration_changed().
+  /// Replaces center/range outright, manual offsets included -- e.g. at
+  /// boot, after loading or running the first calibration. The control
+  /// loop uses set_measured_calibration() instead. Fires
+  /// on_calibration_changed().
   void set_calibration(const CenterResult &center, const RangeResult &range) {
     {
       std::lock_guard<std::mutex> lock(mutex_);
       center_ = center;
+      range_ = range;
+    }
+    if (on_calibration_changed_) {
+      on_calibration_changed_();
+    }
+  }
+
+  /// Replaces the measured center/range but keeps the live manual offsets.
+  /// For the control loop (drift correction, console-triggered
+  /// recalibration): its local CenterResult can hold offsets older than a
+  /// SET_MANUAL_OFFSET the console has since applied, and copying it
+  /// wholesale would silently revert that trim. Read center() back
+  /// afterwards to pick up the live offsets. Fires on_calibration_changed().
+  void set_measured_calibration(const CenterResult &center, const RangeResult &range) {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      const float offset_x = center_.manual_offset_x;
+      const float offset_y = center_.manual_offset_y;
+      center_ = center;
+      OmegaCalibration::set_manual_offset(center_, offset_x, offset_y);
       range_ = range;
     }
     if (on_calibration_changed_) {

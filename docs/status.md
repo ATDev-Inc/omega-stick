@@ -13,7 +13,7 @@ the product must be, not where the work has reached.
 | Mouse mode | Implemented: relative X/Y, wheel, and nudge gestures for clicks and scroll. 10 ms HID poll interval, not the 1 ms of OUT-5 |
 | XAC mode | Implemented, **not verified on real Xbox Adaptive Controller hardware** |
 | Calibration console (WebUSB and Web Serial) | Implemented: `CalibrationService` with a browser page, each USB byte stream routed through a `DispatcherWorker`. Persists input mode, manual offsets, deadzone overrides and nudge tuning |
-| Host unit tests and CI | Implemented: `tests/host` (calibration, store, service, XAC report layout) run by the Host tests workflow on pull requests. Some tests are expected-failure markers for known bugs |
+| Host unit tests and CI | Implemented: `tests/host` (calibration, store, service, XAC report layout) run by the Host tests workflow on pull requests. The harness supports expected-failure markers for known bugs; none are open |
 | Response curves, per-axis inversion and gain, tremor filter, profiles, status LED, schema version | Not implemented |
 | Mechanical files for 3D printing | STL files for the printed parts are in [models/](../models/). Editable CAD source, PCB, and wiring are not published |
 | Force and throw measurement | **Not yet performed or published** |

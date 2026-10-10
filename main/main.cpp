@@ -551,8 +551,6 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
       // --- Recalibration-on-demand (see the section above) ---
       if (recalibration_requested.exchange(false)) {
         printf("\n=== RE-CALIBRATION REQUESTED (calibration console) ===\n");
-        const float old_manual_offset_x = center.manual_offset_x;
-        const float old_manual_offset_y = center.manual_offset_y;
         espp::OmegaCalibration::CenterResult new_center;
         espp::OmegaCalibration::RangeResult new_range;
         std::error_code recal_ec;
@@ -573,18 +571,16 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
         bool recal_ok = recal.center_calibration(new_center, recal_ec) &&
                         recal.range_calibration(new_center, new_range, recal_ec);
         if (recal_ok) {
-          // Preserve whatever manual offset was already live -- a fresh
-          // center_calibration() starts it at zero, and recalibration is
-          // only supposed to redo the center/range sweep, not discard a
-          // previously-tuned trim (deadzone overrides, nudge tuning and
-          // input mode already live outside CenterResult/RangeResult, in
-          // DeviceSettings, so they're untouched either way).
-          espp::OmegaCalibration::set_manual_offset(new_center, old_manual_offset_x,
-                                                    old_manual_offset_y);
+          // Recalibration redoes only the center/range sweep. A fresh
+          // center_calibration() starts the manual offset at zero, so
+          // set_measured_calibration() keeps the store's live trim, and we
+          // read it back (deadzone overrides, nudge tuning and input mode
+          // live in DeviceSettings, so they're untouched either way).
           recal.finalize_center_deadzone(new_center, new_range);
-          center = new_center;
           range = new_range;
-          store.set_calibration(center, range); // fires on_calibration_changed -> re-applies live
+          // fires on_calibration_changed -> re-applies live
+          store.set_measured_calibration(new_center, range);
+          center = store.center();
           std::error_code save_ec;
           if (!store.save_to_flash(save_ec)) {
             printf("WARNING: recalibration succeeded but saving to flash failed: %s\n",
@@ -669,7 +665,10 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
       }
 
       if (drift_compensator.update(raw_x, raw_y, cur_mag, center)) {
-        store.set_calibration(center, range); // keeps the store (and console) in sync
+        // Keeps the store (and console) in sync without reverting a manual
+        // offset set since our copy was taken; read the live one back.
+        store.set_measured_calibration(center, range);
+        center = store.center();
         espp::OmegaCalibration::apply_calibration(js, center, range, store.settings());
         drift_nudge_count++;
         if (drift_nudge_count % SAVE_EVERY_N_NUDGES == 0) {
@@ -848,8 +847,6 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
       // --- Recalibration-on-demand (see the section above the mouse loop) ---
       if (recalibration_requested.exchange(false)) {
         printf("\n=== RE-CALIBRATION REQUESTED (calibration console) ===\n");
-        const float old_manual_offset_x = center.manual_offset_x;
-        const float old_manual_offset_y = center.manual_offset_y;
         espp::OmegaCalibration::CenterResult new_center;
         espp::OmegaCalibration::RangeResult new_range;
         std::error_code recal_ec;
@@ -870,12 +867,10 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
         bool recal_ok = recal.center_calibration(new_center, recal_ec) &&
                         recal.range_calibration(new_center, new_range, recal_ec);
         if (recal_ok) {
-          espp::OmegaCalibration::set_manual_offset(new_center, old_manual_offset_x,
-                                                    old_manual_offset_y);
           recal.finalize_center_deadzone(new_center, new_range);
-          center = new_center;
           range = new_range;
-          store.set_calibration(center, range);
+          store.set_measured_calibration(new_center, range); // keeps the live manual offset
+          center = store.center();
           std::error_code save_ec;
           if (!store.save_to_flash(save_ec)) {
             printf("WARNING: recalibration succeeded but saving to flash failed: %s\n",
@@ -900,7 +895,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
       if (drift_compensator.update(raw_x, raw_y, mapped_magnitude, center)) {
 
-        store.set_calibration(center, range);
+        store.set_measured_calibration(center, range); // keeps the live manual offset
+        center = store.center();
         espp::OmegaCalibration::apply_calibration(js, center, range, store.settings());
 
         drift_nudge_count++;

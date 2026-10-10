@@ -113,11 +113,10 @@ TEST(store_input_mode_same_value_is_a_no_op) {
   CHECK_EQ(fired, 0);
 }
 
-XFAIL_TEST(store_set_calibration_preserves_live_manual_offset,
-           "set_calibration copies the caller's CenterResult wholesale, so a drift nudge or "
-           "recalibration pushed from the control loop's stale local copy silently reverts a "
-           "manual offset the console set (CenterResult docs say the offset is unaffected by "
-           "recalibration and drift correction)") {
+// A drift nudge or recalibration pushed from the control loop's stale local
+// CenterResult must not revert a manual offset the console set (CenterResult
+// docs say the offset is unaffected by recalibration and drift correction).
+TEST(store_set_measured_calibration_preserves_live_manual_offset) {
   TempDir dir("store_preserve");
   OmegaStore store(config_for(dir));
   store.set_manual_offset(1.0f, 0.5f);
@@ -126,7 +125,7 @@ XFAIL_TEST(store_set_calibration_preserves_live_manual_offset,
   auto stale = support::sample_center();
   stale.manual_offset_x = 0.0f;
   stale.manual_offset_y = 0.0f;
-  store.set_calibration(stale, support::sample_range());
+  store.set_measured_calibration(stale, support::sample_range());
 
   CHECK_NEAR(store.center().center_x, stale.center_x, 1e-6); // measured part updated
   CHECK_NEAR(store.center().manual_offset_x, 1.0f, 1e-6);    // trim kept
