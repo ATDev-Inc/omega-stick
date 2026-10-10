@@ -99,14 +99,6 @@ That keeps the fix and its regression test tied together.
 
 Current XFAIL entries:
 
-- `store_input_mode_same_value_is_a_no_op`: re-selecting the active mode
-  still fires `on_mode_changed`, which saves and reboots.
-- `store_set_calibration_preserves_live_manual_offset`: a drift nudge or
-  recalibration pushed from a stale local `CenterResult` reverts a manual
-  offset the console set.
-- `service_ok_reply_is_sent_before_mode_change_callback_runs`: the mode
-  change callback (which reboots) runs before the OK reply is built, so the
-  console always times out on `SET_INPUT_MODE`.
 - `range_calibration_rejects_insufficient_sector_coverage`:
   `MIN_COVERED_SECTORS` is never checked, so a sweep of 8 of 32 sectors is
   accepted instead of failing with `no_range_samples`.
@@ -115,6 +107,29 @@ Current XFAIL entries:
   `angle_conversion()` reads bits 7:6.
 - `mouse_set_button_rejects_indices_that_wrap_into_range`: the button index is
   narrowed from `int` to `uint16_t`, so 65537 acts as button 1.
+
+Fixed, now plain tests:
+
+- `store_set_measured_calibration_preserves_live_manual_offset`: a drift
+  nudge or recalibration pushed from the control loop's stale local
+  `CenterResult` reverted a manual offset the console set. The loop now
+  pushes through `OmegaStore::set_measured_calibration()`, which keeps the
+  live offset, and reads `center()` back.
+- `store_input_mode_same_value_is_a_no_op` and
+  `service_ok_reply_is_sent_before_mode_change_callback_runs`: re-selecting
+  the active mode is ignored, and `CalibrationService` applies a mode change
+  only after the OK reply has been sent, so the console sees the OK before
+  the device restarts.
+- `xac_report_bytes_follow_descriptor_order`,
+  `xac_centered_report_is_neutral`, `xac_stick_x_moves_report_x`: espp's
+  `GamepadInputReport::get_report()` skips a fixed 2 bytes at the front of
+  the object (report ID plus padding for the default `uint16_t` axes).
+  `XacInputReport` uses `uint8_t` axes, which have no padding, so it
+  overrides `get_report()` to skip only the report ID. Without that, X was
+  dropped and every later field moved down a slot: the "drifts up, only
+  moves in X" behaviour seen on the Xbox Adaptive Controller. Full
+  deflection reads 0 and 254, not 255: hid-rp maps [-1, 1] to center 127
+  plus or minus 127.
 
 ## Component quirks the host build surfaced
 
@@ -126,12 +141,17 @@ Current XFAIL entries:
   `make_error_code`. The specialisation needs a namespace-scope overload to
   work, so `ec == OmegaCalibration::Error::file_open_failed` does not
   compile. The tests go through `support::is_error()` instead.
-
-- `tmag5273.hpp`'s `range_xy_mT()`, `range_z_mT()` and `convert_raw_to_mT()`
-  are private with no public caller, so `test_tmag5273.cpp` opens the class
-  with `#define private public` around that one include. It also relies on
-  the header's `printf` being reachable transitively (no `<cstdio>` include),
-  and `is_connected()` prints the device ID on every call.
+- The pinned espp `hid-rp` header `hid/rdf/short_item.hpp` uses
+  `std::bit_cast` without including `<bit>`. libstdc++ pulls it in
+  transitively; the MSVC STL does not, so on Windows (clang with the MSVC STL,
+  or MSVC itself) the build fails with "no member named 'bit_cast' in
+  namespace 'std'". `CMakeLists.txt` force-includes `<bit>` (`-include bit`,
+  `/FIbit`) for every translation unit until that is fixed upstream.
+- `tmag5273.hpp`'s `convert_raw_to_mT()` is private, so `test_tmag5273.cpp`
+  checks scaling through the public `read_x`/`read_z` readers over the fake
+  register file. The header relies on `printf` being reachable transitively
+  (no `<cstdio>` include), and `is_connected()` prints the device ID on every
+  call.
 - `hid-rp-mouse.hpp` narrows `int` to `uint16_t` in `set_button`/`get_button`;
   MSVC flags it (C4244). The two test files that include it silence that one
   warning (`/wd4244` in `CMakeLists.txt`) until the header is fixed.

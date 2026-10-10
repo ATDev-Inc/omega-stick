@@ -86,7 +86,7 @@ struct FakePorts : oc::Ports {
     return sweep_ok;
   }
   void save_to_flash() override { calls.push_back("save"); }
-  void apply_drift(const Cal::CenterResult &c, const Cal::RangeResult &) override {
+  void apply_drift(Cal::CenterResult &c, const Cal::RangeResult &) override {
     calls.push_back("apply_drift");
     last_applied = c;
   }

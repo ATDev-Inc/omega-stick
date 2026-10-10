@@ -138,8 +138,8 @@ TEST(service_rejects_non_finite_manual_offset) {
   int changed = 0;
   Fixture fx("svc_offset_nan", {.on_calibration_changed = [&]() { ++changed; }});
   const float before_x = fx.store.center().manual_offset_x;
-  for (const float bad : {std::numeric_limits<float>::quiet_NaN(),
-                          std::numeric_limits<float>::infinity()}) {
+  for (const float bad :
+       {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()}) {
     std::vector<uint8_t> payload;
     support::put_f32(payload, 0.25f);
     support::put_f32(payload, bad);
@@ -153,8 +153,8 @@ TEST(service_rejects_non_finite_manual_offset) {
 
 TEST(service_rejects_invalid_deadzone_override_values) {
   Fixture fx("svc_dz_bad");
-  for (const float bad : {-0.01f, std::numeric_limits<float>::quiet_NaN(),
-                          std::numeric_limits<float>::infinity()}) {
+  for (const float bad :
+       {-0.01f, std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()}) {
     std::vector<uint8_t> payload{0x01};
     support::put_f32(payload, bad); // center, flag set
     support::put_f32(payload, 0.0f);
@@ -202,10 +202,9 @@ TEST(service_set_input_mode_switches_store_and_notifies) {
   CHECK(fx.store.settings().input_mode == OmegaStore::InputMode::XAC);
 }
 
-XFAIL_TEST(service_ok_reply_is_sent_before_mode_change_callback_runs,
-           "set_input_mode fires on_mode_changed synchronously inside handle_frame_locked, "
-           "before the OK reply is built; main.cpp's callback calls esp_restart(), so the "
-           "console never receives the OK and reports a timeout for a switch that worked") {
+// main.cpp's on_mode_changed calls esp_restart(), so the OK must already be sent
+// when it runs, or the console reports a timeout for a switch that worked.
+TEST(service_ok_reply_is_sent_before_mode_change_callback_runs) {
   int sends_seen_from_callback = -1;
   const Fixture *self = nullptr;
   Fixture fx("svc_mode_order", {.on_mode_changed = [&](OmegaStore::InputMode) {

@@ -307,13 +307,16 @@ struct Ports {
   virtual void send_mouse(const MouseReport &report) = 0;
   virtual void send_xac(const XacReport &report) = 0;
   /// Runs the interactive sweep. Called with the current calibration in
-  /// new_center/new_range (so the adapter can carry the manual offset over);
-  /// on success they hold the finalised new results.
+  /// new_center/new_range; on success they hold the finalised new results
+  /// (the adapter takes the live manual offset from the store).
   virtual bool run_sweep(CenterResult &new_center, RangeResult &new_range) = 0;
   /// Persists the store to flash (drift-corrected calibration).
   virtual void save_to_flash() = 0;
   /// Pushes a drift-nudged calibration into the store and the live joystick.
-  virtual void apply_drift(const CenterResult &center, const RangeResult &range) = 0;
+  /// The store keeps its own live manual offset (the console may have changed
+  /// it since this copy was taken), so the adapter writes the store's center
+  /// back into `center`.
+  virtual void apply_drift(CenterResult &center, const RangeResult &range) = 0;
   /// Fresh joystick reading (used after a sweep).
   virtual StickSample read_stick() = 0;
   virtual Clock::time_point now() = 0;

@@ -101,13 +101,12 @@ struct EspPorts : espp::omega_control::Ports {
     }
   }
 
-  // On entry `center` holds the live calibration (its manual offset is carried
-  // over); on success both hold the finalised new results.
+  // On entry `center` holds the control loop's copy of the calibration; on
+  // success both hold the finalised new results, with the store's live manual
+  // offset carried over.
   bool run_sweep(espp::OmegaCalibration::CenterResult &center,
                  espp::OmegaCalibration::RangeResult &range) override {
     printf("\n=== RE-CALIBRATION REQUESTED (calibration console) ===\n");
-    const float old_manual_offset_x = center.manual_offset_x;
-    const float old_manual_offset_y = center.manual_offset_y;
     espp::OmegaCalibration::CenterResult new_center;
     espp::OmegaCalibration::RangeResult new_range;
     std::error_code recal_ec;
@@ -128,18 +127,16 @@ struct EspPorts : espp::omega_control::Ports {
     bool recal_ok = recal.center_calibration(new_center, recal_ec) &&
                     recal.range_calibration(new_center, new_range, recal_ec);
     if (recal_ok) {
-      // Preserve whatever manual offset was already live -- a fresh
-      // center_calibration() starts it at zero, and recalibration is
-      // only supposed to redo the center/range sweep, not discard a
-      // previously-tuned trim (deadzone overrides, nudge tuning and
-      // input mode already live outside CenterResult/RangeResult, in
-      // DeviceSettings, so they're untouched either way).
-      espp::OmegaCalibration::set_manual_offset(new_center, old_manual_offset_x,
-                                                old_manual_offset_y);
+      // Recalibration redoes only the center/range sweep. A fresh
+      // center_calibration() starts the manual offset at zero, so
+      // set_measured_calibration() keeps the store's live trim, and we
+      // read it back (deadzone overrides, nudge tuning and input mode
+      // live in DeviceSettings, so they're untouched either way).
       recal.finalize_center_deadzone(new_center, new_range);
-      center = new_center;
       range = new_range;
-      store.set_calibration(center, range); // fires on_calibration_changed -> re-applies live
+      // fires on_calibration_changed -> re-applies live
+      store.set_measured_calibration(new_center, range);
+      center = store.center();
       std::error_code save_ec;
       if (!store.save_to_flash(save_ec)) {
         printf("WARNING: recalibration succeeded but saving to flash failed: %s\n",
@@ -162,9 +159,12 @@ struct EspPorts : espp::omega_control::Ports {
     }
   }
 
-  void apply_drift(const espp::OmegaCalibration::CenterResult &center,
+  void apply_drift(espp::OmegaCalibration::CenterResult &center,
                    const espp::OmegaCalibration::RangeResult &range) override {
-    store.set_calibration(center, range); // keeps the store (and console) in sync
+    // Keeps the store (and console) in sync without reverting a manual
+    // offset set since our copy was taken; read the live one back.
+    store.set_measured_calibration(center, range);
+    center = store.center();
     espp::OmegaCalibration::apply_calibration(js, center, range, store.settings());
   }
 
@@ -301,8 +301,9 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
               printf("WARNING: failed to save settings before restart: %s\n",
                      save_ec.message().c_str());
             }
-            // Give the calibration console's OK reply a moment to actually
-            // go out over USB before the reset tears the link down.
+            // CalibrationService sends the OK before calling this; give it a
+            // moment to actually go out over USB before the reset tears the
+            // link down.
             std::this_thread::sleep_for(200ms);
             esp_restart();
           },
@@ -475,7 +476,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
   printf("Y maximum:                 %.6f\n", center.effective_center_y() + range.max_y);
 
-  if (!XAC_SELECTION) { // TODO
+  if (!XAC_SELECTION) { // MOUSE mode; the XAC branch is the else below
 
     printf("\n");
     printf("========================================\n");
@@ -506,8 +507,9 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     usb_cfg.hid = hid_fn;
 
     // --------------------------------------------------------------------
-    // Calibration console wiring (module 5), checked against espp v1.3.3's
-    // usb_device.hpp and dispatcher_worker.hpp. One CalibrationService and
+    // Calibration console wiring (module 5), checked against usb_device.hpp
+    // (espp/usb_device 1.3.3) and dispatcher_worker.hpp (espp/dispatcher
+    // 1.3.5), see dependencies.lock. One CalibrationService and
     // one DispatcherWorker per USB byte stream (vendor for WebUSB, CDC for
     // Web Serial). The receive callbacks only push() bytes into the worker:
     // they run on the TinyUSB task, where UsbDevice's write path fails fast

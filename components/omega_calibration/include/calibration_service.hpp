@@ -1,10 +1,10 @@
 #pragma once
 
-// espp omega-stick calibration service — message ids + a transport-agnostic
+// espp omega-stick calibration service: message ids + a transport-agnostic
 // request handler layered on the espp `stream_frame` codec (magic "OT" +
 // flags u8 + module u8 + type u8 + len u32 + payload + CRC-32, all
 // little-endian; see components/stream_frame/include/stream_frame.hpp for
-// the authoritative framing spec — this is the SAME codec coredump_service.hpp
+// the authoritative framing spec: this is the SAME codec coredump_service.hpp
 // and the OTA service use). The calibration protocol occupies dispatcher
 // MODULE 5 by default (CalibrationService::Config::module can move it), so
 // it shares one byte stream with the other espp protocols (coredump on
@@ -15,29 +15,31 @@
 // This is the device-side counterpart to the reference client
 // `web/calibration_console.html`; see that file's header comment for the
 // same spec written from the host's point of view (it is the definitive,
-// byte-for-byte source of truth — this comment restates it for convenience).
+// byte-for-byte source of truth: this comment restates it for convenience).
 //
 // Message types & payloads (host -> device), module 5 by default:
-//   0x50 GET_STATE              — no payload. Reply: STATE.
-//   0x51 SET_MANUAL_OFFSET      — payload: f32 offset_x, f32 offset_y.
+//   0x50 GET_STATE              - no payload. Reply: STATE.
+//   0x51 SET_MANUAL_OFFSET      - payload: f32 offset_x, f32 offset_y.
 //                                 Reply: OK / ERROR.
-//   0x52 SET_DEADZONE_OVERRIDE  — payload: u8 flags (bit0 = center override
+//   0x52 SET_DEADZONE_OVERRIDE  - payload: u8 flags (bit0 = center override
 //                                 present, bit1 = range override present; a
 //                                 clear bit clears that override back to
 //                                 auto), f32 center_value, f32 range_value
 //                                 (value ignored when its flag bit is clear,
-//                                 but always present — fixed 9-byte payload).
+//                                 but always present: fixed 9-byte payload).
 //                                 Reply: OK / ERROR.
-//   0x53 SET_NUDGE_SETTINGS     — payload: f32 nudge_enter_threshold (delta),
+//   0x53 SET_NUDGE_SETTINGS     - payload: f32 nudge_enter_threshold (delta),
 //                                 f32 nudge_exit_threshold (absolute),
 //                                 u32 nudge_time_ms (measurement window).
 //                                 Reply: OK / ERROR.
-//   0x54 SET_INPUT_MODE         — payload: u8 mode (0 = mouse, 1 = XAC).
-//                                 Reply: OK / ERROR.
-//   0x55 SAVE_TO_FLASH          — no payload. Persists the CURRENT live
+//   0x54 SET_INPUT_MODE         - payload: u8 mode (0 = mouse, 1 = XAC).
+//                                 Reply: OK / ERROR. The mode is applied
+//                                 only after the OK has been sent, since
+//                                 the application may restart to apply it.
+//   0x55 SAVE_TO_FLASH          - no payload. Persists the CURRENT live
 //                                 center/range/settings (see OmegaStore::
 //                                 save_to_flash()). Reply: OK / ERROR.
-//   0x56 START_CALIBRATION      — no payload. ASYNC: asks the device to
+//   0x56 START_CALIBRATION      - no payload. ASYNC: asks the device to
 //                                 re-run the full interactive center+range
 //                                 calibration sequence via
 //                                 Config::start_calibration, which must
@@ -51,7 +53,7 @@
 //                                 notify_calibration_result()).
 //
 // Message types & payloads (device -> host), same module, reply flag set:
-//   0xD0 STATE — payload: fixed 79-byte little-endian struct, in this exact
+//   0xD0 STATE - payload: fixed 79-byte little-endian struct, in this exact
 //                order (see build_state_payload() below):
 //                  f32 center_x, center_y, center_noise_radius,
 //                  f32 center_deadzone                 (calibration-derived)
@@ -68,19 +70,19 @@
 //                  f32 nudge_exit_threshold             (absolute)
 //                  u32 nudge_time_ms                    (measurement window)
 //                  u8  input_mode                       (0 = mouse, 1 = XAC)
-//   0xDF OK    — payload: u32 context-dependent value (0 on plain success).
-//   0xFE ERROR — payload: u32 code + UTF-8 message, same convention as
+//   0xDF OK    - payload: u32 context-dependent value (0 on plain success).
+//   0xFE ERROR - payload: u32 code + UTF-8 message, same convention as
 //                coredump_service.hpp's ERROR (message is authoritative; the
-//                code is informational only / a best-effort std::errc value —
+//                code is informational only / a best-effort std::errc value;
 //                see that file's ERROR documentation for the full caveat).
-//   0xD1 CalibrationResult — UNSOLICITED (never a reply to any specific
+//   0xD1 CalibrationResult - UNSOLICITED (never a reply to any specific
 //                request; see notify_calibration_result()). Sent once, when
 //                an async recalibration kicked off by START_CALIBRATION
 //                finishes. Payload: u8 success (0/1), then, only when
 //                success = 0, u32 code + UTF-8 message (same convention as
 //                ERROR).
 //
-// Flow control: same as coredump_service.hpp — the host serializes
+// Flow control: same as coredump_service.hpp: the host serializes
 // transactions, one request in flight, waits for its reply. The one
 // exception is START_CALIBRATION/CalibrationResult, which is intentionally
 // async (see both fields' docs) since the underlying calibration sequence
@@ -92,10 +94,12 @@
 #include <cstring>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #include "dispatcher.hpp"
@@ -116,7 +120,9 @@ namespace espp {
  * with a `send` function that transmits an encoded reply frame, then mount
  * it on a transport (`feed(data)` from the transport's receive callback --
  * see CoreDumpService's class-level docs for the USB vendor / CDC / socket
- * patterns, which apply here unchanged), or route by module yourself and
+ * patterns, which apply here unchanged; main.cpp instead pushes the received
+ * bytes into an espp::DispatcherWorker, so feed()/handle() run on its task
+ * rather than the TinyUSB one), or route by module yourself and
  * call `handle(frame)` / `handle_frame(type, payload)` directly.
  *
  * All calibration/settings access goes through the shared espp::OmegaStore
@@ -139,9 +145,6 @@ namespace espp {
  * work it triggers is NOT expected to run inside handle_frame_locked(), so
  * it never blocks this mutex (or whatever transport callback drives feed())
  * for the tens-of-seconds an interactive calibration sweep can take.
- *
- * \section calibration_service_ex1 CalibrationService Example
- * \snippet calibration_example.cpp calibration_example
  */
 class CalibrationService : public BaseComponent {
 public:
@@ -283,6 +286,7 @@ public:
       // send outside the lock so a re-entrant transport cannot deadlock
       if (!reply.empty())
         send(reply);
+      apply_pending_input_mode();
     }
   }
 
@@ -303,6 +307,7 @@ public:
     }
     if (!reply.empty())
       send(reply);
+    apply_pending_input_mode();
     return handled;
   }
 
@@ -357,7 +362,7 @@ public:
 protected:
   /// Handle one frame with the (parser-only) mutex held: touch the
   /// OmegaStore (which has its own independent locking) and BUILD the
-  /// encoded reply frame into @p reply — but do NOT send it, exactly like
+  /// encoded reply frame into @p reply, but do NOT send it, exactly like
   /// CoreDumpService::handle_frame_locked(). The caller transmits @p reply
   /// after releasing this mutex.
   bool handle_frame_locked(uint8_t type, std::span<const uint8_t> payload,
@@ -399,8 +404,8 @@ protected:
       const float range_value = get_f32(payload, 5);
       if ((has_center && !(std::isfinite(center_value) && center_value >= 0.0f)) ||
           (has_range && !(std::isfinite(range_value) && range_value >= 0.0f))) {
-        reply = build_error(std::errc::invalid_argument,
-                            "deadzone override must be finite and >= 0");
+        reply =
+            build_error(std::errc::invalid_argument, "deadzone override must be finite and >= 0");
         return true;
       }
       store_.set_deadzone_override(has_center ? std::optional<float>(center_value) : std::nullopt,
@@ -441,7 +446,9 @@ protected:
         return true;
       }
       const auto mode = static_cast<InputMode>(payload[0]);
-      store_.set_input_mode(mode);
+      // Applied by apply_pending_input_mode() once the OK has gone out:
+      // on_mode_changed may restart the device, which would drop the reply.
+      pending_input_mode_ = mode;
       logger_.info("SET_INPUT_MODE {}", mode == InputMode::XAC ? "XAC" : "MOUSE");
       reply = build_ok();
       return true;
@@ -603,12 +610,25 @@ protected:
   }
 
 private:
+  /// Applies a SET_INPUT_MODE accepted by handle_frame_locked(). Called after
+  /// the reply is sent, outside mutex_.
+  void apply_pending_input_mode() {
+    std::optional<InputMode> mode;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      mode = std::exchange(pending_input_mode_, std::nullopt);
+    }
+    if (mode)
+      store_.set_input_mode(*mode);
+  }
+
   OmegaStore &store_;
   send_fn send_;
   const uint8_t module_; // Config::module: routing id for requests + replies
   std::function<bool(std::error_code &ec)> start_calibration_; // Config::start_calibration
-  std::mutex mutex_; // guards parser_ + reply-building only; OmegaStore has its own lock
+  std::mutex mutex_; // guards parser_, pending_input_mode_, reply-building; not OmegaStore
   Stream parser_;
+  std::optional<InputMode> pending_input_mode_; // set by SET_INPUT_MODE, applied after the reply
 };
 
 // Compile-time check that the service keeps satisfying the dispatcher's

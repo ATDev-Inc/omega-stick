@@ -28,6 +28,11 @@ TEST(xac_report_size_matches_descriptor) {
   CHECK_EQ(r.get_report().size(), Report::num_data_bytes);
 }
 
+// espp hid-rp's GamepadInputReport::get_report() skips a fixed 2 bytes: the report
+// ID plus alignment padding for the default uint16_t sticks. With uint8_t sticks
+// there is no padding, so X would be dropped and every field shift down one.
+// XacGamepadInputReport overrides get_report() to skip only the report ID; these
+// tests guard that override.
 TEST(xac_report_bytes_follow_descriptor_order) {
   Report r;
   r.set_joystick(std::uint8_t{0xA1}, std::uint8_t{0xA2});
@@ -54,6 +59,8 @@ TEST(xac_report_bytes_follow_descriptor_order) {
   CHECK_EQ(int(bytes[CONSUMER] & 0x01), 1);
 }
 
+// With the offset bug, a centered stick reported RZ = 0, pinning the unused right
+// stick to one edge (the 'drifts up' seen on the XAC).
 TEST(xac_centered_report_is_neutral) {
   Report r;
   r.set_joystick(0.0f, 0.0f);
@@ -73,11 +80,9 @@ TEST(xac_centered_report_is_neutral) {
   CHECK_EQ(int(bytes[BUTTONS_HI] & 0x0f), 0);
 }
 
+// With the offset bug, stick X never reached the host and stick Y landed on the X
+// axis (the 'only moves in X' seen on the XAC).
 TEST(xac_stick_x_moves_report_x) {
-  // Full deflection lands at center +/- range, not at joystick_max/min: the base
-  // report computes center = 255 / 2 = 127 and range = 255 / 2 = 127, so +1.0f
-  // maps to 254 and -1.0f to 0.
-
   Report centered;
   centered.set_joystick(0.0f, 0.0f);
   Report right;
@@ -88,8 +93,10 @@ TEST(xac_stick_x_moves_report_x) {
   const auto c = centered.get_report();
   const auto rx = right.get_report();
   const auto uy = up.get_report();
+  // hid-rp maps [-1, 1] to center +/- range, so full right is center + range (254
+  // for 8-bit axes), one short of joystick_max.
   CHECK_EQ(int(rx[X]), int(Report::joystick_center + Report::joystick_range));
   CHECK_EQ(int(rx[Y]), int(c[Y]));
-  CHECK_EQ(int(uy[Y]), int(Report::joystick_center - Report::joystick_range));
+  CHECK_EQ(int(uy[Y]), int(Report::joystick_min));
   CHECK_EQ(int(uy[X]), int(c[X]));
 }
