@@ -288,8 +288,12 @@ runs at boot with this slot's recent resets from the reset log: three crashes in
 a row, and an app image in the other slot, switch the boot partition and
 restart. Brownouts are not crashes for this purpose. The threshold is three so a
 single panic, already captured as a core dump, never changes firmware by itself.
-The resets are filtered to the running slot so a crash in the other image cannot
-bounce the device straight back.
+Each reset-log entry names the slot its boot ran in, and the reset that starts
+a boot is charged to the previous boot's slot, so a crash in the other image
+(which the bootloader hands back to this one) is never counted against this
+one and the two slots cannot bounce the device between them. An other slot the
+bootloader already rejected is not retried automatically; the console's REVERT
+remains the deliberate way to try it again.
 
 ## D19: `version.txt` plus a commit suffix, not `git describe` strings
 

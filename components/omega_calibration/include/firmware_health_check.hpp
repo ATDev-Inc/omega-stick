@@ -38,7 +38,11 @@
 #include <cstddef>
 #include <cstdio>
 #include <iterator>
+#include <span>
+#include <string>
+#include <string_view>
 #include <system_error>
+#include <vector>
 
 #include "esp_ota_ops.h"
 #include "ota.hpp"
@@ -90,6 +94,30 @@ public:
   /// slot becomes the boot partition and this returns true; the caller then
   /// restarts. Nothing happens while the running image is still pending:
   /// the bootloader reverts a pending image by itself at the next reset.
+  /// One boot as the reset log records it: the slot that boot ran in, and
+  /// whether the reset that STARTED it was a crash (panic, watchdog, lockup).
+  struct BootRecord {
+    std::string slot;
+    bool crash{false};
+  };
+
+  /// The crashes that ended runs of `slot`, oldest first, ready for
+  /// revert_if_crash_looping(). The reset recorded at boot i ended the boot
+  /// recorded at i-1, so it is charged to THAT boot's slot; charging it to
+  /// boot i's own slot would blame this image for the other image's crash
+  /// after every bootloader rollback and bounce the device between slots.
+  /// The oldest entry has no predecessor and is skipped.
+  static std::vector<bool> crashes_while_running(std::span<const BootRecord> boots,
+                                                 std::string_view slot) {
+    std::vector<bool> out;
+    for (size_t i = 1; i < boots.size(); i++) {
+      if (boots[i - 1].slot == slot) {
+        out.push_back(boots[i].crash);
+      }
+    }
+    return out;
+  }
+
   /// `recent_crashes` is any indexable range of bools (std::vector<bool>
   /// included, which is why this is not a std::span).
   template <typename OtaT, typename Crashes>
@@ -112,6 +140,16 @@ public:
     if (!other || esp_ota_get_partition_description(other, &desc) != ESP_OK) {
       printf("OTA: the last %u boots crashed, but the other slot holds no app image; staying\n",
              static_cast<unsigned>(threshold));
+      return false;
+    }
+    // A slot the bootloader or the health check already rejected is not
+    // retried on its own; the console's REVERT is the deliberate way back.
+    esp_ota_img_states_t state = ESP_OTA_IMG_UNDEFINED;
+    if (esp_ota_get_state_partition(other, &state) == ESP_OK &&
+        (state == ESP_OTA_IMG_INVALID || state == ESP_OTA_IMG_ABORTED)) {
+      printf("OTA: the last %u boots crashed, but %s was already rejected (%s); staying\n",
+             static_cast<unsigned>(threshold), other->label,
+             state == ESP_OTA_IMG_INVALID ? "invalid" : "aborted");
       return false;
     }
     if (const esp_err_t err = esp_ota_set_boot_partition(other); err != ESP_OK) {
