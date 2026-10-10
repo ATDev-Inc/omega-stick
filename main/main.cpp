@@ -119,6 +119,12 @@ static const std::string CALIBRATION_FILE_NAME = "omega_calibration.cfg";
 // espp::Task with its own generously-sized stack instead.
 static constexpr size_t MAIN_TASK_STACK_SIZE_BYTES = 16 * 1024;
 
+// A firmware upload whose console vanished mid-transfer (cable pulled, tab
+// closed) keeps the OTA engine claimed, which blocks a retry and REVERT. The
+// polling loops drop such a session after this long without OTA traffic (see
+// CalibrationService::expire_stale_update()).
+static constexpr auto OTA_IDLE_TIMEOUT = 30s;
+
 // Runs entirely on the dedicated "omega-stick" task (see app_main below),
 // not on the small default main-task stack. Matches espp::Task's callback
 // signature; m/cv are unused since this function never yields back to the
@@ -575,6 +581,9 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
         tmag.read_magnetic(read_ec);
         return !read_ec;
       });
+      // Cheap when idle: a try_lock and a timestamp compare per service.
+      calibration_vendor.expire_stale_update(OTA_IDLE_TIMEOUT);
+      calibration_cdc.expire_stale_update(OTA_IDLE_TIMEOUT);
 
       // --- Recalibration-on-demand (see the section above) ---
       if (recalibration_requested.exchange(false)) {
@@ -881,6 +890,9 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
         tmag.read_magnetic(read_ec);
         return !read_ec;
       });
+      // Cheap when idle: a try_lock and a timestamp compare per service.
+      calibration_vendor.expire_stale_update(OTA_IDLE_TIMEOUT);
+      calibration_cdc.expire_stale_update(OTA_IDLE_TIMEOUT);
 
       // --- Recalibration-on-demand (see the section above the mouse loop) ---
       if (recalibration_requested.exchange(false)) {

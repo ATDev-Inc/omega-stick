@@ -56,7 +56,15 @@
 //                                 detached thread. ERROR if Config::restart
 //                                 is unset or a payload is present.
 //   0x58 OTA_BEGIN              : payload: u32 image_size. Starts a firmware
-//                                 upload session. Reply: OK / ERROR.
+//                                 upload session. Reply: OK / ERROR. If this
+//                                 service already owns an active session (the
+//                                 host restarted its upload, e.g. after a
+//                                 disconnect), that stale session is aborted
+//                                 and a new one begins. ERROR if another
+//                                 service owns the active session. A session
+//                                 with no OTA_BEGIN/OTA_DATA for the idle
+//                                 timeout (main loop: 30 s) is aborted by
+//                                 expire_stale_update().
 //   0x59 OTA_DATA               : payload: u32 offset + raw image bytes
 //                                 (offset must equal the bytes written so
 //                                 far). Reply: OK with u32 = total bytes
@@ -73,12 +81,14 @@
 //   0x5E REVERT                 : no payload. Makes the other OTA slot (the
 //                                 previously installed firmware, see FW_INFO)
 //                                 the boot partition. Reply: OK, then the
-//                                 device reboots ~750 ms later. ERROR if an
-//                                 upload is in progress, the other slot holds
-//                                 no valid app image, or the bootloader
-//                                 selection could not be written. The reverted
-//                                 to image boots PENDING_VERIFY again and has
-//                                 to pass the same health check as an update.
+//                                 device reboots ~750 ms later. An upload this
+//                                 service began is aborted first. ERROR if
+//                                 another service's upload is in progress, the
+//                                 other slot holds no valid app image, or the
+//                                 bootloader selection could not be written.
+//                                 The reverted-to image boots PENDING_VERIFY
+//                                 again and has to pass the same health check
+//                                 as an update.
 //   The OTA messages (and GET_FW_INFO/MARK_VALID/REVERT) reply ERROR
 //   (function_not_supported) when Config::ota is null.
 //
@@ -410,6 +420,39 @@ public:
   }
 
   /**
+   * @brief Abort an upload this service began if it has been idle too long.
+   *
+   * Bounded expiry for an upload abandoned by an unexpected transport loss
+   * (the engine itself has no session timeout). Intended use: the main loop
+   * calls this on every service about once a second with a 30 s @p max_idle.
+   * Idle time is measured from the last successful OTA_BEGIN / OTA_DATA.
+   * A service that does not own the active session never touches it.
+   *
+   * @param max_idle Idle time at or beyond which the session is aborted.
+   * @return true if a session was aborted. false if nothing was owned, the
+   *         session is not idle long enough, or the service is busy handling
+   *         a frame (a busy service is not idle).
+   */
+  bool expire_stale_update(std::chrono::milliseconds max_idle) {
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock() || !ota_ || !ota_owner_) {
+      return false;
+    }
+    if (!ota_->session_active()) {
+      ota_owner_ = false; // session already ended elsewhere
+      return false;
+    }
+    if (std::chrono::steady_clock::now() - ota_last_activity_ < max_idle) {
+      return false;
+    }
+    logger_.warn("OTA upload idle for too long; aborting");
+    std::error_code ec;
+    ota_->abort(ec);
+    ota_owner_ = false;
+    return true;
+  }
+
+  /**
    * @brief Send an unsolicited CalibrationResult frame reporting how an
    *        asynchronous recalibration (kicked off via Msg::StartCalibration
    *        / Config::start_calibration) turned out.
@@ -474,12 +517,21 @@ protected:
         reply = build_error(std::errc::invalid_argument, "OTA_BEGIN needs u32 image size");
         return true;
       }
+      if (ota_owner_ && ota_->session_active()) {
+        // The host on this link restarted its upload (it can only have one
+        // transaction at a time), so the earlier session is stale: take over.
+        logger_.info("OTA_BEGIN: aborting this link's stale upload");
+        std::error_code abort_ec;
+        ota_->abort(abort_ec);
+        ota_owner_ = false;
+      }
       std::error_code ec;
       if (!ota_->begin(stream::get_u32(payload), ec)) {
         reply = build_error(ec, "OTA_BEGIN failed");
         return true;
       }
       ota_owner_ = true;
+      ota_last_activity_ = std::chrono::steady_clock::now();
       logger_.info("OTA_BEGIN {} bytes", stream::get_u32(payload));
       reply = build_ok();
       return true;
@@ -503,6 +555,7 @@ protected:
         reply = build_error(ec, "OTA_DATA write failed");
         return true;
       }
+      ota_last_activity_ = std::chrono::steady_clock::now();
       reply = build_ok(static_cast<uint32_t>(ota_->bytes_written()));
       return true;
     }
@@ -592,6 +645,13 @@ protected:
       if (!payload.empty()) {
         reply = build_error(std::errc::invalid_argument, "REVERT takes no payload");
         return true;
+      }
+      if (ota_owner_ && ota_->session_active()) {
+        // An upload this link abandoned (e.g. the console disconnected midway).
+        logger_.info("REVERT: aborting this link's abandoned upload");
+        std::error_code abort_ec;
+        ota_->abort(abort_ec);
+        ota_owner_ = false;
       }
       if (ota_->session_active()) {
         reply = build_error(std::errc::operation_in_progress,
@@ -906,6 +966,7 @@ private:
   espp::Ota *ota_;                                             // Config::ota (not owned)
   bool ota_owner_{
       false}; // true while an upload begun by this service is active (guarded by mutex_)
+  std::chrono::steady_clock::time_point ota_last_activity_{}; // last OTA_BEGIN/OTA_DATA success
 
   /// The otadata state of an app slot as the FW_INFO "previous state" string.
   static const char *ota_state_name(esp_ota_img_states_t state) {

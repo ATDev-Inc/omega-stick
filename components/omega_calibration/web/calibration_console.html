@@ -935,7 +935,15 @@
     async function disconnect() {
       if (!transport) return;
       const t = transport;
-      transport = null;
+      if (uploading) {
+        // Release the device's upload session before the link goes away, or it
+        // stays claimed until the firmware's idle expiry. Fail the in-flight
+        // OTA_DATA first so the abort is not queued behind it.
+        uploading = false;
+        failPending(new Error("upload cancelled by disconnect"));
+        try { await transact(TYPE.OTA_ABORT, null, [TYPE.OK], 2000, 0); } catch (_) { }
+      }
+      if (transport === t) transport = null;
       failPending(new Error("disconnected"));
       await t.close();
       parser.reset();
@@ -1030,6 +1038,7 @@
     let pendingTxn = null;
     let txnChain = Promise.resolve();
     let busy = false;
+    let uploading = false; // an OTA session is open on the device (set after OTA_BEGIN OK)
 
     function failPending(err) {
       if (pendingTxn) {
@@ -1505,13 +1514,12 @@
 
       busy = true; updateUI(); setStatus("busy", "Flashing...");
       els.fwProgress.hidden = false; els.fwProgress.value = 0;
-      let began = false;
       try {
         const begin = new Uint8Array(4);
         new DataView(begin.buffer).setUint32(0, img.length, true);
         logLine("sys", "OTA: erasing target partition...");
         await transact(TYPE.OTA_BEGIN, begin, [TYPE.OK], OTA_BEGIN_TIMEOUT_MS, 0);
-        began = true;
+        uploading = true;
 
         for (let off = 0; off < img.length; off += OTA_CHUNK) {
           const chunk = img.subarray(off, Math.min(off + OTA_CHUNK, img.length));
@@ -1524,14 +1532,17 @@
 
         logLine("sys", "OTA: validating and activating...");
         await transact(TYPE.OTA_FINISH, null, [TYPE.OK], OTA_FINISH_TIMEOUT_MS, 0);
-        began = false;
+        uploading = false;
         logLine("sys", "Firmware accepted. The device is rebooting; reconnect in a few seconds.");
       } catch (e) {
         logLine("err", "Flash failed: " + e.message);
-        if (began && transport) {
+        // disconnect() clears `uploading` after sending its own OTA_ABORT.
+        if (uploading && transport) {
+          uploading = false;
           try { await transact(TYPE.OTA_ABORT, null, [TYPE.OK], CMD_TIMEOUT_MS, 0); } catch (_) { }
         }
       } finally {
+        uploading = false;
         busy = false; updateUI();
         els.fwProgress.hidden = true;
         if (transport) setStatus("connected", "Connected");

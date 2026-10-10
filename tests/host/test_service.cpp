@@ -350,15 +350,18 @@ struct OtaFixture {
   OmegaStore store;
   espp::Ota ota;
   std::vector<uint8_t> sent;
+  std::vector<uint8_t> sent2;
   std::atomic<bool> restart_ran{false};
   CalibrationService service;
+  CalibrationService service2; // second transport sharing the same Ota
 
   explicit OtaFixture(const char *label, bool wire_ota = true, bool wire_restart = false)
       : dir(label)
       , store_cfg(with_paths())
       , store(store_cfg)
       , ota(espp::Ota::Config{})
-      , service(make_config(wire_ota, wire_restart)) {
+      , service(make_config(wire_ota, wire_restart, sent))
+      , service2(make_config(wire_ota, wire_restart, sent2)) {
     esp_ota_fake().reset();
   }
 
@@ -369,9 +372,10 @@ struct OtaFixture {
     return c;
   }
 
-  CalibrationService::Config make_config(bool wire_ota, bool wire_restart) {
-    CalibrationService::Config cfg{.store = store, .send = [this](std::span<const uint8_t> f) {
-                                     sent.insert(sent.end(), f.begin(), f.end());
+  CalibrationService::Config make_config(bool wire_ota, bool wire_restart,
+                                         std::vector<uint8_t> &out) {
+    CalibrationService::Config cfg{.store = store, .send = [&out](std::span<const uint8_t> f) {
+                                     out.insert(out.end(), f.begin(), f.end());
                                    }};
     if (wire_ota) {
       cfg.ota = &ota;
@@ -386,6 +390,16 @@ struct OtaFixture {
     sent.clear();
     CHECK(service.handle_frame(static_cast<uint8_t>(type), payload));
     auto reply = support::decode_one(sent);
+    CHECK(reply.has_value());
+    CHECK(reply->is_reply());
+    return *reply;
+  }
+
+  /// Same as request(), but over the second service.
+  stream::Frame request2(Msg type, std::vector<uint8_t> payload = {}) {
+    sent2.clear();
+    CHECK(service2.handle_frame(static_cast<uint8_t>(type), payload));
+    auto reply = support::decode_one(sent2);
     CHECK(reply.has_value());
     CHECK(reply->is_reply());
     return *reply;
@@ -497,12 +511,14 @@ TEST(service_revert_errors) {
   CHECK(is(reply, Msg::Error));
   CHECK_EQ(stream::get_u32(reply.payload), static_cast<uint32_t>(std::errc::invalid_argument));
 
-  CHECK(is(fx.request(Msg::OtaBegin, u32le(16)), Msg::Ok));
+  // An upload owned by the other service (sharing the engine) blocks REVERT.
+  CHECK(is(fx.request2(Msg::OtaBegin, u32le(16)), Msg::Ok));
   reply = fx.request(Msg::Revert);
   CHECK(is(reply, Msg::Error));
   CHECK_EQ(stream::get_u32(reply.payload), static_cast<uint32_t>(std::errc::operation_in_progress));
   CHECK_EQ(fake.set_boot_calls, 0);
-  CHECK(is(fx.request(Msg::OtaAbort), Msg::Ok));
+  CHECK(fx.ota.session_active());
+  CHECK(is(fx.request2(Msg::OtaAbort), Msg::Ok));
 
   fake.other_has_image = false;
   reply = fx.request(Msg::Revert);
@@ -624,6 +640,81 @@ TEST(service_ota_abort_ends_session) {
   CHECK(!fx.ota.session_active());
   CHECK_EQ(fx.ota.abort_calls, 1);
   CHECK(is(fx.request(Msg::OtaData, ota_data(0, {1})), Msg::Error));
+}
+
+TEST(service_ota_begin_takes_over_own_stale_session) {
+  // Disconnect, reconnect, retry: the host abandoned an upload midway and
+  // starts over on the same link without a reboot.
+  OtaFixture fx("svc_ota_retry");
+  std::vector<uint8_t> image(300);
+  for (size_t i = 0; i < image.size(); ++i) {
+    image[i] = static_cast<uint8_t>(i * 5 + 1);
+  }
+  const auto size = static_cast<uint32_t>(image.size());
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(size)), Msg::Ok));
+  CHECK(is(fx.request(Msg::OtaData, ota_data(0, {9, 9, 9, 9, 9})), Msg::Ok));
+  CHECK_EQ(fx.ota.bytes_written(), 5u);
+
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(size)), Msg::Ok));
+  CHECK_EQ(fx.ota.abort_calls, 1);
+  CHECK(fx.ota.session_active());
+  CHECK_EQ(fx.ota.bytes_written(), 0u);
+
+  CHECK(is(fx.request(Msg::OtaData, ota_data(0, image)), Msg::Ok));
+  CHECK(fx.ota.image == image);
+  CHECK(is(fx.request(Msg::OtaFinish), Msg::Ok));
+  CHECK(!fx.ota.session_active());
+  CHECK_EQ(fx.ota.finish_calls, 1);
+  std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+}
+
+TEST(service_ota_begin_refused_while_other_service_owns_session) {
+  OtaFixture fx("svc_ota_two");
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(64)), Msg::Ok));
+  CHECK(is(fx.request2(Msg::OtaBegin, u32le(64)), Msg::Error));
+  CHECK_EQ(fx.ota.abort_calls, 0);
+  CHECK(fx.ota.session_active());
+  CHECK(is(fx.request2(Msg::OtaData, ota_data(0, {1})), Msg::Error));
+  // The owner is unaffected.
+  CHECK(is(fx.request(Msg::OtaData, ota_data(0, {1, 2})), Msg::Ok));
+}
+
+TEST(service_revert_aborts_own_abandoned_upload) {
+  OtaFixture fx("svc_revert_abandoned");
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(64)), Msg::Ok));
+  CHECK(is(fx.request(Msg::OtaData, ota_data(0, {1, 2, 3})), Msg::Ok));
+  CHECK(is(fx.request(Msg::Revert), Msg::Ok));
+  CHECK(!fx.ota.session_active());
+  CHECK_EQ(fx.ota.abort_calls, 1);
+  CHECK_EQ(esp_ota_fake().set_boot_calls, 1);
+  std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+  CHECK(fx.ota.restart_called.load());
+}
+
+TEST(service_expire_stale_update) {
+  using std::chrono::milliseconds;
+  OtaFixture fx("svc_expire");
+
+  // Nothing owned: nothing to expire.
+  CHECK(!fx.service.expire_stale_update(milliseconds(0)));
+
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(64)), Msg::Ok));
+  // A non-owner never touches another service's session.
+  CHECK(!fx.service2.expire_stale_update(milliseconds(0)));
+  CHECK(fx.ota.session_active());
+  CHECK_EQ(fx.ota.abort_calls, 0);
+
+  // Not idle long enough yet.
+  CHECK(!fx.service.expire_stale_update(std::chrono::hours(1)));
+  CHECK(fx.ota.session_active());
+
+  CHECK(fx.service.expire_stale_update(milliseconds(0)));
+  CHECK(!fx.ota.session_active());
+  CHECK_EQ(fx.ota.abort_calls, 1);
+  CHECK(!fx.service.expire_stale_update(milliseconds(0)));
+
+  // The link can start a fresh upload afterwards, and the other can too.
+  CHECK(is(fx.request2(Msg::OtaBegin, u32le(64)), Msg::Ok));
 }
 
 TEST(service_mark_valid_clears_pending_verify) {
