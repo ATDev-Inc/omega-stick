@@ -85,6 +85,16 @@ Current XFAIL entries:
   `make_error_code`. The specialisation needs a namespace-scope overload to
   work, so `ec == OmegaCalibration::Error::file_open_failed` does not
   compile. The tests go through `support::is_error()` instead.
+- On Windows (clang with the MSVC STL, or MSVC itself) the build fails in
+  the pinned espp `hid-rp` headers with "no member named 'bit_cast' in
+  namespace 'std'": `hid/rdf/short_item.hpp` uses `std::bit_cast` without
+  including `<bit>`, which libstdc++ happens to pull in transitively. Until
+  that is fixed upstream, force-include the header when configuring, for
+  example with clang and Ninja:
+
+  ```
+  cmake -S tests/host -B build-host -G Ninja -DCMAKE_CXX_COMPILER=clang++ "-DCMAKE_CXX_FLAGS=-include bit"
+  ```
 
 ## Not covered here
 

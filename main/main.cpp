@@ -428,8 +428,9 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     usb_cfg.hid = hid_fn;
 
     // --------------------------------------------------------------------
-    // Calibration console wiring (module 5), checked against espp v1.3.3's
-    // usb_device.hpp and dispatcher_worker.hpp. One CalibrationService and
+    // Calibration console wiring (module 5), checked against usb_device.hpp
+    // (espp/usb_device 1.3.3) and dispatcher_worker.hpp (espp/dispatcher
+    // 1.3.5), see dependencies.lock. One CalibrationService and
     // one DispatcherWorker per USB byte stream (vendor for WebUSB, CDC for
     // Web Serial). The receive callbacks only push() bytes into the worker:
     // they run on the TinyUSB task, where UsbDevice's write path fails fast

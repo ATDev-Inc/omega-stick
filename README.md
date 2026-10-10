@@ -119,10 +119,12 @@ and we will point you at what exists.
 
 ### Prerequisites
 
-This is an ESP-IDF project targeting **ESP-IDF v5.5.1 or v6.0**. Follow the
+This is an ESP-IDF project targeting **ESP-IDF v5.5.1 or v6.0**.
+[dependencies.lock](./dependencies.lock) was resolved against v6.0.2. Follow the
 [official ESP-IDF getting started
 guide](https://docs.espressif.com/projects/esp-idf/en/release-v6.0/esp32s3/get-started/index.html)
-to install the toolchain for your platform.
+to install the toolchain for your platform. On Windows, Espressif's installer
+can do it in two commands (see [CONTRIBUTING.md](./CONTRIBUTING.md#development-environment)).
 
 Component dependencies are pulled automatically by the IDF Component Manager
 from [main/idf_component.yml](main/idf_component.yml); the resolved set is
@@ -151,7 +153,16 @@ cmake --build build-host
 ctest --test-dir build-host --output-on-failure
 ```
 
-See [tests/host/README.md](tests/host/README.md) for what they cover.
+See [tests/host/README.md](tests/host/README.md) for what they cover, and
+for a workaround if they fail to compile on Windows.
+
+### Calibration console
+
+[components/omega_calibration/web/calibration_console.html](components/omega_calibration/web/calibration_console.html)
+is a browser page for viewing and tuning the stick's calibration and settings
+over USB. Open it from disk in Chrome or Edge and connect with WebUSB or Web
+Serial. See the [omega_calibration README](components/omega_calibration/README.md)
+for details.
 
 ### Expected output
 
@@ -181,7 +192,8 @@ and confirm the sensor's address strap.
 main/                     application entry point and IDF component manifest
 components/tmag5273/      TMAG5273 Hall-effect sensor driver
 components/omega_calibration/
-                          calibration, persisted settings, and the USB console protocol
+                          calibration, persisted settings, the USB console protocol,
+                          and the web calibration console (web/)
 tests/host/               desktop unit tests for omega_calibration (no hardware needed)
 .github/workflows/        build, packaging, static analysis, and host test CI
 sdkconfig.defaults        project-wide ESP-IDF configuration defaults

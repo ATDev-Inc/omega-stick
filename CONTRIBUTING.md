@@ -73,6 +73,18 @@ This is an [ESP-IDF](https://github.com/espressif/esp-idf) project targeting
 
 1. Install ESP-IDF by following the [official getting started
    guide](https://docs.espressif.com/projects/esp-idf/en/release-v6.0/esp32s3/get-started/index.html).
+   On Windows, the ESP-IDF Installation Manager CLI installs the version
+   `dependencies.lock` was resolved against:
+
+   ```console
+   winget install Espressif.EIM-CLI
+   eim install -i v6.0.2 -t esp32s3 -n true
+   ```
+
+   It installs into `C:\Espressif` and puts an "ESP-IDF v6.0.2 PowerShell"
+   shortcut on the desktop. Run `idf.py` from that shell, or dot-source
+   `C:\Espressif\tools\Microsoft.v6.0.2.PowerShell_profile.ps1` in an
+   existing PowerShell session.
 2. Clone the repository and build:
 
    ```console
