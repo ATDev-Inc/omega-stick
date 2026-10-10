@@ -187,10 +187,13 @@ public:
   }
 
   /// Sets the input mode live and fires on_mode_changed() (outside the
-  /// lock) so the application can act on it -- see ModeChangedFn.
+  /// lock) so the application can act on it -- see ModeChangedFn. Setting
+  /// the mode that is already active does nothing.
   void set_input_mode(InputMode mode) {
     {
       std::lock_guard<std::mutex> lock(mutex_);
+      if (settings_.input_mode == mode)
+        return;
       settings_.input_mode = mode;
     }
     if (on_mode_changed_) {

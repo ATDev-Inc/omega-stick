@@ -202,10 +202,9 @@ TEST(service_set_input_mode_switches_store_and_notifies) {
   CHECK(fx.store.settings().input_mode == OmegaStore::InputMode::XAC);
 }
 
-XFAIL_TEST(service_ok_reply_is_sent_before_mode_change_callback_runs,
-           "set_input_mode fires on_mode_changed synchronously inside handle_frame_locked, "
-           "before the OK reply is built; main.cpp's callback calls esp_restart(), so the "
-           "console never receives the OK and reports a timeout for a switch that worked") {
+// main.cpp's on_mode_changed calls esp_restart(), so the OK must already be sent
+// when it runs, or the console reports a timeout for a switch that worked.
+TEST(service_ok_reply_is_sent_before_mode_change_callback_runs) {
   int sends_seen_from_callback = -1;
   const Fixture *self = nullptr;
   Fixture fx("svc_mode_order", {.on_mode_changed = [&](OmegaStore::InputMode) {

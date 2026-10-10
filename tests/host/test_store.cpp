@@ -101,9 +101,8 @@ TEST(store_input_mode_change_fires_mode_callback_with_new_mode) {
   CHECK(store.settings().input_mode == OmegaStore::InputMode::XAC);
 }
 
-XFAIL_TEST(store_input_mode_same_value_is_a_no_op,
-           "set_input_mode fires on_mode_changed even when the mode is unchanged, so "
-           "re-selecting the active mode from the console saves + restarts the device") {
+// Re-selecting the active mode from the console must not save + restart the device.
+TEST(store_input_mode_same_value_is_a_no_op) {
   TempDir dir("store_mode_same");
   auto cfg = config_for(dir);
   int fired = 0;

@@ -41,7 +41,7 @@ On connect the page asks the device which modules it has (discovery, module
 | Manual center offset (trim) | `0x51 SET_MANUAL_OFFSET` | added to the calibrated center, in the same raw units as Center X / Y. Must be finite |
 | Manual deadzone overrides | `0x52 SET_DEADZONE_OVERRIDE` | an unchecked box clears the override back to the calibration-derived value. Values must be finite and >= 0 |
 | Nudge-click tuning | `0x53 SET_NUDGE_SETTINGS` | enter threshold in (0, 1], exit threshold in [0, 1], time window in ms |
-| Input mode | `0x54 SET_INPUT_MODE` | mouse or XAC gamepad. The device saves all live settings to flash and restarts to apply it. The page currently reports a timeout here even when the switch worked (see the XFAIL list in [tests/host/README.md](../../tests/host/README.md)) |
+| Input mode | `0x54 SET_INPUT_MODE` | mouse or XAC gamepad. The device saves all live settings to flash and restarts to apply it. The OK reply is sent before the restart, so the page then loses the connection; reconnect after the stick re-enumerates |
 | Save current state to flash | `0x55 SAVE_TO_FLASH` | writes `omega_calibration.cfg` and `omega_settings.cfg` to the device's file system |
 | Re-run calibration | `0x56 START_CALIBRATION` | asynchronous. The result arrives later as an unsolicited `0xD1` frame |
 
