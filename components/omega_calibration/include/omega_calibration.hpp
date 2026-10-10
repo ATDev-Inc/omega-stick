@@ -727,6 +727,134 @@ public:
     std::optional<std::chrono::steady_clock::time_point> last_nudge_;
   };
 
+  /// Decides when the sensor can no longer be trusted, so the caller can
+  /// report a centered stick instead of whatever espp::Joystick last mapped
+  /// (its update() returns early on a failed read and keeps the old output,
+  /// which would hold a deflection forever once the sensor drops off the
+  /// bus). See D21 in docs/decisions.md for the rules and their rationale.
+  ///
+  /// Call update() every loop tick with whether the read succeeded and the
+  /// raw reading. While it returns true the output must be neutral. Two
+  /// conditions trip it:
+  ///
+  ///  - trip_after_failed_reads consecutive failed reads (a single failure
+  ///    is a bus glitch, not a fault), and
+  ///  - stuck_after_samples consecutive readings that are exactly identical
+  ///    in both axes. Real hall readings carry noise, so a long run of bit-
+  ///    identical samples means the conversion engine has stopped. 0
+  ///    disables this check.
+  ///
+  /// Either way the fault clears only after recover_after_good_reads
+  /// consecutive successful reads (and, for a stuck fault, the reading has
+  /// changed), so a sensor that flaps stays centered instead of jittering.
+  /// The first fault since reset() is latched for later status reporting.
+  ///
+  /// Thresholds are in loop ticks, not time, because the tick period is the
+  /// caller's; both the 10 ms mouse loop and the 5 ms XAC loop feed this.
+  class SensorFaultMonitor {
+  public:
+    enum class Fault : uint8_t { NONE, READ_FAILED, STUCK };
+
+    struct Config {
+      int trip_after_failed_reads{3};
+      int stuck_after_samples{500};
+      int recover_after_good_reads{10};
+    };
+
+    SensorFaultMonitor()
+        : config_({}) {}
+
+    explicit SensorFaultMonitor(const Config &config)
+        : config_(config) {}
+
+    /// Returns true while the output must be held neutral.
+    bool update(bool read_ok, float raw_x, float raw_y) {
+      if (!read_ok) {
+        failed_streak_++;
+        good_streak_ = 0;
+        if (failed_streak_ >= config_.trip_after_failed_reads) {
+          trip(Fault::READ_FAILED);
+        }
+        return faulted();
+      }
+
+      failed_streak_ = 0;
+      good_streak_++;
+
+      if (have_last_ && raw_x == last_x_ && raw_y == last_y_) {
+        identical_streak_++;
+      } else {
+        identical_streak_ = 0;
+      }
+      have_last_ = true;
+      last_x_ = raw_x;
+      last_y_ = raw_y;
+
+      if (config_.stuck_after_samples > 0 && identical_streak_ >= config_.stuck_after_samples) {
+        trip(Fault::STUCK);
+        // Recovery is counted from the first sample that changes again.
+        good_streak_ = 0;
+        return true;
+      }
+
+      if (faulted() && good_streak_ >= config_.recover_after_good_reads) {
+        fault_ = Fault::NONE;
+      }
+      return faulted();
+    }
+
+    bool faulted() const { return fault_ != Fault::NONE; }
+
+    /// The fault in effect now, or NONE.
+    Fault fault() const { return fault_; }
+
+    /// The first fault seen since construction or reset(); stays set after
+    /// recovery so a later status query can still say what happened.
+    Fault first_fault() const { return first_fault_; }
+
+    /// How many times the monitor has tripped since construction or reset().
+    uint32_t fault_count() const { return fault_count_; }
+
+    static const char *to_string(Fault fault) {
+      switch (fault) {
+      case Fault::READ_FAILED:
+        return "read failed";
+      case Fault::STUCK:
+        return "reading stuck";
+      case Fault::NONE:
+      default:
+        return "none";
+      }
+    }
+
+    /// Forgets all streaks and the latched first fault.
+    void reset() { *this = SensorFaultMonitor(config_); }
+
+  private:
+    void trip(Fault fault) {
+      if (fault_ == fault) {
+        return;
+      }
+      fault_ = fault;
+      fault_count_++;
+      good_streak_ = 0;
+      if (first_fault_ == Fault::NONE) {
+        first_fault_ = fault;
+      }
+    }
+
+    Config config_;
+    Fault fault_{Fault::NONE};
+    Fault first_fault_{Fault::NONE};
+    uint32_t fault_count_{0};
+    int failed_streak_{0};
+    int good_streak_{0};
+    int identical_streak_{0};
+    bool have_last_{false};
+    float last_x_{0};
+    float last_y_{0};
+  };
+
   /// Applies completed calibration results to an already-constructed
   /// espp::Joystick -- e.g. after a fresh interactive recalibration
   /// (following clear() + calibrate()) -- without needing to destroy and

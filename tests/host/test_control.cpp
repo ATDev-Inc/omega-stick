@@ -39,6 +39,13 @@ oc::StepInput input(float x, float y, int ms, bool recal = false, float raw_x = 
   return in; // default DeviceSettings: 100 ms hold, 0.5 enter, 0.8 exit
 }
 
+// An input whose sensor read failed: the sample is the stale previous one.
+oc::StepInput failed_read(float x, float y, int ms, float raw_x = 0.0f, float raw_y = 0.0f) {
+  oc::StepInput in = input(x, y, ms, false, raw_x, raw_y);
+  in.stick.read_ok = false;
+  return in;
+}
+
 // A mouse state that has taken its first sample (stick at rest) at T0.
 oc::MouseState fresh_mouse() {
   oc::MouseState s;
@@ -95,6 +102,9 @@ struct FakePorts : oc::Ports {
     return post_sweep;
   }
   oc::Clock::time_point now() override { return clock; }
+  void sensor_fault_changed(bool faulted, Cal::SensorFaultMonitor::Fault, std::uint32_t) override {
+    calls.push_back(faulted ? "fault" : "recovered");
+  }
 
   int count(const std::string &name) const {
     int n = 0;
@@ -481,4 +491,169 @@ TEST(control_xac_drift_is_not_applied_while_the_stick_is_moving) {
     oc::xac_tick(s, input(0.1f, 0.0f, ms, false, 5.0f, 5.0f), ports);
   }
   CHECK_EQ(ports.count("apply_drift"), 0);
+}
+
+// ---- sensor fault (D21) -----------------------------------------------------
+
+TEST(control_mouse_sensor_fault_sends_neutral_reports_after_three_failed_reads) {
+  FakePorts ports;
+  oc::MouseState s;
+  oc::mouse_tick(s, input(0.3f, 0.0f, 0), ports);
+  CHECK_EQ(ports.mouse.back().dx, expected_delta(0.3f));
+
+  // Two failed reads are a bus glitch: the stale deflection still goes out.
+  oc::mouse_tick(s, failed_read(0.3f, 0.0f, 10), ports);
+  oc::mouse_tick(s, failed_read(0.3f, 0.0f, 20), ports);
+  CHECK_EQ(ports.mouse.back().dx, expected_delta(0.3f));
+  CHECK_EQ(ports.count("fault"), 0);
+
+  // The third trips the monitor: neutral from here on, logged once.
+  for (int ms = 30; ms <= 500; ms += 10) {
+    oc::mouse_tick(s, failed_read(0.3f, 0.0f, ms), ports);
+    const auto &r = ports.mouse.back();
+    CHECK_EQ(r.buttons, 0);
+    CHECK_EQ(r.dx, 0);
+    CHECK_EQ(r.dy, 0);
+    CHECK_EQ(r.wheel, 0);
+  }
+  CHECK_EQ(ports.count("fault"), 1);
+  CHECK_EQ(ports.count("send_mouse"), 3 + 48);
+}
+
+TEST(control_mouse_sensor_fault_releases_a_held_nudge) {
+  FakePorts ports;
+  oc::MouseState s = fresh_mouse();
+  oc::mouse_tick(s, input(0.9f, 0.0f, 100), ports);
+  CHECK(s.nudge == NudgeDirection::RIGHT);
+  CHECK_EQ(ports.mouse.back().buttons, 0x02);
+
+  for (int k = 1; k <= 3; ++k) {
+    oc::mouse_tick(s, failed_read(0.9f, 0.0f, 100 + 10 * k), ports);
+  }
+  CHECK(s.nudge == NudgeDirection::NONE);
+  CHECK_EQ(ports.mouse.back().buttons, 0);
+}
+
+TEST(control_mouse_nudge_and_drift_are_skipped_while_faulted) {
+  FakePorts ports;
+  oc::MouseState s;
+  oc::mouse_tick(s, input(0.0f, 0.0f, 0, false, 5.0f, 5.0f), ports);
+  // The stale sample jumps to a big deflection; with the monitor tripped it
+  // must neither start a nudge nor let the drift compensator run (the idle
+  // dwell of 2 s would otherwise apply a correction).
+  for (int ms = 10; ms <= 3000; ms += 10) {
+    oc::mouse_tick(s, failed_read(0.9f, 0.0f, ms, 5.0f, 5.0f), ports);
+  }
+  CHECK(s.nudge == NudgeDirection::NONE);
+  CHECK_EQ(ports.count("apply_drift"), 0);
+  CHECK_EQ(ports.count("save"), 0);
+  CHECK_EQ(s.common.drift_nudge_count, 0);
+  for (const auto &r : ports.mouse) {
+    CHECK_EQ(r.buttons, 0);
+  }
+}
+
+TEST(control_mouse_recovery_resumes_output_without_a_bogus_nudge) {
+  FakePorts ports;
+  oc::MouseState s;
+  oc::mouse_tick(s, input(0.0f, 0.0f, 0), ports);
+  for (int ms = 10; ms <= 30; ms += 10) {
+    oc::mouse_tick(s, failed_read(0.0f, 0.0f, ms), ports);
+  }
+  CHECK_EQ(ports.count("fault"), 1);
+
+  // The stick is now held deflected. Ten good reads clear the fault; the
+  // reports stay neutral until the tenth.
+  int ms = 40;
+  for (int k = 1; k < 10; ++k, ms += 10) {
+    oc::mouse_tick(s, input(0.4f, 0.0f, ms, false, 1.0f + k, 0.0f), ports);
+    CHECK_EQ(ports.mouse.back().dx, 0);
+  }
+  CHECK_EQ(ports.count("recovered"), 0);
+  oc::mouse_tick(s, input(0.4f, 0.0f, ms, false, 11.0f, 0.0f), ports);
+  CHECK_EQ(ports.count("recovered"), 1);
+  CHECK_EQ(ports.mouse.back().dx, expected_delta(0.4f));
+}
+
+TEST(control_mouse_recovery_does_not_nudge_from_the_pre_fault_baseline) {
+  FakePorts ports;
+  oc::MouseState s;
+  oc::mouse_tick(s, input(0.0f, 0.0f, 0), ports);
+  for (int ms = 10; ms <= 30; ms += 10) {
+    oc::mouse_tick(s, failed_read(0.0f, 0.0f, ms), ports);
+  }
+  // Held at 0.9 throughout recovery and after.
+  for (int k = 0; k < 10; ++k) {
+    oc::mouse_tick(s, input(0.9f, 0.0f, 40 + 10 * k, false, 1.0f + k, 0.0f), ports);
+  }
+  CHECK_EQ(ports.count("recovered"), 1);
+  for (int k = 1; k <= 30; ++k) {
+    oc::mouse_tick(s, input(0.9f, 0.0f, 130 + 10 * k, false, 20.0f + k, 0.0f), ports);
+    CHECK(s.nudge == NudgeDirection::NONE);
+    CHECK_EQ(ports.mouse.back().buttons, 0);
+  }
+}
+
+TEST(control_xac_sensor_fault_centers_the_gamepad_after_six_failed_reads) {
+  FakePorts ports;
+  oc::XacState s;
+  oc::xac_tick(s, input(0.5f, -0.5f, 0), ports);
+  CHECK_NEAR(ports.xac.back().x, 0.5f, 1e-6);
+
+  // The XAC loop ticks at 5 ms, so six failed reads (30 ms) trip it.
+  for (int k = 1; k <= 5; ++k) {
+    oc::xac_tick(s, failed_read(0.5f, -0.5f, 5 * k), ports);
+    CHECK_NEAR(ports.xac.back().x, 0.5f, 1e-6);
+  }
+  CHECK_EQ(ports.count("fault"), 0);
+  for (int k = 6; k <= 400; ++k) {
+    oc::xac_tick(s, failed_read(0.5f, -0.5f, 5 * k), ports);
+    CHECK_NEAR(ports.xac.back().x, 0.0f, 0.0);
+    CHECK_NEAR(ports.xac.back().y, 0.0f, 0.0);
+  }
+  CHECK_EQ(ports.count("fault"), 1);
+}
+
+TEST(control_xac_drift_is_not_applied_while_faulted) {
+  FakePorts ports;
+  oc::XacState s;
+  oc::xac_tick(s, input(0.0f, 0.0f, 0, false, 5.0f, 5.0f), ports);
+  for (int ms = 5; ms <= 3000; ms += 5) {
+    oc::xac_tick(s, failed_read(0.0f, 0.0f, ms, 5.0f, 5.0f), ports);
+  }
+  CHECK_EQ(ports.count("apply_drift"), 0);
+  CHECK_EQ(s.common.drift_nudge_count, 0);
+}
+
+TEST(control_xac_recovery_resumes_normal_output_after_twenty_good_reads) {
+  FakePorts ports;
+  oc::XacState s;
+  oc::xac_tick(s, input(0.0f, 0.0f, 0), ports);
+  for (int k = 1; k <= 6; ++k) {
+    oc::xac_tick(s, failed_read(0.0f, 0.0f, 5 * k), ports);
+  }
+  CHECK_EQ(ports.count("fault"), 1);
+  for (int k = 1; k < 20; ++k) {
+    oc::xac_tick(s, input(0.25f, 0.5f, 30 + 5 * k, false, 1.0f + k, 0.0f), ports);
+    CHECK_NEAR(ports.xac.back().x, 0.0f, 0.0);
+  }
+  CHECK_EQ(ports.count("recovered"), 0);
+  oc::xac_tick(s, input(0.25f, 0.5f, 130, false, 30.0f, 0.0f), ports);
+  CHECK_EQ(ports.count("recovered"), 1);
+  CHECK_NEAR(ports.xac.back().x, 0.25f, 1e-6);
+  CHECK_NEAR(ports.xac.back().y, 0.5f, 1e-6);
+}
+
+TEST(control_recalibration_still_runs_while_the_sensor_is_faulted) {
+  FakePorts ports;
+  oc::MouseState s;
+  oc::mouse_tick(s, input(0.0f, 0.0f, 0), ports);
+  for (int ms = 10; ms <= 40; ms += 10) {
+    oc::mouse_tick(s, failed_read(0.0f, 0.0f, ms), ports);
+  }
+  ports.calls.clear();
+  oc::StepInput recal = failed_read(0.0f, 0.0f, 50);
+  recal.recalibration_requested = true;
+  oc::mouse_tick(s, recal, ports);
+  CHECK(ports.calls == RECAL_SEQUENCE_MOUSE);
 }

@@ -22,6 +22,24 @@ using CenterResult = espp::OmegaCalibration::CenterResult;
 using RangeResult = espp::OmegaCalibration::RangeResult;
 using DeviceSettings = espp::OmegaCalibration::DeviceSettings;
 using DriftCompensator = espp::OmegaCalibration::DriftCompensator;
+using SensorFaultMonitor = espp::OmegaCalibration::SensorFaultMonitor;
+
+// Sensor-fault thresholds (D21 in docs/decisions.md) are counted in ticks, and
+// the two firmware loops tick at different rates: the mouse loop sleeps 10 ms
+// per iteration, the XAC loop 5 ms. Each loop gets a config that keeps the
+// same real-time thresholds: trip after 30 ms of failed reads, call a frozen
+// reading stuck after 5 s, and recover after 100 ms of good reads. (The real
+// period is the sleep plus the I2C read and HID write, so these are floors.)
+inline constexpr SensorFaultMonitor::Config MOUSE_SENSOR_FAULT_CONFIG{
+    .trip_after_failed_reads = 3,
+    .stuck_after_samples = 500,
+    .recover_after_good_reads = 10,
+};
+inline constexpr SensorFaultMonitor::Config XAC_SENSOR_FAULT_CONFIG{
+    .trip_after_failed_reads = 6,
+    .stuck_after_samples = 1000,
+    .recover_after_good_reads = 20,
+};
 
 // Scales the normalized joystick output (-1..1) into mouse movement counts
 // per polling interval. Lower this to slow the cursor down, raise it to
@@ -84,6 +102,10 @@ inline NudgeDirection classify_nudge(float x, float y) {
 struct StickSample {
   float x{0.0f}, y{0.0f};
   float raw_x{0.0f}, raw_y{0.0f};
+  /// False when the sensor read failed. x/y/raw then hold the previous values
+  /// (espp::Joystick::update() keeps its old output), so they are not to be
+  /// trusted; the SensorFaultMonitor decides when to stop acting on them.
+  bool read_ok{true};
 };
 
 struct StepInput {
@@ -118,10 +140,16 @@ struct CommonState {
   RangeResult range;
   DriftCompensator drift;
   int drift_nudge_count{0};
+  SensorFaultMonitor sensor;
+  bool sensor_was_faulted{false};
+
+  CommonState() = default;
+  explicit CommonState(const SensorFaultMonitor::Config &sensor_config)
+      : sensor(sensor_config) {}
 };
 
 struct MouseState {
-  CommonState common;
+  CommonState common{MOUSE_SENSOR_FAULT_CONFIG};
   // Current nudge-click state. This persists across polling iterations so a
   // held nudge stays held.
   NudgeDirection nudge{NudgeDirection::NONE};
@@ -132,7 +160,7 @@ struct MouseState {
 };
 
 struct XacState {
-  CommonState common;
+  CommonState common{XAC_SENSOR_FAULT_CONFIG};
 };
 
 // ============================================================================
@@ -320,12 +348,61 @@ struct Ports {
   /// Fresh joystick reading (used after a sweep).
   virtual StickSample read_stick() = 0;
   virtual Clock::time_point now() = 0;
+  /// Called once when the sensor monitor trips (`faulted`, with the fault
+  /// kind) and once when it recovers. `fault_count` is the trips since boot.
+  virtual void sensor_fault_changed(bool faulted, SensorFaultMonitor::Fault fault,
+                                    std::uint32_t fault_count) = 0;
 
 protected:
   ~Ports() = default;
 };
 
+namespace detail {
+
+struct FaultEdge {
+  bool faulted{false};
+  bool tripped{false};   ///< entered the fault on this tick
+  bool recovered{false}; ///< left the fault on this tick
+};
+
+// Feeds the sensor monitor and reports the transition through the ports.
+// Called first on every tick, whatever else the tick does.
+inline FaultEdge sensor_fault_update(CommonState &common, const StepInput &in, Ports &ports) {
+  FaultEdge edge;
+  edge.faulted = common.sensor.update(in.stick.read_ok, in.stick.raw_x, in.stick.raw_y);
+  if (edge.faulted != common.sensor_was_faulted) {
+    common.sensor_was_faulted = edge.faulted;
+    edge.tripped = edge.faulted;
+    edge.recovered = !edge.faulted;
+    ports.sensor_fault_changed(edge.faulted, common.sensor.fault(), common.sensor.fault_count());
+  }
+  return edge;
+}
+
+} // namespace detail
+
 inline void mouse_tick(MouseState &s, const StepInput &in, Ports &ports) {
+  // While the sensor is faulted the stick is reported centered: neutral
+  // report, no nudge detection, no drift correction. A pending recalibration
+  // still runs (it reads the sensor itself and reports its own failure).
+  const auto fault = detail::sensor_fault_update(s.common, in, ports);
+  if (fault.tripped) {
+    s.nudge = NudgeDirection::NONE;
+    s.scroll_poll_count = 0;
+  }
+  if (fault.recovered) {
+    // Same reset as after a recalibration: the next window must not see a
+    // delta against a reading from before the fault.
+    s.window_start = in.now;
+    s.prev_x = in.stick.x;
+    s.prev_y = in.stick.y;
+    s.initialised = true;
+  }
+  if (fault.faulted && !in.recalibration_requested) {
+    ports.send_mouse(MouseReport{});
+    return;
+  }
+
   const StepOutput out = mouse_step(s, in);
   if (out.send_report) {
     ports.send_mouse(out.mouse);
@@ -348,6 +425,13 @@ inline void mouse_tick(MouseState &s, const StepInput &in, Ports &ports) {
 }
 
 inline void xac_tick(XacState &s, const StepInput &in, Ports &ports) {
+  // See mouse_tick: a faulted sensor reports a centered stick.
+  const auto fault = detail::sensor_fault_update(s.common, in, ports);
+  if (fault.faulted && !in.recalibration_requested) {
+    ports.send_xac(XacReport{});
+    return;
+  }
+
   const StepOutput out = xac_step(s, in);
   if (out.send_report) {
     ports.send_xac(out.xac);

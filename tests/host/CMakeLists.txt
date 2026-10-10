@@ -133,6 +133,7 @@ add_executable(omega_host_tests
   test_store.cpp
   test_service.cpp
   test_xac_report.cpp
+  test_sensor_fault.cpp
   test_health_check.cpp
   test_calibration_math.cpp
   test_drift.cpp

@@ -11,6 +11,8 @@ no ESP-IDF and no hardware. They cover:
   previous-slot states, the OTA begin/data/finish/abort flow (bad offsets,
   missing session, write failure), and "revert to previous" (error cases, boot
   partition set, restart), all against the `ota.hpp` / `esp_ota_ops.h` fakes
+- `OmegaCalibration::SensorFaultMonitor`: the trip, latch and recovery rules
+  that center the stick on a sensor fault (D21 in `docs/decisions.md`)
 - `XacInputReport` (`components/xac`): the byte layout `get_report()` hands
   to `write_hid_report()`, checked against the real espp `hid-rp` headers
 - Calibration math (`test_calibration_math.cpp`): `center_calibration`,

@@ -69,15 +69,20 @@ struct EspPorts : espp::omega_control::Ports {
   espp::UsbDevice &usb;
   espp::CalibrationService &calibration_vendor;
   espp::CalibrationService &calibration_cdc;
+  // Set by the joystick's read callback: Joystick::update() keeps its old
+  // output when a read fails, so read_stick() learns the result from here.
+  const bool &sensor_read_ok;
 
   EspPorts(espp::TMAG5273 &tmag_, espp::OmegaStore &store_, espp::Joystick &js_,
-           espp::UsbDevice &usb_, espp::CalibrationService &vendor_, espp::CalibrationService &cdc_)
+           espp::UsbDevice &usb_, espp::CalibrationService &vendor_, espp::CalibrationService &cdc_,
+           const bool &sensor_read_ok_)
       : tmag(tmag_)
       , store(store_)
       , js(js_)
       , usb(usb_)
       , calibration_vendor(vendor_)
-      , calibration_cdc(cdc_) {}
+      , calibration_cdc(cdc_)
+      , sensor_read_ok(sensor_read_ok_) {}
 
   void send_mouse(const espp::omega_control::MouseReport &r) override {
     espp::MouseInputReport<0, 3, true> mouse;
@@ -173,7 +178,17 @@ struct EspPorts : espp::omega_control::Ports {
 
   espp::omega_control::StickSample read_stick() override {
     js.update();
-    return {js.x(), js.y(), js.raw().x(), js.raw().y()};
+    return {js.x(), js.y(), js.raw().x(), js.raw().y(), sensor_read_ok};
+  }
+
+  void sensor_fault_changed(bool faulted, espp::OmegaCalibration::SensorFaultMonitor::Fault fault,
+                            std::uint32_t fault_count) override {
+    if (faulted) {
+      printf("WARNING: sensor fault (%s); holding the stick centered\n",
+             espp::OmegaCalibration::SensorFaultMonitor::to_string(fault));
+    } else {
+      printf("Sensor recovered (fault %u since boot)\n", static_cast<unsigned>(fault_count));
+    }
   }
 
   espp::omega_control::Clock::time_point now() override {
@@ -617,10 +632,12 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     }
     printf("HID ready: %s\n", usb.is_hid_ready() ? "yes" : "no");
 
+    bool sensor_read_ok = true;
     espp::Joystick js(espp::OmegaCalibration::make_joystick_config(
-        center, range, store.settings(), [&tmag](float *x, float *y) {
+        center, range, store.settings(), [&tmag, &sensor_read_ok](float *x, float *y) {
           std::error_code read_ec;
           auto magnetic = tmag.read_magnetic(read_ec);
+          sensor_read_ok = !read_ec;
           if (read_ec) {
             return false;
           }
@@ -634,7 +651,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
     // Nudge-click state, drift compensation and the recalibration hand-off
     // live in omega_control (see components/omega_control).
-    EspPorts ports(tmag, store, js, usb, calibration_vendor, calibration_cdc);
+    EspPorts ports(tmag, store, js, usb, calibration_vendor, calibration_cdc, sensor_read_ok);
     espp::omega_control::MouseState state;
     state.common.center = center;
     state.common.range = range;
@@ -779,11 +796,13 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     // Joystick
     // ------------------------------------------------------------
 
+    bool sensor_read_ok = true;
     espp::Joystick js(espp::OmegaCalibration::make_joystick_config(
-        center, range, store.settings(), [&tmag](float *x, float *y) {
+        center, range, store.settings(), [&tmag, &sensor_read_ok](float *x, float *y) {
           std::error_code read_ec;
 
           auto magnetic = tmag.read_magnetic(read_ec);
+          sensor_read_ok = !read_ec;
 
           if (read_ec) {
             return false;
@@ -802,7 +821,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     // HID polling loop
     // ------------------------------------------------------------
 
-    EspPorts ports(tmag, store, js, usb, calibration_vendor, calibration_cdc);
+    EspPorts ports(tmag, store, js, usb, calibration_vendor, calibration_cdc, sensor_read_ok);
     espp::omega_control::XacState state;
     state.common.center = center;
     state.common.range = range;

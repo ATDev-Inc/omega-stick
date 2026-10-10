@@ -18,6 +18,7 @@ and the things that could not be verified.
 | [02: User needs and evidence](02-user-needs-and-evidence.md) | Populations and prevalence, force and fatigue literature, AT abandonment, mounting |
 | [03: HID and platform compatibility](03-hid-platform-compatibility.md) | HID class choice, console paths, ESP32-S3 constraints, espp capabilities, latency budget |
 | [04: Funding and compliance](04-funding-and-compliance.md) | Reimbursement, FCC/CE, accessibility standards, open source |
+| [05: Lessons from sibling firmware](05-sibling-firmware-lessons.md) | What other ATDev and RAMMP firmware does that we should copy or avoid (captured 2026-10-10) |
 
 ## How to read these
 
