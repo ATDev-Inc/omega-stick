@@ -173,11 +173,36 @@ TEST(apply_calibration_pushes_effective_center_and_deadzones) {
   s.manual_center_deadzone = 0.3f;
 
   OmegaCalibration::apply_calibration(js, center, range, s);
-  CHECK_EQ(js.calibration_updates(), 1);
-  CHECK_NEAR(js.x_calibration().center, center.effective_center_x(), 1e-6);
-  CHECK_NEAR(js.x_calibration().minimum, center.effective_center_x() + range.min_x, 1e-6);
-  CHECK_NEAR(js.x_calibration().maximum, center.effective_center_x() + range.max_x, 1e-6);
-  CHECK_NEAR(js.y_calibration().center, center.effective_center_y(), 1e-6);
   CHECK_NEAR(js.center_deadzone_radius(), 0.3f, 1e-6);
   CHECK_NEAR(js.range_deadzone(), range.deadzone, 1e-6);
+
+  const float cx = center.effective_center_x();
+  const float cy = center.effective_center_y();
+
+  // Raw reading at the effective center maps to the origin.
+  js.update(cx, cy);
+  CHECK_NEAR(js.x(), 0.0f, 1e-5);
+  CHECK_NEAR(js.y(), 0.0f, 1e-5);
+
+  // Full deflection on each side of the calibrated range lands on the unit
+  // circle (the range deadzone makes the edge snap to magnitude 1).
+  js.update(cx + range.max_x, cy);
+  CHECK_NEAR(js.x(), 1.0f, 1e-5);
+  CHECK_NEAR(js.y(), 0.0f, 1e-5);
+  js.update(cx + range.min_x, cy);
+  CHECK_NEAR(js.x(), -1.0f, 1e-5);
+  js.update(cx, cy + range.max_y);
+  CHECK_NEAR(js.y(), 1.0f, 1e-5);
+  js.update(cx, cy + range.min_y);
+  CHECK_NEAR(js.y(), -1.0f, 1e-5);
+
+  // A small deflection inside the 0.3 manual center deadzone is zeroed.
+  js.update(cx + 0.1f * range.max_x, cy);
+  CHECK_NEAR(js.x(), 0.0f, 1e-5);
+  CHECK_NEAR(js.y(), 0.0f, 1e-5);
+
+  // Half deflection is rescaled past the center deadzone:
+  // (0.5 - 0.3) / (1 - 0.3 - range.deadzone).
+  js.update(cx + 0.5f * range.max_x, cy);
+  CHECK_NEAR(js.x(), 0.2f / (1.0f - 0.3f - range.deadzone), 1e-4);
 }

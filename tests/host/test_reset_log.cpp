@@ -1,5 +1,5 @@
 // ResetLog: boot counter and reset-reason ring, persisted across boots.
-// See D16 in docs/decisions.md.
+// See D23 in docs/decisions.md.
 
 #include <fstream>
 #include <string>

@@ -736,6 +736,16 @@ public:
     return !ec;
   }
 
+  // ==========================================================================
+  // Range accessors
+  // ==========================================================================
+
+  /// Full-scale range in mT for the configured XY range.
+  float range_xy_mT() const { return xy_range_ == MagneticRange::LOW ? 133.0f : 266.0f; }
+
+  /// Full-scale range in mT for the configured Z range.
+  float range_z_mT() const { return z_range_ == MagneticRange::LOW ? 133.0f : 266.0f; }
+
 private:
   // ==========================================================================
   // Conversion helpers
@@ -747,10 +757,6 @@ private:
 
     return static_cast<float>(raw) / 32768.0f * full_scale * 1000.0f;
   }
-
-  float range_xy_mT() const { return 266.0f; }
-
-  float range_z_mT() const { return 266.0f; }
 
   // ==========================================================================
   // State

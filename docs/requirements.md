@@ -43,7 +43,7 @@ Evidence behind these requirements is in [docs/research/](research/).
 - **CAL-5 [M]** Slow idle drift correction: when input sits within the deadzone
   for a configurable dwell, migrate the center reference at a rate slow enough
   that it cannot fight deliberate sustained input.
-- **CAL-6 [M]** Persist calibration to NVS and restore on boot (see PER-1).
+- **CAL-6 [M]** Persist calibration to on-device flash and restore on boot (see PER-1).
 - **CAL-7 [S]** Provide a one-action reset to factory defaults that does not
   require a host.
 
@@ -84,7 +84,7 @@ Evidence behind these requirements is in [docs/research/](research/).
   buttons.
 - **OUT-4 [M]** Mode selection between gamepad and mouse is made **from the host**
   via the configuration surface (CFG-1), not from a control on the device. The
-  selection **persists to NVS** and is restored on boot, so the device keeps its
+  selection **persists to on-device flash** and is restored on boot, so the device keeps its
   mode when later connected to a host that cannot configure it (XAC, console,
   tablet). Switching must not cause re-enumeration.
 - **OUT-5 [M]** Set HID `bInterval` to **1 ms**. `espp::UsbDevice`'s
@@ -108,7 +108,7 @@ Evidence behind these requirements is in [docs/research/](research/).
 - **CFG-1 [M]** Configuration is performed from a **browser-based configuration
   page requiring no installed software** (WebHID or WebUSB). Every parameter in
   sections 2 and 3 marked [M], plus output mode (OUT-4), is settable there.
-- **CFG-2 [M]** Every setting **persists to NVS** (PER-1) and survives replug,
+- **CFG-2 [M]** Every setting **persists to on-device flash** (PER-1) and survives replug,
   power loss, and a change of host. A user configures once on a computer and the
   device keeps that configuration on an XAC, console, or tablet.
 - **CFG-3 [M]** The device is fully functional at first plug-in with factory
@@ -133,7 +133,7 @@ Evidence behind these requirements is in [docs/research/](research/).
 - **STA-1 [M]** A non-console status channel (LED or equivalent) that
   distinguishes at minimum: healthy, calibrating, calibration stage advanced,
   sensor fault, and configuration saved.
-- **STA-2 [M]** Sensor faults, calibration faults, and NVS faults are each
+- **STA-2 [M]** Sensor faults, calibration faults, and storage faults are each
   distinguishable through STA-1, not merged into one generic error.
 - **STA-3 [S]** Status must be perceivable without relying solely on color, since
   the user population overlaps with color vision deficiency.
@@ -141,13 +141,29 @@ Evidence behind these requirements is in [docs/research/](research/).
 ## 7. Persistence
 
 - **PER-1 [M]** Calibration, configuration, and **selected output mode** persist
-  in NVS across power cycles, host changes, and firmware updates within a major
+  in on-device flash across power cycles, host changes, and firmware updates within a major
   version. This is what makes host-side configuration (CFG-1) acceptable on hosts
   that cannot configure.
 - **PER-2 [M]** Corrupt or absent stored configuration falls back to defaults and
   reports through STA-2, rather than failing to boot.
 - **PER-3 [S]** Store a schema version so future firmware can migrate or safely
-  reject old records.
+  reject old records. "Major version" in PER-1 means the MAJOR field in
+  `version.txt`, which is bumped when saved settings or the console protocol
+  become incompatible (see [firmware-updates.md](firmware-updates.md)).
+
+Firmware updates (`UPD-`) sit here because they are what PER-1 has to survive.
+
+- **UPD-1 [M]** The firmware can be updated over USB from the calibration console,
+  without a programmer or ESP-IDF installed.
+- **UPD-2 [M]** An update that does not come up healthy (USB HID enumerated, sensor
+  answering, a short period of polling) reverts to the previous firmware
+  automatically, without user action.
+- **UPD-3 [S]** The console shows the installed firmware version and the previous
+  slot's version and state, and lets the user revert to the previous firmware on
+  demand.
+- **UPD-4 [M]** Every build identifies itself and is traceable to a commit; a
+  release build carries only the `version.txt` number and a tag that CI checks
+  against it.
 
 ## 8. Non-functional
 
@@ -246,30 +262,29 @@ Full analysis: [research/03](research/03-hid-platform-compatibility.md).
 
 Found while surveying the existing driver. Both block milestone M-A.
 
-### DEF-1: magnetic range conversion is wrong for every part variant
+### DEF-1: magnetic range conversion is wrong for the A1 variant
 
-[`components/tmag5273/include/tmag5273.hpp:770`](../components/tmag5273/include/tmag5273.hpp#L770)
-returns `266.0f` unconditionally, and
-[line 754](../components/tmag5273/include/tmag5273.hpp#L754) consumes it as the
-**LOW** full-scale, doubling it for HIGH. That yields LOW = 266 mT / HIGH = 532
-mT, which matches neither variant:
+[`components/tmag5273/include/tmag5273.hpp:746`](../components/tmag5273/include/tmag5273.hpp#L746)
+hardcodes the A2 full-scale values (LOW 133 mT, HIGH 266 mT) in
+`convert_raw_to_mT`, picking LOW or HIGH by the configured range but ignoring the
+part variant, so it is correct only for an A2:
 
 | Part | LOW | HIGH |
 | --- | --- | --- |
 | A1 | ±40 mT | ±80 mT |
 | A2 | ±133 mT | ±266 mT |
-| **Code produces** | **266 mT** | **532 mT** |
+| **Code produces** | **133 mT** | **266 mT** |
 
-Reported values are therefore **~6.65x high on an A1** and **~2x high on an A2**.
-The in-code comment acknowledges the hardcoding.
+Reported values are therefore **~3.3x high on an A1** and correct on an A2.
+`range_xy_mT()` ([line 751](../components/tmag5273/include/tmag5273.hpp#L751))
+still returns `266.0f` unconditionally.
 
 ### DEF-2: `range_z_mT()` is dead code
 
-[Line 773](../components/tmag5273/include/tmag5273.hpp#L773) is never called.
-`convert_raw_to_mT` always reaches for the XY constant even when callers
-correctly pass `z_range_`. Numerically harmless only because both constants are
-currently the same literal, which stops being true the moment DEF-1 is fixed in
-isolation.
+[Line 753](../components/tmag5273/include/tmag5273.hpp#L753) is never called,
+and neither is `range_xy_mT()` at line 751: `convert_raw_to_mT` ignores both and
+uses its own hardcoded constants. Both helpers return the same literal, so
+fixing DEF-1 means wiring the part variant into one place rather than two.
 
 > Because joystick math runs in **raw counts**, neither defect can affect how the
 > device feels. Both corrupt any published measurement and any bench validation,

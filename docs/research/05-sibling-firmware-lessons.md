@@ -58,7 +58,7 @@ centered stick with no buttons pressed.
   tripped, and expose it on the calibration console so a clinician or user can
   see why the stick went dead.
 
-**Done on this branch** as D14 in [decisions.md](../decisions.md) and
+**Done** as D21 in [decisions.md](../decisions.md) and
 `OmegaCalibration::SensorFaultMonitor`, with host tests. The console and LED
 reporting of the latched fault is still open (STA-1, STA-2).
 
@@ -74,7 +74,7 @@ This pairs with the OTA rollback work: the post-update health check can refuse
 to mark an image valid if the reset log shows it crashed, and the same log can
 be exposed through the coredump or calibration console.
 
-**Done** as `ResetLog` and D16; the console and health-check hooks are open.
+**Done** as `ResetLog` and D23; the console and health-check hooks are open.
 
 ### 3. Tighten dependency floors in `main/idf_component.yml`
 
@@ -123,7 +123,7 @@ even though ATOS has not built it yet. Its rules map directly onto
   ATOS keeps these in a dedicated register; a section in
   [decisions.md](../decisions.md) would do the same job here.
 
-**Done** as D15, which records the rules and the register. Enforcing the
+**Done** as D22, which records the rules and the register. Enforcing the
 safe-state rule in the update path itself belongs to `feat/ota-rollback`.
 
 ### 6. Smaller items

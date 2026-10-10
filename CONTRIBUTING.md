@@ -15,6 +15,7 @@ By participating you agree to follow our [Code of Conduct](./CODE_OF_CONDUCT.md)
 - [Code style](#code-style)
 - [Static analysis](#static-analysis)
 - [Making a change](#making-a-change)
+- [Versioning](#versioning)
 - [Adding dependencies](#adding-dependencies)
 - [Testing](#testing)
 - [Reporting security issues](#reporting-security-issues)
@@ -69,10 +70,23 @@ exists.
 ## Development environment
 
 This is an [ESP-IDF](https://github.com/espressif/esp-idf) project targeting
-**ESP-IDF v5.5.1 or v6.0** and the ESP32-S3, written in C++20.
+**ESP-IDF v6.0** (the version CI builds with; v5.5.1 is untested) and the
+ESP32-S3, written in C++20.
 
 1. Install ESP-IDF by following the [official getting started
    guide](https://docs.espressif.com/projects/esp-idf/en/release-v6.0/esp32s3/get-started/index.html).
+   On Windows, the ESP-IDF Installation Manager CLI installs the version
+   `dependencies.lock` was resolved against:
+
+   ```console
+   winget install Espressif.EIM-CLI
+   eim install -i v6.0.2 -t esp32s3 -n true
+   ```
+
+   It installs into `C:\Espressif` and puts an "ESP-IDF v6.0.2 PowerShell"
+   shortcut on the desktop. Run `idf.py` from that shell, or dot-source
+   `C:\Espressif\tools\Microsoft.v6.0.2.PowerShell_profile.ps1` in an
+   existing PowerShell session.
 2. Clone the repository and build:
 
    ```console
@@ -174,6 +188,30 @@ Maintainers may ask for changes. Accessibility tradeoffs in particular tend to
 need discussion, because a change that helps one person's use case can make the
 device unusable for someone else.
 
+## Versioning
+
+`version.txt` holds the firmware number as `MAJOR.MINOR.PATCH`. It is bumped by
+hand, in the pull request that warrants it:
+
+- **MAJOR** when saved calibration or settings, or the console protocol, become
+  incompatible.
+- **MINOR** for a new user-visible feature.
+- **PATCH** for fixes.
+
+Builds embed the number alone for a release (clean tree at the tag), and
+`<version>+<7-char sha>` otherwise, with `.dirty` added for uncommitted changes.
+A release tag is `vMAJOR.MINOR.PATCH` (for example `v0.1.0`), placed on the merge
+commit, and CI refuses to publish a release whose tag does not match
+`version.txt`. See [docs/firmware-updates.md](docs/firmware-updates.md).
+
+The console and the firmware can be on different versions, so the protocol is
+append-only:
+
+- Message IDs in
+  [calibration_service.hpp](components/omega_calibration/include/calibration_service.hpp)
+  are never renumbered or reused. Add new ones at the end.
+- Anything that reads `FW_INFO` must tolerate extra trailing fields.
+
 ## Adding dependencies
 
 Use the component manager rather than editing the manifest by hand:
@@ -187,22 +225,33 @@ Commit both [main/idf_component.yml](main/idf_component.yml) and the updated
 
 ## Testing
 
-There is no automated hardware test suite yet. Until there is:
+Everything that does not need the sensor or a USB host runs in software, on
+every pull request:
 
-- CI verifies that the firmware builds for `esp32s3`.
-- CI runs the host unit tests in [tests/host](tests/host/README.md) (see
-  below).
-- Anything touching sensor reads, HID output, or the calibration sweep itself
-  needs manual verification on real hardware. Describe what you did in the PR.
-- When testing input behavior, check more than the happy path. Test slow
-  movements, held positions, rapid direction changes, and the sensor being
-  unplugged mid-session.
+- **Firmware build** for `esp32s3` (`build.yml`).
+- **Host unit tests** in [tests/host](tests/host/README.md): gcc with
+  coverage, clang with AddressSanitizer and UBSan, and MSVC, all with warnings
+  as errors (`host_tests.yml`).
+- **Web console tests** in [tests/web](tests/web/README.md) under Node
+  (`web_tests.yml`), including golden frames shared with the C++ side.
+- **Fuzzing** of the frame parser and calibration service in
+  [tests/fuzz](tests/fuzz/README.md), a short libFuzzer run (`fuzz.yml`).
+- **Static analysis** with cppcheck (`static_analysis.yml`) and a binary size
+  delta comment (`size_delta.yml`).
+
+There is still no automated hardware test. Anything touching sensor reads, USB
+enumeration, or the calibration sweep's real-world behaviour needs manual
+verification on a board; describe what you did in the PR. When testing input
+behaviour, check more than the happy path: slow movements, held positions,
+rapid direction changes, and the sensor being unplugged mid-session.
 
 ### Host unit tests
 
-The calibration component (`components/omega_calibration`) has unit tests
-that build and run on a desktop with no ESP-IDF and no board. They need CMake
-3.20+ and a C++20 compiler with `<format>` (GCC 13+, Clang 17+, MSVC 19.37+):
+The host suite builds the project's headers (`omega_calibration`,
+`omega_control`, `tmag5273`, `hid-rp-mouse`, `xac`) against the real espp
+components, pinned to the versions in `dependencies.lock` and verified by
+hash, with no ESP-IDF and no board. It needs CMake 3.20+ and a C++20 compiler
+with `<format>` (GCC 13+, Clang 17+, MSVC 19.37+):
 
 ```console
 cmake -S tests/host -B build-host
@@ -210,13 +259,19 @@ cmake --build build-host
 ctest --test-dir build-host --output-on-failure
 ```
 
-The tests compile the component headers unchanged. The espp pieces that need
-ESP-IDF (logger, joystick, file system) are replaced by small stand-ins under
-`tests/host/stubs/`; the espp framing and dispatcher headers are the real ones,
-downloaded pinned to the version in `dependencies.lock` and verified by hash.
+The control loops in `main/main.cpp` are thin adapters around
+`components/omega_control/include/omega_control.hpp`, which is pure and
+host-tested. Hardware access (I2C, time, sleeping, HID writes) is injected, so
+logic changes belong in the testable layer, not in `main.cpp`.
 
-If you change the calibration store, the console protocol, or the calibration
-file format, add or update a test alongside the change.
+The only stand-ins left under `tests/host/stubs/` are for the ESP-only OTA
+headers (`ota.hpp`, `esp_app_desc.h`, `esp_ota_ops.h`).
+
+If you change the calibration store, the console protocol, the calibration
+file format, the control loop, or a driver's register handling, add or update a
+test alongside the change. Protocol changes must keep the C++ and JavaScript
+sides in step: regenerate `tests/protocol/golden_frames.json` (see
+tests/host/README.md) and the web tests will check the console against it.
 
 **Known-bug tests.** A test registered with `XFAIL_TEST` documents behaviour
 that is currently wrong. It is expected to fail and does not turn the run red.

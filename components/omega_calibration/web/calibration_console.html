@@ -24,9 +24,9 @@
 
     ------------------------------------------------------------------
     CALIBRATION PROTOCOL (MODULE 5) -- this is the contract a firmware-side
-    handler needs to implement (e.g. a calibration_service.hpp alongside
-    the existing coredump_service.hpp / ota_service.hpp, registered with
-    the same espp::Dispatcher those use). This page is the reference
+    handler needs to implement (implemented by calibration_service.hpp
+    alongside the existing coredump_service.hpp / ota_service.hpp, registered
+    with the same espp::Dispatcher those use). This page is the reference
     client for that contract; nothing here is firmware code.
     ------------------------------------------------------------------
 
@@ -94,6 +94,45 @@
                       f32 nudge_exit_threshold             (absolute)
                       u32 nudge_time_ms                    (measurement window)
                       u8  input_mode                       (0 = mouse, 1 = XAC)
+      0x57 RESTART                (no payload) -- reply OK is sent first, then
+                                   the device reboots ~750 ms later (USB
+                                   re-enumerates; reconnect afterwards).
+      0x58 OTA_BEGIN              u32 image_size -- starts a firmware upload
+                                   session (erases the inactive OTA slot, so
+                                   this reply can take a while)
+      0x59 OTA_DATA               u32 offset (must equal the bytes written so
+                                   far) + raw app-image bytes. Reply OK with
+                                   u32 = total bytes written so far
+      0x5A OTA_FINISH             (no payload) -- validate + activate the new
+                                   image; reply OK, then the device reboots
+      0x5B OTA_ABORT              (no payload) -- abandon the upload session
+      0x5C GET_FW_INFO            (no payload) -- reply FW_INFO
+      0x5D MARK_VALID             (no payload) -- confirm the running image
+                                   (cancels app rollback)
+      0x5E REVERT                 (no payload) -- make the other OTA slot (the
+                                   previously installed firmware) the boot
+                                   partition; reply OK, then reboot ~750 ms later.
+                                   ERROR if an upload is in progress, the other
+                                   slot has no app image, or the bootloader
+                                   selection could not be written. The reverted
+                                   image boots pending verify and must pass the
+                                   same health check.
+      The OTA messages reply ERROR (function_not_supported) if the firmware
+      was built without an OTA engine wired in.
+      0xD2 FW_INFO  (reply to GET_FW_INFO) -- u8 pending_verify (0/1),
+                    u8 session_active (0/1), u8 len + project name,
+                    then length-prefixed strings (u8 len + utf8, no terminators),
+                    in order: project name, version, build_date ("Oct 10 2026"),
+                    build_time ("14:03:11"), idf_version ("v6.0.2"),
+                    running_partition ("ota_0"), elf_sha256_short (first 8 hex
+                    chars of the app ELF SHA-256), boot_partition (partition the
+                    bootloader boots next, "ota_1"), then the previous (other) slot:
+                    prev_label ("ota_1"), prev_version, prev_build_date,
+                    prev_build_time, prev_state ("valid", "new", "pending_verify",
+                    "invalid", "aborted", "undefined", or "empty" when the slot holds
+                    no readable image; version/date/time are then empty). Older
+                    firmware sends fewer strings: hosts must tolerate a shorter
+                    payload and treat missing strings as empty.
       0xDF OK      (reply to any SET_*/SAVE_TO_FLASH/START_CALIBRATION) --
                     payload: u32 (0 on success; a device may also just omit
                     the payload). For START_CALIBRATION this only means
@@ -220,6 +259,9 @@
     .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin: 0 0 10px; }
     .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .muted { color: var(--text-muted); font-size: 12.5px; }
+    .kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0; font-size: 12.5px; }
+    .kv dt { color: var(--text-muted); }
+    .kv dd { margin: 0; font-family: monospace; }
     .warn-text { color: var(--warn); font-size: 12.5px; }
 
     button {
@@ -300,7 +342,7 @@
       </div>
       <p id="devInfo" class="muted" style="margin: 8px 0 0;">
         Not connected. Needs a firmware build with the calibration module (5) registered on the
-        same dispatcher as coredump/OTA — see the protocol spec in this page's source comment.
+        same dispatcher as coredump/OTA (see the protocol spec in this page's source comment).
       </p>
     </div>
 
@@ -313,7 +355,7 @@
       </div>
 
       <fieldset>
-        <legend>Calibration (read-only — from the last interactive sweep)</legend>
+        <legend>Calibration (read-only, from the last interactive sweep)</legend>
         <div class="field-grid" id="calibrationFields">
           <div class="field"><span class="field-label">Center X / Y</span><span class="field-value" data-f="center">-</span></div>
           <div class="field"><span class="field-label">Center noise radius</span><span class="field-value" data-f="noise">-</span></div>
@@ -324,6 +366,21 @@
           <div class="field"><span class="field-label">Usable radius</span><span class="field-value" data-f="usableRadius">-</span></div>
           <div class="field"><span class="field-label">Reliable max radius (normalized)</span><span class="field-value" data-f="reliableRadius">-</span></div>
           <div class="field"><span class="field-label">Range deadzone (auto)</span><span class="field-value" data-f="rangeDeadzoneAuto">-</span></div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Manual center offset (trim)</legend>
+        <div class="edit-row">
+          <label for="offsetX">Offset X</label>
+          <input type="number" id="offsetX" class="grow" step="0.001" value="0">
+          <label for="offsetY">Offset Y</label>
+          <input type="number" id="offsetY" class="grow" step="0.001" value="0">
+        </div>
+        <div class="edit-row">
+          <button id="applyOffsetBtn" class="primary" disabled>Apply live</button>
+          <button id="zeroOffsetBtn" disabled>Reset to 0</button>
+          <span class="muted">added to the calibrated center, in the same raw units as Center X / Y above</span>
         </div>
       </fieldset>
 
@@ -372,7 +429,7 @@
           <button id="modeMouseBtn" disabled>Mouse</button>
           <button id="modeXacBtn" disabled>XAC gamepad</button>
         </div>
-        <p class="muted" style="margin: 8px 0 0;">Applies live and takes effect immediately (may re-enumerate the USB HID device).</p>
+        <p class="muted" style="margin: 8px 0 0;">The device saves its settings and restarts to apply the new mode, so this console will disconnect; reconnect afterwards.</p>
       </fieldset>
 
       <fieldset>
@@ -380,13 +437,59 @@
         <p class="warn-text" style="margin: 0 0 8px;">
           Re-runs the full interactive center + range calibration sequence on the device
           (the same one that runs on a fresh boot). This blocks mouse/XAC output for the
-          duration and walks you through moving the stick via printed prompts — connect
+          duration and walks you through moving the stick via printed prompts. Connect
           over <strong>Web Serial</strong> (not WebUSB) to see those prompts in the console
           log below. Manual deadzone overrides, nudge tuning, and input mode are left as-is.
         </p>
         <div class="edit-row">
           <button id="recalibrateBtn" class="danger" disabled>Re-run calibration&hellip;</button>
           <span id="recalInfo" class="muted"></span>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Firmware update</legend>
+        <div class="row">
+          <span class="muted">Running: <span id="fwRunning">-</span></span>
+          <span id="fwPending" class="warn-text" hidden>PENDING VERIFY: rolls back on next reset unless confirmed</span>
+          <button id="markValidBtn" disabled hidden>Mark running image valid</button>
+        </div>
+        <div class="row" style="margin: 6px 0;">
+          <dl class="kv">
+            <dt>Version</dt><dd id="fwVersion">n/a</dd>
+            <dt>Build</dt><dd id="fwBuild">n/a</dd>
+            <dt>ESP-IDF</dt><dd id="fwIdf">n/a</dd>
+            <dt>Running partition</dt><dd id="fwRunPart">n/a</dd>
+            <dt>Boot partition</dt><dd id="fwBootPart">n/a</dd>
+            <dt>Image SHA</dt><dd id="fwSha">n/a</dd>
+          </dl>
+          <button id="fwCopyBtn" disabled>Copy</button>
+        </div>
+        <div class="row" style="margin: 6px 0;">
+          <dl class="kv">
+            <dt>Previous slot</dt><dd id="fwPrevSlot">n/a</dd>
+            <dt>Previous version</dt><dd id="fwPrevVersion">n/a</dd>
+            <dt>Previous build</dt><dd id="fwPrevBuild">n/a</dd>
+            <dt>Previous state</dt><dd id="fwPrevState">n/a</dd>
+          </dl>
+          <button id="fwRevertBtn" class="danger" disabled title="No previous firmware in the other slot">Revert to previous firmware</button>
+        </div>
+        <div class="edit-row">
+          <input type="file" id="fwFile" accept=".bin">
+          <button id="flashBtn" class="danger" disabled>Flash firmware</button>
+        </div>
+        <progress id="fwProgress" value="0" max="1" style="width:100%" hidden></progress>
+        <p class="muted" style="margin: 8px 0 0;">
+          Select the app image (<code>build/&lt;project&gt;.bin</code>, not the .elf). The device
+          validates it, switches slots and reboots, so reconnect afterwards.
+        </p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Device</legend>
+        <div class="edit-row">
+          <button id="restartBtn" class="danger" disabled>Restart device</button>
+          <span class="muted">Software reset. USB re-enumerates, so reconnect afterwards.</span>
         </div>
       </fieldset>
     </div>
@@ -403,11 +506,250 @@
     <footer>
       Speaks a module-5 extension of the espp OT framing shared with the coredump and OTA
       consoles (magic "OT" + flags + module + type + len + payload + CRC-32; see this page's
-      source comment for the full spec). Firmware flashing (.elf) is handled by the separate
-      OTA console — see <a href="ota_console.html">ota_console.html</a> alongside this page.
-      Everything here runs locally in your browser.
+      source comment for the full spec). Firmware updates (build/omega_stick.bin) are handled
+      in the "Firmware update" section above; see docs/firmware-updates.md for the rollback
+      and versioning rules. Everything here runs locally in your browser.
     </footer>
   </div>
+
+  <!-- Protocol code is kept INLINE so this page stays a single standalone file.
+       The block below must be identical to omega_protocol.js (tests/web enforces it). -->
+  <script>
+/* BEGIN omega_protocol.js */
+// omega_protocol.js: pure (DOM-free) wire-protocol code for the Omega
+// calibration console. Framing is the espp stream_frame "OT" v1 format, the
+// payload layouts are in components/omega_calibration/include/calibration_service.hpp.
+//
+// Classic script (not an ES module): loads from file:// and also works under
+// Node via require(). A verbatim copy lives inside calibration_console.html
+// between the BEGIN/END markers; tests/web/sync.test.js fails if they
+// drift, so edit this file and then copy it into the HTML block.
+(function () {
+  "use strict";
+
+  const HEADER_SIZE = 9, CRC_SIZE = 4;
+  const MAX_PAYLOAD = 4096;
+  const MAX_FRAME = HEADER_SIZE + MAX_PAYLOAD + CRC_SIZE;
+  const MODULE_CALIBRATION = 5;
+  const MODULE_DISCOVERY = 0xFF, T_LIST_MODULES = 0x00;
+  const FLAGS_VERSION = 1;
+  const FLAGS_REQUEST = (FLAGS_VERSION << 4) | 0; // 0x10
+  const FLAGS_REPLY_BIT = 0x01;
+  const FLAG_CORRELATION = 0x02;
+  const TYPE = {
+    GET_STATE: 0x50,
+    SET_MANUAL_OFFSET: 0x51,
+    SET_DEADZONE_OVERRIDE: 0x52,
+    SET_NUDGE_SETTINGS: 0x53,
+    SET_INPUT_MODE: 0x54,
+    SAVE_TO_FLASH: 0x55,
+    START_CALIBRATION: 0x56,
+    RESTART: 0x57,
+    OTA_BEGIN: 0x58,
+    OTA_DATA: 0x59,
+    OTA_FINISH: 0x5A,
+    OTA_ABORT: 0x5B,
+    GET_FW_INFO: 0x5C,
+    MARK_VALID: 0x5D,
+    REVERT: 0x5E,
+    STATE: 0xD0,
+    CALIBRATION_RESULT: 0xD1,
+    FW_INFO: 0xD2,
+    OK: 0xDF,
+    ERROR: 0xFE,
+  };
+  const INPUT_MODE = { MOUSE: 0, XAC: 1 };
+
+  // CRC-32 (zlib / IEEE 802.3). Golden: crc32("123456789") === 0xCBF43926.
+  const CRC_TABLE = (() => {
+    const table = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? ((c >>> 1) ^ 0xEDB88320) : (c >>> 1);
+      table[i] = c >>> 0;
+    }
+    return table;
+  })();
+  function crc32(bytes) {
+    let c = 0xFFFFFFFF;
+    for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+    return (~c) >>> 0;
+  }
+
+  function buildFrame(module, type, payload) {
+    payload = payload || new Uint8Array(0);
+    if (payload.length > MAX_PAYLOAD) throw new Error("payload exceeds " + MAX_PAYLOAD + " bytes");
+    const frame = new Uint8Array(HEADER_SIZE + payload.length + CRC_SIZE);
+    const view = new DataView(frame.buffer);
+    view.setUint16(0, 0x4F54, true);   // magic 'T''O' on the wire
+    frame[2] = FLAGS_REQUEST;
+    frame[3] = module;
+    frame[4] = type;
+    view.setUint32(5, payload.length, true);
+    frame.set(payload, HEADER_SIZE);
+    view.setUint32(HEADER_SIZE + payload.length,
+                   crc32(frame.subarray(0, HEADER_SIZE + payload.length)), true);
+    return frame;
+  }
+
+  class FrameParser {
+    constructor() { this.buf = new Uint8Array(0); this.lastActivity = 0; }
+    reset() { this.buf = new Uint8Array(0); }
+    feed(chunk) {
+      const merged = new Uint8Array(this.buf.length + chunk.length);
+      merged.set(this.buf, 0); merged.set(chunk, this.buf.length);
+      const frames = [];
+      const textRanges = [];
+      let textLen = 0;
+      const skip = (start, end) => {
+        if (end <= start) return;
+        const last = textRanges[textRanges.length - 1];
+        if (last && last[1] === start) last[1] = end;
+        else textRanges.push([start, end]);
+        textLen += end - start;
+      };
+      let pos = 0;
+      for (;;) {
+        const runStart = pos;
+        while (pos < merged.length &&
+               !(merged[pos] === 0x54 && (pos + 1 >= merged.length || merged[pos + 1] === 0x4F))) {
+          pos++;
+        }
+        skip(runStart, pos);
+        if (merged.length - pos < 3) break;
+        const flags = merged[pos + 2];
+        const ext = (flags & FLAG_CORRELATION) ? 2 : 0;
+        const headerSize = HEADER_SIZE + ext;
+        if (merged.length - pos < headerSize) break;
+        const view = new DataView(merged.buffer, merged.byteOffset + pos);
+        const len = view.getUint32(5 + ext, true);
+        if (len > MAX_PAYLOAD) { skip(pos, pos + 1); pos++; continue; }
+        const total = headerSize + len + CRC_SIZE;
+        if (merged.length - pos < total) break;
+        const expected = view.getUint32(headerSize + len, true);
+        const actual = crc32(merged.subarray(pos, pos + headerSize + len));
+        if (actual !== expected) { skip(pos, pos + 1); pos++; continue; }
+        const correlation = ext ? (merged[pos + 5] | (merged[pos + 6] << 8)) : null;
+        frames.push({ flags,
+                      reply: (flags & FLAGS_REPLY_BIT) !== 0,
+                      correlation,
+                      module: merged[pos + 3],
+                      type: merged[pos + 4],
+                      payload: merged.slice(pos + headerSize, pos + headerSize + len) });
+        pos += total;
+      }
+      this.buf = merged.slice(pos);
+      this.lastActivity = Date.now();
+      const text = new Uint8Array(textLen);
+      let off = 0;
+      for (const [start, end] of textRanges) {
+        text.set(merged.subarray(start, end), off);
+        off += end - start;
+      }
+      return { frames, text };
+    }
+    flushStale(maxAgeMs) {
+      if (this.buf.length === 0 || Date.now() - this.lastActivity < maxAgeMs) return null;
+      const text = this.buf;
+      this.buf = new Uint8Array(0);
+      return text;
+    }
+  }
+
+  function readU32(payload, offset) {
+    return new DataView(payload.buffer, payload.byteOffset + offset, 4).getUint32(0, true);
+  }
+  function parseErrorReply(payload) {
+    if (payload.length < 4) return { code: 0, message: "(malformed error reply)" };
+    let message = "";
+    try { message = new TextDecoder().decode(payload.subarray(4)); } catch (_) {}
+    return { code: readU32(payload, 0), message };
+  }
+
+  function parseDiscovery(payload) {
+    let i = 0;
+    const need = (n) => { if (i + n > payload.length) throw new Error("truncated discovery payload"); };
+    const u8 = () => { need(1); return payload[i++]; };
+    const str = () => { const n = u8(); need(n); const s = new TextDecoder().decode(payload.subarray(i, i + n)); i += n; return s; };
+    const version = u8(); u8();
+    const device = str(), fw = str();
+    const count = u8();
+    const modules = [];
+    for (let m = 0; m < count; m++) modules.push({ id: u8(), name: str(), app: str(), desc: str() });
+    return { version, device, fw, modules };
+  }
+
+  // Fixed 79-byte STATE struct; see calibration_service.hpp.
+  function decodeState(payload) {
+    if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79)");
+    const v = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    let o = 0;
+    const f32 = () => { const x = v.getFloat32(o, true); o += 4; return x; };
+    const u8 = () => payload[o++];
+    const u32 = () => { const x = v.getUint32(o, true); o += 4; return x; };
+    const s = {
+      centerX: f32(), centerY: f32(), centerNoise: f32(), centerDeadzoneAuto: f32(),
+      manualOffsetX: f32(), manualOffsetY: f32(),
+      rangeMinX: f32(), rangeMaxX: f32(), rangeMinY: f32(), rangeMaxY: f32(),
+      usableRadius: f32(), reliableMaxRadius: f32(), normalizedMaxRadius: f32(), rangeDeadzoneAuto: f32(),
+    };
+    const hasCenterDz = u8() !== 0;
+    const manualCenterDz = f32();
+    const hasRangeDz = u8() !== 0;
+    const manualRangeDz = f32();
+    s.manualCenterDeadzone = hasCenterDz ? manualCenterDz : null;
+    s.manualRangeDeadzone = hasRangeDz ? manualRangeDz : null;
+    s.nudgeEnterThreshold = f32();
+    s.nudgeExitThreshold = f32();
+    s.nudgeTimeMs = u32();
+    s.inputMode = u8();
+    return s;
+  }
+
+  // Request payload encoders (GET_STATE, SAVE_TO_FLASH and START_CALIBRATION
+  // carry no payload, so the console passes null for them).
+  function encodeSetManualOffset(x, y) {
+    const payload = new Uint8Array(8);
+    const v = new DataView(payload.buffer);
+    v.setFloat32(0, x, true);
+    v.setFloat32(4, y, true);
+    return payload;
+  }
+  function encodeSetDeadzoneOverride(centerOn, centerVal, rangeOn, rangeVal) {
+    const payload = new Uint8Array(9);
+    const v = new DataView(payload.buffer);
+    payload[0] = (centerOn ? 0x01 : 0) | (rangeOn ? 0x02 : 0);
+    v.setFloat32(1, centerOn ? centerVal : 0, true);
+    v.setFloat32(5, rangeOn ? rangeVal : 0, true);
+    return payload;
+  }
+  function encodeSetNudgeSettings(enter, exit, timeMs) {
+    const payload = new Uint8Array(12);
+    const v = new DataView(payload.buffer);
+    v.setFloat32(0, enter, true);
+    v.setFloat32(4, exit, true);
+    v.setUint32(8, timeMs, true);
+    return payload;
+  }
+  function encodeSetInputMode(mode) {
+    return new Uint8Array([mode]);
+  }
+
+  const OmegaProtocol = {
+    HEADER_SIZE, CRC_SIZE, MAX_PAYLOAD, MAX_FRAME,
+    MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES,
+    FLAGS_REQUEST, FLAGS_REPLY_BIT, FLAG_CORRELATION,
+    TYPE, INPUT_MODE,
+    crc32, buildFrame, FrameParser, readU32,
+    parseErrorReply, parseDiscovery, decodeState,
+    encodeSetManualOffset, encodeSetDeadzoneOverride,
+    encodeSetNudgeSettings, encodeSetInputMode,
+  };
+  globalThis.OmegaProtocol = OmegaProtocol;
+  if (typeof module !== "undefined" && module.exports) module.exports = OmegaProtocol;
+})();
+/* END omega_protocol.js */
+  </script>
 
   <script>
     "use strict";
@@ -415,41 +757,27 @@
     // ===================================================================
     // Constants (must match the calibration module's device-side handler)
     // ===================================================================
-    const DEFAULT_VID = 0x1209, DEFAULT_PID = 0x0d36;
+    const DEFAULT_VID = 0x1209, DEFAULT_PID = 0x0d32; // OMEGA_USB_VID / OMEGA_USB_PID in main/main.cpp
     const VENDOR_CLASS = 0xFF;
-    const HEADER_SIZE = 9, CRC_SIZE = 4;
-    const MAX_PAYLOAD = 4096;
-    const MAX_FRAME = HEADER_SIZE + MAX_PAYLOAD + CRC_SIZE;
-    const MODULE_CALIBRATION = 5;
-    const MODULE_DISCOVERY = 0xFF, T_LIST_MODULES = 0x00;
+    const {
+      MAX_FRAME, MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, TYPE, INPUT_MODE,
+      buildFrame, FrameParser, parseErrorReply, parseDiscovery, decodeState,
+      encodeSetManualOffset, encodeSetDeadzoneOverride, encodeSetNudgeSettings, encodeSetInputMode,
+    } = globalThis.OmegaProtocol;
     const DISCOVERY_TIMEOUT_MS = 800;
-    const FLAGS_VERSION = 1;
-    const FLAGS_REQUEST = (FLAGS_VERSION << 4) | 0; // 0x10
-    const FLAGS_REPLY_BIT = 0x01;
-    const FLAG_CORRELATION = 0x02;
-    const TYPE = {
-      GET_STATE: 0x50,
-      SET_MANUAL_OFFSET: 0x51,
-      SET_DEADZONE_OVERRIDE: 0x52,
-      SET_NUDGE_SETTINGS: 0x53,
-      SET_INPUT_MODE: 0x54,
-      SAVE_TO_FLASH: 0x55,
-      START_CALIBRATION: 0x56,
-      STATE: 0xD0,
-      CALIBRATION_RESULT: 0xD1,
-      OK: 0xDF,
-      ERROR: 0xFE,
-    };
     const TYPE_NAME = {
       0x50: "GET_STATE", 0x51: "SET_MANUAL_OFFSET", 0x52: "SET_DEADZONE_OVERRIDE",
       0x53: "SET_NUDGE_SETTINGS", 0x54: "SET_INPUT_MODE", 0x55: "SAVE_TO_FLASH",
-      0x56: "START_CALIBRATION",
-      0xD0: "STATE", 0xD1: "CALIBRATION_RESULT", 0xDF: "OK", 0xFE: "ERROR",
+      0x56: "START_CALIBRATION", 0x57: "RESTART", 0x58: "OTA_BEGIN", 0x59: "OTA_DATA",
+      0x5A: "OTA_FINISH", 0x5B: "OTA_ABORT", 0x5C: "GET_FW_INFO", 0x5D: "MARK_VALID", 0x5E: "REVERT",
+      0xD0: "STATE", 0xD1: "CALIBRATION_RESULT", 0xD2: "FW_INFO", 0xDF: "OK", 0xFE: "ERROR",
     };
     const CMD_TIMEOUT_MS = 5000;
     const SAVE_TIMEOUT_MS = 8000; // flash write may take longer than a live-apply
+    const OTA_BEGIN_TIMEOUT_MS = 60000;  // BEGIN erases the target partition
+    const OTA_FINISH_TIMEOUT_MS = 30000; // image validation
+    const OTA_CHUNK = 4000;              // frame payload max is 4096, minus the 4-byte offset
     const SERIAL_BAUD = 115200;
-    const INPUT_MODE = { MOUSE: 0, XAC: 1 };
 
     // ===================================================================
     // Elements & logging
@@ -457,10 +785,13 @@
     const els = {};
     for (const id of ["status", "usbBtn", "serialBtn", "anyDevice", "devInfo",
                       "refreshBtn", "saveFlashBtn", "stateInfo",
+                      "offsetX", "offsetY", "applyOffsetBtn", "zeroOffsetBtn",
                       "centerDzEnable", "centerDzValue", "rangeDzEnable", "rangeDzValue", "applyDeadzoneBtn",
                       "nudgeEnter", "nudgeExit", "nudgeTime", "applyNudgeBtn",
                       "modeMouseBtn", "modeXacBtn",
                       "recalibrateBtn", "recalInfo",
+                      "fwRunning", "fwPending", "markValidBtn",
+                      "fwVersion", "fwBuild", "fwIdf", "fwRunPart", "fwBootPart", "fwSha", "fwCopyBtn", "fwPrevSlot", "fwPrevVersion", "fwPrevBuild", "fwPrevState", "fwRevertBtn", "fwFile", "flashBtn", "fwProgress", "restartBtn",
                       "logFrames", "clearLogBtn", "log", "unsupported"]) {
       els[id] = document.getElementById(id);
     }
@@ -496,126 +827,10 @@
     }
 
     // ===================================================================
-    // CRC-32 (zlib / IEEE 802.3). Golden: crc32("123456789") === 0xCBF43926.
-    // ===================================================================
-    const CRC_TABLE = (() => {
-      const table = new Uint32Array(256);
-      for (let i = 0; i < 256; i++) {
-        let c = i;
-        for (let k = 0; k < 8; k++) c = (c & 1) ? ((c >>> 1) ^ 0xEDB88320) : (c >>> 1);
-        table[i] = c >>> 0;
-      }
-      return table;
-    })();
-    function crc32(bytes) {
-      let c = 0xFFFFFFFF;
-      for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
-      return (~c) >>> 0;
-    }
-    if (crc32(new TextEncoder().encode("123456789")) !== 0xCBF43926) {
-      throw new Error("CRC-32 self-test failed");
-    }
-
-    // ===================================================================
-    // Frame building & incremental parsing (identical framing to the
-    // coredump/OTA consoles; this page only ever targets MODULE_CALIBRATION
-    // plus the shared MODULE_DISCOVERY probe).
-    // ===================================================================
-    function buildFrame(module, type, payload) {
-      payload = payload || new Uint8Array(0);
-      if (payload.length > MAX_PAYLOAD) throw new Error("payload exceeds " + MAX_PAYLOAD + " bytes");
-      const frame = new Uint8Array(HEADER_SIZE + payload.length + CRC_SIZE);
-      const view = new DataView(frame.buffer);
-      view.setUint16(0, 0x4F54, true);   // magic 'T''O' on the wire
-      frame[2] = FLAGS_REQUEST;
-      frame[3] = module;
-      frame[4] = type;
-      view.setUint32(5, payload.length, true);
-      frame.set(payload, HEADER_SIZE);
-      view.setUint32(HEADER_SIZE + payload.length,
-                     crc32(frame.subarray(0, HEADER_SIZE + payload.length)), true);
-      return frame;
-    }
-
-    class StreamParser {
-      constructor() { this.buf = new Uint8Array(0); this.lastActivity = 0; }
-      reset() { this.buf = new Uint8Array(0); }
-      feed(chunk) {
-        const merged = new Uint8Array(this.buf.length + chunk.length);
-        merged.set(this.buf, 0); merged.set(chunk, this.buf.length);
-        const frames = [];
-        const textRanges = [];
-        let textLen = 0;
-        const skip = (start, end) => {
-          if (end <= start) return;
-          const last = textRanges[textRanges.length - 1];
-          if (last && last[1] === start) last[1] = end;
-          else textRanges.push([start, end]);
-          textLen += end - start;
-        };
-        let pos = 0;
-        for (;;) {
-          const runStart = pos;
-          while (pos < merged.length &&
-                 !(merged[pos] === 0x54 && (pos + 1 >= merged.length || merged[pos + 1] === 0x4F))) {
-            pos++;
-          }
-          skip(runStart, pos);
-          if (merged.length - pos < 3) break;
-          const flags = merged[pos + 2];
-          const ext = (flags & FLAG_CORRELATION) ? 2 : 0;
-          const headerSize = HEADER_SIZE + ext;
-          if (merged.length - pos < headerSize) break;
-          const view = new DataView(merged.buffer, merged.byteOffset + pos);
-          const len = view.getUint32(5 + ext, true);
-          if (len > MAX_PAYLOAD) { skip(pos, pos + 1); pos++; continue; }
-          const total = headerSize + len + CRC_SIZE;
-          if (merged.length - pos < total) break;
-          const expected = view.getUint32(headerSize + len, true);
-          const actual = crc32(merged.subarray(pos, pos + headerSize + len));
-          if (actual !== expected) { skip(pos, pos + 1); pos++; continue; }
-          const correlation = ext ? (merged[pos + 5] | (merged[pos + 6] << 8)) : null;
-          frames.push({ flags,
-                        reply: (flags & FLAGS_REPLY_BIT) !== 0,
-                        correlation,
-                        module: merged[pos + 3],
-                        type: merged[pos + 4],
-                        payload: merged.slice(pos + headerSize, pos + headerSize + len) });
-          pos += total;
-        }
-        this.buf = merged.slice(pos);
-        this.lastActivity = Date.now();
-        const text = new Uint8Array(textLen);
-        let off = 0;
-        for (const [start, end] of textRanges) {
-          text.set(merged.subarray(start, end), off);
-          off += end - start;
-        }
-        return { frames, text };
-      }
-      flushStale(maxAgeMs) {
-        if (this.buf.length === 0 || Date.now() - this.lastActivity < maxAgeMs) return null;
-        const text = this.buf;
-        this.buf = new Uint8Array(0);
-        return text;
-      }
-    }
-
-    function readU32(payload, offset) {
-      return new DataView(payload.buffer, payload.byteOffset + offset, 4).getUint32(0, true);
-    }
-    function parseErrorReply(payload) {
-      if (payload.length < 4) return { code: 0, message: "(malformed error reply)" };
-      let message = "";
-      try { message = new TextDecoder().decode(payload.subarray(4)); } catch (_) {}
-      return { code: readU32(payload, 0), message };
-    }
-
-    // ===================================================================
     // Transport abstraction (identical to the coredump console)
     // ===================================================================
     let transport = null;
-    const parser = new StreamParser();
+    const parser = new FrameParser();
     const consoleDecoder = new TextDecoder("utf-8", { fatal: false });
     let consoleCarry = "";
 
@@ -816,7 +1031,15 @@
     async function disconnect() {
       if (!transport) return;
       const t = transport;
-      transport = null;
+      if (uploading) {
+        // Release the device's upload session before the link goes away, or it
+        // stays claimed until the firmware's idle expiry. Fail the in-flight
+        // OTA_DATA first so the abort is not queued behind it.
+        uploading = false;
+        failPending(new Error("upload cancelled by disconnect"));
+        try { await transact(TYPE.OTA_ABORT, null, [TYPE.OK], 2000, 0); } catch (_) { }
+      }
+      if (transport === t) transport = null;
       failPending(new Error("disconnected"));
       await t.close();
       parser.reset();
@@ -867,6 +1090,11 @@
       logLine("sys", "Connected (" + (t.kind === "usb" ? "WebUSB vendor interface" : "Web Serial / CDC") + ").");
       checkModulePresent().catch(() => {});
       refreshState();
+      refreshFwInfo().then((ok) => {
+        if (!ok) return;
+        logLine("sys", fwSummary());
+        if (fwInfo.pending) watchPendingVerify();
+      });
     }
 
     let haveState = false;
@@ -884,11 +1112,19 @@
       els.anyDevice.disabled = connected;
       els.refreshBtn.disabled = !connected || busy;
       els.saveFlashBtn.disabled = !connected || busy || !haveState;
+      els.applyOffsetBtn.disabled = !connected || busy || !haveState;
+      els.zeroOffsetBtn.disabled = !connected || busy || !haveState;
       els.applyDeadzoneBtn.disabled = !connected || busy || !haveState;
       els.applyNudgeBtn.disabled = !connected || busy || !haveState;
       els.modeMouseBtn.disabled = !connected || busy || !haveState;
       els.modeXacBtn.disabled = !connected || busy || !haveState;
       els.recalibrateBtn.disabled = !connected || busy;
+      els.flashBtn.disabled = !connected || busy;
+      els.restartBtn.disabled = !connected || busy;
+      els.markValidBtn.disabled = !connected || busy;
+      const canRevert = connected && !busy && prevSlotUsable();
+      els.fwRevertBtn.disabled = !canRevert;
+      els.fwRevertBtn.title = prevSlotUsable() ? "" : "No previous firmware in the other slot";
       if (!connected) { els.devInfo.textContent = "Not connected."; els.recalInfo.textContent = ""; }
     }
 
@@ -898,6 +1134,7 @@
     let pendingTxn = null;
     let txnChain = Promise.resolve();
     let busy = false;
+    let uploading = false; // an OTA session is open on the device (set after OTA_BEGIN OK)
 
     function failPending(err) {
       if (pendingTxn) {
@@ -981,18 +1218,6 @@
       return result;
     }
 
-    function parseDiscovery(payload) {
-      let i = 0;
-      const need = (n) => { if (i + n > payload.length) throw new Error("truncated discovery payload"); };
-      const u8 = () => { need(1); return payload[i++]; };
-      const str = () => { const n = u8(); need(n); const s = new TextDecoder().decode(payload.subarray(i, i + n)); i += n; return s; };
-      const version = u8(); u8();
-      const device = str(), fw = str();
-      const count = u8();
-      const modules = [];
-      for (let m = 0; m < count; m++) modules.push({ id: u8(), name: str(), app: str(), desc: str() });
-      return { version, device, fw, modules };
-    }
     async function checkModulePresent() {
       if (!transport) return;
       const payload = await new Promise((resolve) => {
@@ -1016,36 +1241,10 @@
     }
 
     // ===================================================================
-    // STATE decode/encode helpers (fixed 75-byte struct — see the header
+    // STATE decode/encode helpers (fixed 79-byte struct, see the header
     // comment for the exact field order/sizes)
     // ===================================================================
     let state = null; // decoded STATE payload, kept as the form's source of truth
-
-    function decodeState(payload) {
-      if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79)");
-      const v = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-      let o = 0;
-      const f32 = () => { const x = v.getFloat32(o, true); o += 4; return x; };
-      const u8 = () => payload[o++];
-      const u32 = () => { const x = v.getUint32(o, true); o += 4; return x; };
-      const s = {
-        centerX: f32(), centerY: f32(), centerNoise: f32(), centerDeadzoneAuto: f32(),
-        manualOffsetX: f32(), manualOffsetY: f32(),
-        rangeMinX: f32(), rangeMaxX: f32(), rangeMinY: f32(), rangeMaxY: f32(),
-        usableRadius: f32(), reliableMaxRadius: f32(), normalizedMaxRadius: f32(), rangeDeadzoneAuto: f32(),
-      };
-      const hasCenterDz = u8() !== 0;
-      const manualCenterDz = f32();
-      const hasRangeDz = u8() !== 0;
-      const manualRangeDz = f32();
-      s.manualCenterDeadzone = hasCenterDz ? manualCenterDz : null;
-      s.manualRangeDeadzone = hasRangeDz ? manualRangeDz : null;
-      s.nudgeEnterThreshold = f32();
-      s.nudgeExitThreshold = f32();
-      s.nudgeTimeMs = u32();
-      s.inputMode = u8();
-      return s;
-    }
 
     function renderState(s) {
       fieldEls.center.textContent = s.centerX.toFixed(6) + " / " + s.centerY.toFixed(6);
@@ -1057,6 +1256,9 @@
       fieldEls.usableRadius.textContent = s.usableRadius.toFixed(6);
       fieldEls.reliableRadius.textContent = s.reliableMaxRadius.toFixed(6) + " (" + (s.normalizedMaxRadius * 100).toFixed(1) + "%)";
       fieldEls.rangeDeadzoneAuto.textContent = s.rangeDeadzoneAuto.toFixed(6);
+
+      els.offsetX.value = s.manualOffsetX.toFixed(6);
+      els.offsetY.value = s.manualOffsetY.toFixed(6);
 
       els.centerDzEnable.checked = s.manualCenterDeadzone !== null;
       els.centerDzValue.disabled = !els.centerDzEnable.checked;
@@ -1079,15 +1281,21 @@
     els.centerDzEnable.addEventListener("change", () => { els.centerDzValue.disabled = !els.centerDzEnable.checked; });
     els.rangeDzEnable.addEventListener("change", () => { els.rangeDzValue.disabled = !els.rangeDzEnable.checked; });
 
+    // Fetches and renders STATE without touching `busy`, so the Apply
+    // handlers (which already hold busy) can re-read the device's state.
+    async function fetchState() {
+      const reply = await transact(TYPE.GET_STATE, null, [TYPE.STATE], CMD_TIMEOUT_MS, 1);
+      state = decodeState(reply.payload);
+      haveState = true;
+      renderState(state);
+      logLine("sys", "Fetched calibration & settings state.");
+    }
+
     async function refreshState() {
       if (!transport || busy) return;
       busy = true; updateUI(); setStatus("busy", "Fetching state...");
       try {
-        const reply = await transact(TYPE.GET_STATE, null, [TYPE.STATE], CMD_TIMEOUT_MS, 1);
-        state = decodeState(reply.payload);
-        haveState = true;
-        renderState(state);
-        logLine("sys", "Fetched calibration & settings state.");
+        await fetchState();
         setStatus("connected", "Connected");
       } catch (e) {
         logLine("err", "GET_STATE failed: " + e.message);
@@ -1098,6 +1306,28 @@
     }
     els.refreshBtn.addEventListener("click", refreshState);
 
+    async function applyManualOffset(x, y) {
+      if (!transport || busy) return;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        logLine("err", "Manual offset: enter a number for both X and Y."); return;
+      }
+      const payload = encodeSetManualOffset(x, y);
+      busy = true; updateUI(); setStatus("busy", "Applying manual offset...");
+      try {
+        await transact(TYPE.SET_MANUAL_OFFSET, payload, [TYPE.OK], CMD_TIMEOUT_MS, 1);
+        logLine("sys", "Manual center offset applied live (" + x + " / " + y + ").");
+        await fetchState();
+      } catch (e) {
+        logLine("err", "SET_MANUAL_OFFSET failed: " + e.message);
+      } finally {
+        busy = false; updateUI();
+        if (transport) setStatus("connected", "Connected");
+      }
+    }
+    els.applyOffsetBtn.addEventListener("click", () =>
+      applyManualOffset(parseFloat(els.offsetX.value), parseFloat(els.offsetY.value)));
+    els.zeroOffsetBtn.addEventListener("click", () => applyManualOffset(0, 0));
+
     els.applyDeadzoneBtn.addEventListener("click", async () => {
       if (!transport || busy) return;
       const centerOn = els.centerDzEnable.checked;
@@ -1106,16 +1336,12 @@
       const rangeVal = parseFloat(els.rangeDzValue.value);
       if (centerOn && !Number.isFinite(centerVal)) { logLine("err", "Center deadzone override: enter a number first."); return; }
       if (rangeOn && !Number.isFinite(rangeVal)) { logLine("err", "Range deadzone override: enter a number first."); return; }
-      const payload = new Uint8Array(9);
-      const v = new DataView(payload.buffer);
-      payload[0] = (centerOn ? 0x01 : 0) | (rangeOn ? 0x02 : 0);
-      v.setFloat32(1, centerOn ? centerVal : 0, true);
-      v.setFloat32(5, rangeOn ? rangeVal : 0, true);
+      const payload = encodeSetDeadzoneOverride(centerOn, centerVal, rangeOn, rangeVal);
       busy = true; updateUI(); setStatus("busy", "Applying deadzone...");
       try {
         await transact(TYPE.SET_DEADZONE_OVERRIDE, payload, [TYPE.OK], CMD_TIMEOUT_MS, 1);
         logLine("sys", "Deadzone override applied live" + (centerOn || rangeOn ? "." : " (cleared)."));
-        await refreshState();
+        await fetchState();
       } catch (e) {
         logLine("err", "SET_DEADZONE_OVERRIDE failed: " + e.message);
       } finally {
@@ -1138,16 +1364,12 @@
       if (!Number.isFinite(timeMs) || timeMs < 0) {
         logLine("err", "Nudge time window must be a non-negative number of milliseconds."); return;
       }
-      const payload = new Uint8Array(12);
-      const v = new DataView(payload.buffer);
-      v.setFloat32(0, enter, true);
-      v.setFloat32(4, exit, true);
-      v.setUint32(8, timeMs, true);
+      const payload = encodeSetNudgeSettings(enter, exit, timeMs);
       busy = true; updateUI(); setStatus("busy", "Applying nudge settings...");
       try {
         await transact(TYPE.SET_NUDGE_SETTINGS, payload, [TYPE.OK], CMD_TIMEOUT_MS, 1);
         logLine("sys", "Nudge-click settings applied live.");
-        await refreshState();
+        await fetchState();
       } catch (e) {
         logLine("err", "SET_NUDGE_SETTINGS failed: " + e.message);
       } finally {
@@ -1160,9 +1382,9 @@
       if (!transport || busy) return;
       busy = true; updateUI(); setStatus("busy", "Switching mode...");
       try {
-        await transact(TYPE.SET_INPUT_MODE, new Uint8Array([mode]), [TYPE.OK], CMD_TIMEOUT_MS, 1);
+        await transact(TYPE.SET_INPUT_MODE, encodeSetInputMode(mode), [TYPE.OK], CMD_TIMEOUT_MS, 1);
         logLine("sys", "Switched to " + (mode === INPUT_MODE.XAC ? "XAC gamepad" : "mouse") + " mode.");
-        await refreshState();
+        await fetchState();
       } catch (e) {
         logLine("err", "SET_INPUT_MODE failed: " + e.message);
       } finally {
@@ -1210,6 +1432,181 @@
       } catch (e) {
         logLine("err", "START_CALIBRATION failed: " + e.message);
         els.recalInfo.textContent = "Request failed: " + e.message;
+      } finally {
+        busy = false; updateUI();
+        if (transport) setStatus("connected", "Connected");
+      }
+    });
+
+    let fwInfo = null;
+
+    const REVERTIBLE_STATES = ["valid", "new", "pending_verify", "invalid", "aborted", "undefined"];
+    function prevSlotUsable() {
+      return !!fwInfo && REVERTIBLE_STATES.includes(fwInfo.prevState);
+    }
+
+    function fwSummary() {
+      const f = fwInfo || {};
+      const v = (s) => s || "n/a";
+      return "omega_stick " + v(f.version) + " (built " + v(f.date) + " " + v(f.time) +
+             ", idf " + v(f.idf) + ", sha " + v(f.sha) + ", running " + v(f.running) + ")";
+    }
+
+    // Returns true when FW_INFO was fetched and parsed.
+    async function refreshFwInfo() {
+      if (!transport) return false;
+      try {
+        const r = await transact(TYPE.GET_FW_INFO, null, [TYPE.FW_INFO], CMD_TIMEOUT_MS, 1);
+        const p = r.payload; let i = 2;
+        // Older firmware sends fewer strings: stop gracefully, missing fields are "".
+        const str = () => {
+          if (i >= p.length) return "";
+          const n = p[i++]; const t = new TextDecoder().decode(p.subarray(i, i + n)); i += n; return t;
+        };
+        const pending = p[0] === 1;
+        const f = { pending, project: str(), version: str(), date: str(), time: str(), idf: str(),
+                    running: str(), sha: str(), boot: str(),
+                    prevLabel: str(), prevVersion: str(), prevDate: str(), prevTime: str(), prevState: str() };
+        if (!f.prevState) f.prevState = "unknown (older firmware)";
+        fwInfo = f;
+        const v = (s) => s || "n/a";
+        els.fwRunning.textContent = (f.project + " " + f.version).trim() || "-";
+        els.fwVersion.textContent = v(f.version);
+        els.fwBuild.textContent = (f.date || f.time) ? (f.date + " " + f.time).trim() : "n/a";
+        els.fwIdf.textContent = v(f.idf);
+        els.fwRunPart.textContent = v(f.running);
+        els.fwBootPart.textContent = v(f.boot) + (pending ? " (pending verify)" : "");
+        els.fwSha.textContent = v(f.sha);
+        els.fwPrevSlot.textContent = v(f.prevLabel);
+        els.fwPrevVersion.textContent = v(f.prevVersion);
+        els.fwPrevBuild.textContent = (f.prevDate || f.prevTime) ? (f.prevDate + " " + f.prevTime).trim() : "n/a";
+        els.fwPrevState.textContent = f.prevState;
+        els.fwCopyBtn.disabled = false;
+        updateUI();
+        els.fwPending.hidden = !pending;
+        els.markValidBtn.hidden = !pending;
+        return true;
+      } catch (e) { els.fwRunning.textContent = "(unavailable)"; return false; }
+    }
+
+    // After an update the new image boots "pending verify" and confirms itself
+    // once it has run healthily for ~10 s (FirmwareHealthCheck in main.cpp), or
+    // rolls back if it never does. Poll until the flag clears so the panel and
+    // the log show the outcome without a manual refresh. If the device rolls
+    // back it reboots, the connection drops, and the watch stops on its own.
+    let pendingWatch = null;
+    function watchPendingVerify() {
+      if (pendingWatch) return;
+      logLine("sys", "New firmware is pending verification; waiting for it to confirm itself...");
+      pendingWatch = setInterval(async () => {
+        if (!transport) { clearInterval(pendingWatch); pendingWatch = null; return; }
+        if (busy) return;
+        const ok = await refreshFwInfo();
+        if (!ok || fwInfo.pending) return;
+        clearInterval(pendingWatch); pendingWatch = null;
+        logLine("sys", "Firmware confirmed healthy; rollback cancelled. Running " + fwSummary());
+      }, 3000);
+    }
+
+    els.fwCopyBtn.addEventListener("click", async () => {
+      const text = fwSummary();
+      try {
+        await navigator.clipboard.writeText(text);
+        logLine("sys", "Copied firmware summary: " + text);
+      } catch (e) { logLine("err", "Copy failed: " + e.message); }
+    });
+
+    els.markValidBtn.addEventListener("click", async () => {
+      if (!transport || busy) return;
+      try {
+        await transact(TYPE.MARK_VALID, null, [TYPE.OK], CMD_TIMEOUT_MS, 0);
+        logLine("sys", "Running image marked valid.");
+      } catch (e) { logLine("err", "MARK_VALID failed: " + e.message); }
+      refreshFwInfo();
+    });
+
+    els.fwRevertBtn.addEventListener("click", async () => {
+      if (!transport || busy || !prevSlotUsable()) return;
+      const f = fwInfo;
+      const ver = f.prevVersion || "unknown version";
+      const build = (f.prevDate || f.prevTime) ? (f.prevDate + " " + f.prevTime).trim() : "unknown build";
+      if (!window.confirm("Revert to previous firmware " + ver + " (built " + build + ", slot " +
+        (f.prevLabel || "?") + ", state " + f.prevState + ")?\n\n" +
+        "The device will reboot. The reverted " +
+        "firmware boots pending verify and will have to pass the health check, or it rolls back again."))
+        return;
+      busy = true; updateUI(); setStatus("busy", "Reverting...");
+      try {
+        await transact(TYPE.REVERT, null, [TYPE.OK], CMD_TIMEOUT_MS, 0);
+        logLine("sys", "Reverting to " + ver + " (" + (f.prevLabel || "?") +
+                "). The device is rebooting; reconnect in a few seconds.");
+      } catch (e) {
+        logLine("err", "Revert failed: " + e.message);
+      } finally {
+        busy = false; updateUI();
+        if (transport) setStatus("connected", "Connected");
+      }
+    });
+
+    els.flashBtn.addEventListener("click", async () => {
+      if (!transport || busy) return;
+      const file = els.fwFile.files && els.fwFile.files[0];
+      if (!file) { logLine("err", "Choose a .bin file first."); return; }
+      const img = new Uint8Array(await file.arrayBuffer());
+      if (img.length === 0 || img[0] !== 0xE9) {
+        logLine("err", "That doesn't look like an ESP app image (first byte should be 0xE9). Use the .bin, not the .elf.");
+        return;
+      }
+      if (!window.confirm("Flash " + file.name + " (" + img.length + " bytes)? The device will reboot into it.")) return;
+
+      busy = true; updateUI(); setStatus("busy", "Flashing...");
+      els.fwProgress.hidden = false; els.fwProgress.value = 0;
+      try {
+        const begin = new Uint8Array(4);
+        new DataView(begin.buffer).setUint32(0, img.length, true);
+        logLine("sys", "OTA: erasing target partition...");
+        await transact(TYPE.OTA_BEGIN, begin, [TYPE.OK], OTA_BEGIN_TIMEOUT_MS, 0);
+        uploading = true;
+
+        for (let off = 0; off < img.length; off += OTA_CHUNK) {
+          const chunk = img.subarray(off, Math.min(off + OTA_CHUNK, img.length));
+          const payload = new Uint8Array(4 + chunk.length);
+          new DataView(payload.buffer).setUint32(0, off, true);
+          payload.set(chunk, 4);
+          await transact(TYPE.OTA_DATA, payload, [TYPE.OK], CMD_TIMEOUT_MS * 2, 0);
+          els.fwProgress.value = (off + chunk.length) / img.length;
+        }
+
+        logLine("sys", "OTA: validating and activating...");
+        await transact(TYPE.OTA_FINISH, null, [TYPE.OK], OTA_FINISH_TIMEOUT_MS, 0);
+        uploading = false;
+        logLine("sys", "Firmware accepted. The device is rebooting; reconnect in a few seconds.");
+      } catch (e) {
+        logLine("err", "Flash failed: " + e.message);
+        // disconnect() clears `uploading` after sending its own OTA_ABORT.
+        if (uploading && transport) {
+          uploading = false;
+          try { await transact(TYPE.OTA_ABORT, null, [TYPE.OK], CMD_TIMEOUT_MS, 0); } catch (_) { }
+        }
+      } finally {
+        uploading = false;
+        busy = false; updateUI();
+        els.fwProgress.hidden = true;
+        if (transport) setStatus("connected", "Connected");
+      }
+    });
+
+    els.restartBtn.addEventListener("click", async () => {
+      if (!transport || busy) return;
+      if (!window.confirm("Restart the device now? Unsaved live changes (offsets, deadzones, " +
+        "nudge tuning) will be lost. You'll need to reconnect."))
+        return;
+      busy = true; updateUI(); setStatus("busy", "Restarting...");
+      try {
+        await transact(TYPE.RESTART, null, [TYPE.OK], CMD_TIMEOUT_MS, 0);
+        logLine("sys", "Restart accepted; the device is rebooting. Reconnect in a few seconds.");
+      } catch (e) {
+        logLine("err", "RESTART failed: " + e.message);
       } finally {
         busy = false; updateUI();
         if (transport) setStatus("connected", "Connected");

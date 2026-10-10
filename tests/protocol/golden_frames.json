@@ -1,0 +1,29 @@
+{
+  "requests": [
+    {"name": "GET_STATE", "module": 5, "type": 80, "args": {}, "payload_hex": "", "frame_hex": "544f1005500000000023160a36"},
+    {"name": "SET_MANUAL_OFFSET", "module": 5, "type": 81, "args": {"x": 0.75, "y": -1.25}, "payload_hex": "0000403f0000a0bf", "frame_hex": "544f100551080000000000403f0000a0bfdce5459b"},
+    {"name": "SET_DEADZONE_OVERRIDE_BOTH", "module": 5, "type": 82, "args": {"centerOn": true, "centerVal": 0.04, "rangeOn": true, "rangeVal": 0.06}, "payload_hex": "030ad7233d8fc2753d", "frame_hex": "544f10055209000000030ad7233d8fc2753d57d498c4"},
+    {"name": "SET_DEADZONE_OVERRIDE_RANGE_ONLY", "module": 5, "type": 82, "args": {"centerOn": false, "centerVal": 0, "rangeOn": true, "rangeVal": 0.06}, "payload_hex": "02000000008fc2753d", "frame_hex": "544f1005520900000002000000008fc2753db8eacef4"},
+    {"name": "SET_NUDGE_SETTINGS", "module": 5, "type": 83, "args": {"enter": 0.35, "exit": 0.65, "timeMs": 150}, "payload_hex": "3333b33e6666263f96000000", "frame_hex": "544f1005530c0000003333b33e6666263f960000004625c829"},
+    {"name": "SET_INPUT_MODE_MOUSE", "module": 5, "type": 84, "args": {"mode": 0}, "payload_hex": "00", "frame_hex": "544f10055401000000004fffa2d6"},
+    {"name": "GET_STATE_AFTER", "module": 5, "type": 80, "args": {}, "payload_hex": "", "frame_hex": "544f1005500000000023160a36"},
+    {"name": "SAVE_TO_FLASH", "module": 5, "type": 85, "args": {}, "payload_hex": "", "frame_hex": "544f100555000000005399eafe"},
+    {"name": "START_CALIBRATION", "module": 5, "type": 86, "args": {}, "payload_hex": "", "frame_hex": "544f1005560000000083e34ab9"},
+    {"name": "LIST_MODULES", "module": 255, "type": 0, "args": {}, "payload_hex": "", "frame_hex": "544f10ff000000000097e310ba"},
+    {"name": "SET_INPUT_MODE_INVALID", "module": 5, "type": 84, "args": {"mode": 2}, "payload_hex": "02", "frame_hex": "544f1005540100000002639eac38"}
+  ],
+  "replies": [
+    {"name": "GET_STATE", "module": 5, "type": 208, "frame_hex": "544f1105d04f00000000004841000050c00000403fcdcc4c3d0000003f000080be000020c200001842000024c200001e420000144200001042ec51783f0ad7a33c000000000001ec51b83d6666e63e0000403f78000000012f695862", "fields": {"centerX": 12.5, "centerY": -3.25, "centerNoise": 0.75, "centerDeadzoneAuto": 0.05, "manualOffsetX": 0.5, "manualOffsetY": -0.25, "rangeMinX": -40, "rangeMaxX": 38, "rangeMinY": -41, "rangeMaxY": 39.5, "usableRadius": 37, "reliableMaxRadius": 36, "normalizedMaxRadius": 0.97, "rangeDeadzoneAuto": 0.02, "manualCenterDeadzone": null, "manualRangeDeadzone": 0.09, "nudgeEnterThreshold": 0.45, "nudgeExitThreshold": 0.75, "nudgeTimeMs": 120, "inputMode": 1}},
+    {"name": "SET_MANUAL_OFFSET", "module": 5, "type": 223, "frame_hex": "544f1105df0400000000000000b9631542", "fields": {"value": 0}},
+    {"name": "SET_DEADZONE_OVERRIDE_BOTH", "module": 5, "type": 223, "frame_hex": "544f1105df0400000000000000b9631542", "fields": {"value": 0}},
+    {"name": "SET_DEADZONE_OVERRIDE_RANGE_ONLY", "module": 5, "type": 223, "frame_hex": "544f1105df0400000000000000b9631542", "fields": {"value": 0}},
+    {"name": "SET_NUDGE_SETTINGS", "module": 5, "type": 223, "frame_hex": "544f1105df0400000000000000b9631542", "fields": {"value": 0}},
+    {"name": "SET_INPUT_MODE_MOUSE", "module": 5, "type": 223, "frame_hex": "544f1105df0400000000000000b9631542", "fields": {"value": 0}},
+    {"name": "GET_STATE_AFTER", "module": 5, "type": 208, "frame_hex": "544f1105d04f00000000004841000050c00000403fcdcc4c3d0000403f0000a0bf000020c200001842000024c200001e420000144200001042ec51783f0ad7a33c0000000000018fc2753d3333b33e6666263f9600000000cc305636", "fields": {"centerX": 12.5, "centerY": -3.25, "centerNoise": 0.75, "centerDeadzoneAuto": 0.05, "manualOffsetX": 0.75, "manualOffsetY": -1.25, "rangeMinX": -40, "rangeMaxX": 38, "rangeMinY": -41, "rangeMaxY": 39.5, "usableRadius": 37, "reliableMaxRadius": 36, "normalizedMaxRadius": 0.97, "rangeDeadzoneAuto": 0.02, "manualCenterDeadzone": null, "manualRangeDeadzone": 0.06, "nudgeEnterThreshold": 0.35, "nudgeExitThreshold": 0.65, "nudgeTimeMs": 150, "inputMode": 0}},
+    {"name": "SAVE_TO_FLASH", "module": 5, "type": 223, "frame_hex": "544f1105df0400000000000000b9631542", "fields": {"value": 0}},
+    {"name": "START_CALIBRATION", "module": 5, "type": 223, "frame_hex": "544f1105df0400000000000000b9631542", "fields": {"value": 0}},
+    {"name": "LIST_MODULES", "module": 255, "type": 0, "frame_hex": "544f11ff00b700000002000b6f6d6567612d737469636b06676f6c64656e01050b43616c6962726174696f6e1863616c6962726174696f6e5f636f6e736f6c652e68746d6c674c6976652d7669657720616e64206c6976652d656469742063616c6962726174696f6e2c20646561647a6f6e65732c206e756467652d636c69636b2074756e696e672c206d6f7573652f584143206d6f64652c20616e64206669726d776172652075706461746510657370702e63616c6962726174696f6e000016adb226", "fields": {"version": 2, "device": "omega-stick", "fw": "golden", "modules": [{"id": 5, "name": "Calibration", "app": "calibration_console.html", "desc": "Live-view and live-edit calibration, deadzones, nudge-click tuning, mouse/XAC mode, and firmware update"}]}},
+    {"name": "SET_INPUT_MODE_INVALID", "module": 5, "type": 254, "frame_hex": "544f1105fe3b000000160000005345545f494e5055545f4d4f4445206e65656473207538206d6f6465202830206f722031293a20696e76616c696420617267756d656e747014b87f", "fields": {"code": 22, "message": "SET_INPUT_MODE needs u8 mode (0 or 1): invalid argument"}},
+    {"name": "CALIBRATION_RESULT_OK", "module": 5, "type": 209, "frame_hex": "544f1105d101000000012c4a7223", "fields": {"success": true}}
+  ]
+}

@@ -15,7 +15,7 @@ namespace espp {
 /// A boot counter and a ring of the last few reset reasons, persisted to a
 /// small text file so a field failure leaves a trace even when it was not a
 /// panic (a core dump covers those). Brownouts, watchdog resets and USB
-/// resets otherwise vanish at the next boot. See D16 in docs/decisions.md.
+/// resets otherwise vanish at the next boot. See D23 in docs/decisions.md.
 ///
 /// The reason is stored as the integer the platform reported plus the name
 /// the caller gives it, so this header needs nothing from ESP-IDF and the

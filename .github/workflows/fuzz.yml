@@ -1,0 +1,43 @@
+name: Fuzz
+
+on: [pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  frame-fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install clang
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-rt-dev ninja-build
+
+      - name: Configure
+        run: |
+          cmake -S tests/host -B build-host -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_COMPILER=clang++ -DOMEGA_HOST_SANITIZE=ON -DOMEGA_HOST_FUZZ=ON
+
+      - name: Build
+        run: cmake --build build-host --target omega_frame_fuzz
+
+      - name: Fuzz for 60 seconds
+        env:
+          ASAN_OPTIONS: halt_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          build-host/omega_frame_fuzz tests/fuzz/corpus \
+            -max_total_time=60 -timeout=10 -rss_limit_mb=2048
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-crashes
+          path: |
+            crash-*
+            timeout-*
+            oom-*
+          if-no-files-found: ignore

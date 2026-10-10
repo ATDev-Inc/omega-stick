@@ -33,6 +33,19 @@ jobs:
       with:
         fetch-depth: 0
 
+    # The firmware number comes from version.txt (see the top-level
+    # CMakeLists.txt). A release is only a release if its tag names that same
+    # number, so the device ends up reporting exactly "MAJOR.MINOR.PATCH".
+    - name: Check release tag matches version.txt
+      if: ${{ github.event.release && github.event.action == 'published' }}
+      run: |
+        expected="v$(tr -d '[:space:]' < version.txt)"
+        if [ "${GITHUB_REF_NAME}" != "${expected}" ]; then
+          echo "Release tag '${GITHUB_REF_NAME}' does not match version.txt ('${expected}')." >&2
+          echo "Bump version.txt in a PR first, then tag the merge commit." >&2
+          exit 1
+        fi
+
     - name: Build Main Code
       uses: espressif/esp-idf-ci-action@9d38657f3d789ca759b2b37aaf5ceffbc42c4f0d # v1
       with:

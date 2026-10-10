@@ -20,11 +20,14 @@ component library.
 - [Why low force](#why-low-force)
 - [Project status](#project-status)
 - [Documentation](#documentation)
+- [Firmware updates and versioning](#firmware-updates-and-versioning)
 - [Hardware](#hardware)
 - [Getting started](#getting-started)
   - [Prerequisites](#prerequisites)
   - [Build and flash](#build-and-flash)
   - [Expected output](#expected-output)
+  - [Calibration console and input modes](#calibration-console-and-input-modes)
+  - [Build options](#build-options)
 - [Repository layout](#repository-layout)
 - [Contributing](#contributing)
 - [License](#license)
@@ -65,20 +68,25 @@ it works without drivers or vendor software on the host.
 ## Project status
 
 **Early development.** This is pre-release firmware and the interfaces are not
-stable yet.
+stable yet. For component-level detail and known gaps, see
+[docs/status.md](docs/status.md).
 
-What is in the tree today:
+What works today:
 
-- A `TMAG5273` driver ([components/tmag5273/include/tmag5273.hpp](components/tmag5273/include/tmag5273.hpp))
-  covering configuration, magnetic X/Y/Z reads, temperature, and conversion status.
-- A sensor bring-up application ([main/main.cpp](main/main.cpp)) that probes the
-  sensor, dumps its configuration, and streams live magnetic readings to the
-  console.
+- Sensor driver and calibration: a `TMAG5273` driver
+  ([components/tmag5273/include/tmag5273.hpp](components/tmag5273/include/tmag5273.hpp)),
+  center and range calibration, and idle drift correction, persisted to flash.
+- **Mouse mode**: the default. Relative X/Y plus stick nudge gestures for clicks
+  and scroll.
+- **Browser calibration console**: WebUSB and Web Serial, for viewing and tuning
+  settings, switching input mode, and re-running calibration.
+- Host unit tests for the calibration component and the XAC report, run in CI.
 
-Not implemented yet: the HID report descriptor, axis calibration and centering,
-deadzone and response curve shaping, and the USB gamepad/mouse output path. The
-`espp/hid-rp`, `espp/joystick`, and `espp/usb_device` dependencies are declared
-in [main/idf_component.yml](main/idf_component.yml) in preparation for that work.
+Experimental: **XAC (Xbox Adaptive Controller) gamepad mode** is implemented but
+has not been verified on real XAC hardware.
+
+Not implemented yet: response curves, per-axis inversion and gain, tremor
+filtering, profiles, and a status LED.
 
 If you are looking for somewhere to help, those are the open areas. See
 [CONTRIBUTING.md](./CONTRIBUTING.md).
@@ -94,10 +102,25 @@ Product and planning documents live in [docs/](docs/):
 | [decisions.md](docs/decisions.md) | Product decisions with rationale, and what is still open |
 | [compliance.md](docs/compliance.md) | What the project may and may not claim about itself |
 | [status.md](docs/status.md) | Current working status |
+| [firmware-updates.md](docs/firmware-updates.md) | USB firmware updates, rollback, and versioning |
 | [research/](docs/research/) | Background research these were built from |
 | [assets/logo/](assets/logo/) | Brand marks, wordmark, the animated hero scene, and usage notes |
 
 Research documents are point-in-time snapshots and are not maintained.
+
+## Firmware updates and versioning
+
+After a one-time serial flash (`idf.py -p PORT flash`) onto the two-slot OTA
+partition table, firmware is updated over USB from the calibration console:
+open it, connect, and upload `build/omega_stick.bin` in the "Firmware update"
+section. A new image must prove itself (USB enumerated, sensor answering, ten
+seconds of running) before it is kept; otherwise the device reverts to the
+previous image, and the console's "Revert to previous firmware" button goes
+back on demand. Versions are `MAJOR.MINOR.PATCH` from `version.txt` (release
+builds report exactly that; other builds append `+<commit>`). Please paste the
+console's Copy line in bug reports. Moving to the OTA layout loses saved
+calibration once. Details are in
+[docs/firmware-updates.md](docs/firmware-updates.md).
 
 ## Hardware
 
@@ -110,8 +133,9 @@ The firmware currently targets:
 | Bus | Qwiic / STEMMA QT I2C |
 | Host link | USB, via TinyUSB |
 
-The mechanical design, PCB, and enclosure are not part of this repository. If
-you want to build one, open a
+STL files for the printed parts (joystick, magnet and sensor holders, sockets,
+topper) are in [models/](models/). The PCB, wiring, and editable CAD source are
+not part of this repository. If you want to build one, open a
 [discussion](https://github.com/ATDev-Inc/omega-stick/discussions) or an issue
 and we will point you at what exists.
 
@@ -119,10 +143,12 @@ and we will point you at what exists.
 
 ### Prerequisites
 
-This is an ESP-IDF project targeting **ESP-IDF v5.5.1 or v6.0**. Follow the
+This is an ESP-IDF project targeting **ESP-IDF v6.0**, the version CI builds with (v5.5.1 is
+untested). [dependencies.lock](./dependencies.lock) was resolved against v6.0.2. Follow the
 [official ESP-IDF getting started
 guide](https://docs.espressif.com/projects/esp-idf/en/release-v6.0/esp32s3/get-started/index.html)
-to install the toolchain for your platform.
+to install the toolchain for your platform. On Windows, Espressif's installer
+can do it in two commands (see [CONTRIBUTING.md](./CONTRIBUTING.md#development-environment)).
 
 Component dependencies are pulled automatically by the IDF Component Manager
 from [main/idf_component.yml](main/idf_component.yml); the resolved set is
@@ -142,8 +168,10 @@ Linux, `/dev/cu.usbmodem*` on macOS). Exit the monitor with `Ctrl-]`.
 
 ### Run the host tests
 
-The calibration component has unit tests that run on your desktop without a
-board or ESP-IDF. They need CMake and a C++20 compiler:
+Most of the firmware logic has unit tests that run on your desktop without a
+board or ESP-IDF: the calibration maths and persistence, the console protocol,
+the TMAG5273 driver, the HID reports and descriptors, and the control loop.
+They need CMake and a C++20 compiler:
 
 ```console
 cmake -S tests/host -B build-host
@@ -151,39 +179,94 @@ cmake --build build-host
 ctest --test-dir build-host --output-on-failure
 ```
 
-See [tests/host/README.md](tests/host/README.md) for what they cover.
+The calibration console's protocol code has its own tests under Node:
+
+```console
+node --test "tests/web/*.test.js"
+```
+
+See [tests/host/README.md](tests/host/README.md) and
+[tests/web/README.md](tests/web/README.md) for what they cover. CI runs both,
+plus a short fuzzing pass over the frame parser ([tests/fuzz](tests/fuzz/README.md)).
+
+### Calibration console
+
+[components/omega_calibration/web/calibration_console.html](components/omega_calibration/web/calibration_console.html)
+is a browser page for viewing and tuning the stick's calibration and settings
+over USB. Open it from disk in Chrome or Edge and connect with WebUSB or Web
+Serial. See the [omega_calibration README](components/omega_calibration/README.md)
+for details.
 
 ### Expected output
 
-With a TMAG5273 connected on the Qwiic bus, the bring-up app prints the device
-and manufacturer IDs, the active configuration, and then a live stream of
-readings. Move a magnet near the sensor and the values should track it:
+With a TMAG5273 connected on the Qwiic bus, the serial monitor shows the sensor
+coming up and then the calibration step:
 
 ```
-========================================
-       TMAG5273 Driver Test
-========================================
-I2C Address: 0x35
-========================================
-
-Probing for TMAG5273...
-TMAG5273 found!
-
-X:    1.234 mT   Y:   -0.567 mT   Z:   12.345 mT   T:  24.50 C   Ready: YES
+Initializing TMAG5273...
+TMAG5273 initialized successfully!
 ```
 
-If you see `ERROR: TMAG5273 not found at address 0x35`, check the Qwiic cable
-and confirm the sensor's address strap.
+On a board with no saved calibration, the firmware then runs an interactive
+center calibration followed by a range calibration, prints the results, and
+starts USB (`Waiting for USB host...`, `HID ready: yes`). The calibration is
+saved to the `littlefs` partition and loaded on later boots
+(`Loaded existing calibration.`).
+
+If you see `ERROR: TMAG5273 initialization failed`, check the Qwiic cable and
+confirm the sensor's address strap (the firmware expects `0x35`).
+
+### Calibration console and input modes
+
+The stick boots as a USB HID **mouse** by default. It can instead present as an
+Xbox Adaptive Controller style gamepad (XAC). The mode is a saved setting, and
+switching it restarts the device to apply it.
+
+The browser-based calibration console,
+[components/omega_calibration/web/calibration_console.html](components/omega_calibration/web/calibration_console.html),
+talks to the stick over WebUSB (vendor interface) or Web Serial (CDC). Open the
+file in a Chromium-based browser (Chrome, Edge, Opera) from `file://`,
+`http://localhost`, or an https origin, then connect. From there you can:
+
+- view live calibration and settings, and adjust the manual center offset,
+  deadzone overrides, and nudge-click tuning;
+- switch between mouse and XAC mode;
+- re-run the full center and range calibration (use Web Serial to see the
+  prompts);
+- save the current settings to flash.
+
+### Build options
+
+`idf.py menuconfig`, under "Omega Stick Configuration", has one option:
+`OMEGA_STICK_BOOT_FLASH_WINDOW_S` (default 0, range 0 to 60) is how many
+seconds the firmware waits at boot before starting USB. While it waits, the
+built-in USB Serial/JTAG still owns the port, so `idf.py flash` works without
+holding BOOT. As a developer, set it locally in `idf.py menuconfig` (your
+`sdkconfig` is gitignored); leave it at 0 for anything users run. The flash layout is in
+[partitions.csv](partitions.csv) and assumes the 8 MB QT Py ESP32-S3.
 
 ## Repository layout
 
 ```
-main/                     application entry point and IDF component manifest
+main/                     application entry point, IDF component manifest, Kconfig options
 components/tmag5273/      TMAG5273 Hall-effect sensor driver
 components/omega_calibration/
-                          calibration, persisted settings, and the USB console protocol
-tests/host/               desktop unit tests for omega_calibration (no hardware needed)
-.github/workflows/        build, packaging, static analysis, and host test CI
+                          calibration, persisted settings, the USB console protocol,
+                          and the web calibration console (web/)
+components/omega_control/ the control loop's logic (nudge clicks, drift, recalibration
+                          hand-off), pure and host-tested; main.cpp wires hardware to it
+components/hid-rp-mouse/  HID mouse report descriptor and input report
+components/xac/           Xbox Adaptive Controller gamepad report
+tests/host/               desktop unit tests for the components above (no hardware needed)
+tests/web/                Node tests for the console's protocol code
+tests/protocol/           golden frames generated by the C++ service, checked by both suites
+tests/fuzz/               libFuzzer harness and seed corpus for the frame parser
+models/                   STL files for the printed parts (joystick, magnet and sensor holders,
+                          QT Py holder, sockets, topper)
+docs/                     product, requirements, decisions, and research documents
+assets/logo/              brand assets
+.github/workflows/        build, packaging, size delta, static analysis, host, web and fuzz test CI
+partitions.csv            flash partition table (nvs, factory app, littlefs, coredump)
 sdkconfig.defaults        project-wide ESP-IDF configuration defaults
 ```
 
