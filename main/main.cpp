@@ -17,6 +17,7 @@
 #include "esp_system.h" // esp_restart() -- used to apply a live mode switch (see on_mode_changed below)
 
 #include "calibration_service.hpp"
+#include "dispatcher_worker.hpp"
 #include "file_system.hpp"
 #include "hid-rp-mouse.hpp"
 #include "hid-rp.hpp"
@@ -34,6 +35,13 @@
 using namespace std::chrono_literals;
 
 static constexpr uint8_t TMAG_ADDRESS = 0x35;
+
+// USB ids. These are espp::UsbDevice's defaults (a borrowed pid.codes pair),
+// spelled out so the calibration console's WebUSB filter (DEFAULT_VID /
+// DEFAULT_PID in components/omega_calibration/web/calibration_console.html)
+// has one place to match. Replace both with an allocated PID before shipping.
+static constexpr uint16_t OMEGA_USB_VID = 0x1209;
+static constexpr uint16_t OMEGA_USB_PID = 0x0d32;
 
 // Scales the normalized joystick output (-1..1) into mouse movement counts
 // per polling interval. Lower this to slow the cursor down, raise it to
@@ -407,6 +415,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     espp::UsbDevice::Config usb_cfg;
     usb_cfg.manufacturer = "espp";
     usb_cfg.product = "omega-stick mouse";
+    usb_cfg.vid = OMEGA_USB_VID;
+    usb_cfg.pid = OMEGA_USB_PID;
     espp::UsbDevice::CdcFunction cdc_fn;
     cdc_fn.route_console = true;
     usb_cfg.cdc = cdc_fn;
@@ -418,14 +428,14 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     usb_cfg.hid = hid_fn;
 
     // --------------------------------------------------------------------
-    // Calibration console wiring (module 5) -- BEST-EFFORT / UNVERIFIED.
-    // We don't have usb_device.hpp in this session, so the exact field and
-    // method names below (VendorFunction, .on_receive, write_vendor(),
-    // write_cdc()) are inferred from coredump_service.hpp's own header
-    // comment ("send = usb.write_vendor(frame), and call feed(data) from
-    // the vendor receive callback" / the equivalent CDC line). Confirm
-    // these against your actual espp::UsbDevice API before relying on it;
-    // everything else in this file does not depend on this section.
+    // Calibration console wiring (module 5), checked against espp v1.3.3's
+    // usb_device.hpp and dispatcher_worker.hpp. One CalibrationService and
+    // one DispatcherWorker per USB byte stream (vendor for WebUSB, CDC for
+    // Web Serial). The receive callbacks only push() bytes into the worker:
+    // they run on the TinyUSB task, where UsbDevice's write path fails fast
+    // instead of waiting for FIFO room, so replying from there could drop
+    // frames. The worker parses and dispatches on its own task, and also
+    // answers the console's module-0xFF discovery request.
     // --------------------------------------------------------------------
     static espp::UsbDevice *usb_ptr = nullptr; // set once `usb` exists, below
     espp::CalibrationService::Config calibration_cfg{
@@ -452,15 +462,35 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
         usb_ptr->write_cdc(frame);
     };
     espp::CalibrationService calibration_cdc(calibration_cfg);
+    espp::DispatcherWorker vendor_link({
+        .send =
+            [](std::span<const uint8_t> frame) {
+              if (usb_ptr)
+                usb_ptr->write_vendor(frame);
+            },
+        .task_config = {.name = "cal_vendor_rx", .stack_size_bytes = 8192},
+    });
+    vendor_link.register_module(calibration_vendor);
+    vendor_link.serve_discovery("omega-stick");
+    espp::DispatcherWorker cdc_link({
+        .send =
+            [](std::span<const uint8_t> frame) {
+              if (usb_ptr)
+                usb_ptr->write_cdc(frame);
+            },
+        .task_config = {.name = "cal_cdc_rx", .stack_size_bytes = 8192},
+    });
+    cdc_link.register_module(calibration_cdc);
+    cdc_link.serve_discovery("omega-stick");
 
     espp::UsbDevice::VendorFunction vendor_fn;
     vendor_fn.interface_name = "omega-stick vendor";
-    vendor_fn.on_receive = [&calibration_vendor](std::span<const uint8_t> data) {
-      calibration_vendor.feed(data);
+    vendor_fn.on_receive = [&vendor_link](std::span<const uint8_t> data) {
+      vendor_link.push(data);
     };
     usb_cfg.vendor = vendor_fn;
-    cdc_fn.on_receive = [&calibration_cdc](std::span<const uint8_t> data) {
-      calibration_cdc.feed(data);
+    cdc_fn.on_receive = [&cdc_link](std::span<const uint8_t> data) {
+      cdc_link.push(data);
     };
     usb_cfg.cdc = cdc_fn; // re-assign now that on_receive is set
 
@@ -678,6 +708,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     espp::UsbDevice::Config usb_cfg;
     usb_cfg.manufacturer = "espp";
     usb_cfg.product = "omega-stick XAC";
+    usb_cfg.vid = OMEGA_USB_VID;
+    usb_cfg.pid = OMEGA_USB_PID;
 
     espp::UsbDevice::CdcFunction cdc_fn;
     cdc_fn.route_console = true;
@@ -690,9 +722,9 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
     usb_cfg.hid = hid_fn;
 
-    // Same best-effort calibration-console wiring as the mouse branch above
-    // (see the comment there) -- kept here too so the console still works
-    // when the stick boots in XAC mode.
+    // Same calibration-console wiring as the mouse branch above (see the
+    // comment there) -- kept here too so the console still works when the
+    // stick boots in XAC mode.
     static espp::UsbDevice *usb_ptr = nullptr;
     espp::CalibrationService::Config calibration_cfg{
         .store = store,
@@ -718,14 +750,34 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
         usb_ptr->write_cdc(frame);
     };
     espp::CalibrationService calibration_cdc(calibration_cfg);
+    espp::DispatcherWorker vendor_link({
+        .send =
+            [](std::span<const uint8_t> frame) {
+              if (usb_ptr)
+                usb_ptr->write_vendor(frame);
+            },
+        .task_config = {.name = "cal_vendor_rx", .stack_size_bytes = 8192},
+    });
+    vendor_link.register_module(calibration_vendor);
+    vendor_link.serve_discovery("omega-stick");
+    espp::DispatcherWorker cdc_link({
+        .send =
+            [](std::span<const uint8_t> frame) {
+              if (usb_ptr)
+                usb_ptr->write_cdc(frame);
+            },
+        .task_config = {.name = "cal_cdc_rx", .stack_size_bytes = 8192},
+    });
+    cdc_link.register_module(calibration_cdc);
+    cdc_link.serve_discovery("omega-stick");
     espp::UsbDevice::VendorFunction vendor_fn;
     vendor_fn.interface_name = "omega-stick vendor";
-    vendor_fn.on_receive = [&calibration_vendor](std::span<const uint8_t> data) {
-      calibration_vendor.feed(data);
+    vendor_fn.on_receive = [&vendor_link](std::span<const uint8_t> data) {
+      vendor_link.push(data);
     };
     usb_cfg.vendor = vendor_fn;
-    cdc_fn.on_receive = [&calibration_cdc](std::span<const uint8_t> data) {
-      calibration_cdc.feed(data);
+    cdc_fn.on_receive = [&cdc_link](std::span<const uint8_t> data) {
+      cdc_link.push(data);
     };
     usb_cfg.cdc = cdc_fn;
 

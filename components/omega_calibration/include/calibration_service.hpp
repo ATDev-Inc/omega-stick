@@ -87,6 +87,7 @@
 // can take far longer than a normal request-reply round trip and must not
 // block whatever context feed()/handle_frame() runs on.
 
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -376,6 +377,10 @@ protected:
       }
       const float offset_x = get_f32(payload, 0);
       const float offset_y = get_f32(payload, 4);
+      if (!std::isfinite(offset_x) || !std::isfinite(offset_y)) {
+        reply = build_error(std::errc::invalid_argument, "manual offset must be finite");
+        return true;
+      }
       store_.set_manual_offset(offset_x, offset_y);
       logger_.info("SET_MANUAL_OFFSET x={:.6f} y={:.6f}", offset_x, offset_y);
       reply = build_ok();
@@ -392,6 +397,12 @@ protected:
       const bool has_range = (flags & 0x02) != 0;
       const float center_value = get_f32(payload, 1);
       const float range_value = get_f32(payload, 5);
+      if ((has_center && !(std::isfinite(center_value) && center_value >= 0.0f)) ||
+          (has_range && !(std::isfinite(range_value) && range_value >= 0.0f))) {
+        reply = build_error(std::errc::invalid_argument,
+                            "deadzone override must be finite and >= 0");
+        return true;
+      }
       store_.set_deadzone_override(has_center ? std::optional<float>(center_value) : std::nullopt,
                                    has_range ? std::optional<float>(range_value) : std::nullopt);
       logger_.info("SET_DEADZONE_OVERRIDE center={} range={}",
@@ -474,7 +485,7 @@ protected:
     }
   }
 
-  /// Encode a Snapshot into the fixed 75-byte STATE payload (see the header
+  /// Encode a Snapshot into the fixed 79-byte STATE payload (see the header
   /// comment for the exact field order).
   static std::vector<uint8_t> build_state_payload(const OmegaStore::Snapshot &snap) {
     std::vector<uint8_t> payload;
