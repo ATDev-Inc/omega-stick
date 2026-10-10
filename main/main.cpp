@@ -490,9 +490,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
       vendor_link.push(data);
     };
     usb_cfg.vendor = vendor_fn;
-    cdc_fn.on_receive = [&cdc_link](std::span<const uint8_t> data) {
-      cdc_link.push(data);
-    };
+    cdc_fn.on_receive = [&cdc_link](std::span<const uint8_t> data) { cdc_link.push(data); };
     usb_cfg.cdc = cdc_fn; // re-assign now that on_receive is set
 
     espp::UsbDevice usb(usb_cfg);
@@ -777,9 +775,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
       vendor_link.push(data);
     };
     usb_cfg.vendor = vendor_fn;
-    cdc_fn.on_receive = [&cdc_link](std::span<const uint8_t> data) {
-      cdc_link.push(data);
-    };
+    cdc_fn.on_receive = [&cdc_link](std::span<const uint8_t> data) { cdc_link.push(data); };
     usb_cfg.cdc = cdc_fn;
 
     espp::UsbDevice usb(usb_cfg);

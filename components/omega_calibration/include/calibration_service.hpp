@@ -399,8 +399,8 @@ protected:
       const float range_value = get_f32(payload, 5);
       if ((has_center && !(std::isfinite(center_value) && center_value >= 0.0f)) ||
           (has_range && !(std::isfinite(range_value) && range_value >= 0.0f))) {
-        reply = build_error(std::errc::invalid_argument,
-                            "deadzone override must be finite and >= 0");
+        reply =
+            build_error(std::errc::invalid_argument, "deadzone override must be finite and >= 0");
         return true;
       }
       store_.set_deadzone_override(has_center ? std::optional<float>(center_value) : std::nullopt,
