@@ -8,7 +8,8 @@ full license text ships with each component (in its source tree, fetched by the
 ESP-IDF component manager into `managed_components/` at build time) and is
 linked below. The calibration console
 ([components/omega_calibration/web](components/omega_calibration/web)) is a
-self-contained page and loads no third-party code.
+self-contained page and loads no third-party scripts, but part of its source
+is adapted from espp (see [Code in this repository](#code-in-this-repository)).
 
 Licenses were checked against the `license:` field of each component's
 `idf_component.yml` and its LICENSE file or source headers.
@@ -67,11 +68,18 @@ of those components' source trees.
 ## Code in this repository
 
 The `components/` directory holds this project's own code: `omega_calibration`,
-`omega_control`, `tmag5273` and `xac`, and `hid-rp-mouse`. No file header or
-README credits another origin for them. They are written against the espp APIs
-(`xac` and `hid-rp-mouse` use the espp/hid-rp report classes, and `tmag5273`
-follows the espp driver conventions), but no copied third-party source was
-identified.
+`omega_control`, `tmag5273` and `xac`, and `hid-rp-mouse`. They are written
+against the espp APIs (`xac` and `hid-rp-mouse` use the espp/hid-rp report
+classes, and `tmag5273` follows the espp driver conventions). Apart from the
+calibration console below, no copied third-party source was identified.
+
+The calibration console
+([calibration_console.html](components/omega_calibration/web/calibration_console.html))
+adapts code from the espp coredump console
+([coredump_console.html](https://github.com/esp-cpp/espp/blob/46f046f73e2dbdf23cbed19b25bff1aed5647e9a/components/coredump/web/coredump_console.html),
+espp v1.3.6). Its WebUSB and Web Serial transport abstraction is taken from that
+file, and its serialized-transaction handling follows the same pattern. That
+code is MIT licensed by esp-cpp, the same terms as the espp entries above.
 
 ## About LICENSE
 
