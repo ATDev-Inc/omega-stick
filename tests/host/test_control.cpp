@@ -330,7 +330,7 @@ TEST(control_recalibration_resets_the_nudge_window_and_prev_sample) {
   oc::mouse_tick(s, input(0.0f, 0.0f, 0), ports);
   oc::mouse_tick(s, input(0.0f, 0.0f, 500, true), ports);
   CHECK(s.window_start == at(1000));
-  CHECK_NEAR(s.prev_y, FORWARD_Y * 0.9f, 1e-6);
+  CHECK_NEAR(s.prev_y, static_cast<double>(FORWARD_Y) * 0.9, 1e-6);
 
   // Window not yet elapsed since the post-sweep reference: no entry.
   oc::mouse_step(s, input(0.0f, FORWARD_Y * 0.9f, 1099));
