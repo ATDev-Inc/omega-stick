@@ -94,10 +94,13 @@ public:
     return true;
   }
 
-  bool mark_app_invalid_and_rollback(std::error_code &) { return true; }
+  bool mark_app_invalid_and_rollback(std::error_code &) {
+    ++rollback_calls;
+    return true;
+  }
 
-  std::string running_partition_label() const { return running_label; }
-  std::string boot_partition_label() const { return boot_label; }
+  const std::string &running_partition_label() const { return running_label; }
+  const std::string &boot_partition_label() const { return boot_label; }
   bool session_active() const { return active_; }
   size_t bytes_written() const { return image.size(); }
   size_t image_size() const { return image_size_; }
@@ -116,6 +119,7 @@ public:
   int finish_calls{0};
   int abort_calls{0};
   int mark_valid_calls{0};
+  int rollback_calls{0};
 
 private:
   Config config_;
