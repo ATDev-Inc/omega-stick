@@ -7,6 +7,11 @@ on:
     types: [published]
   workflow_dispatch:
 
+# Read-only by default; the jobs that attach release assets ask for write
+# access themselves.
+permissions:
+  contents: read
+
 env:
   # Project build settings.
   APP_NAME: "Omega Stick"
@@ -32,6 +37,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0
+        persist-credentials: false # the release step uses GITHUB_TOKEN directly
 
     # The firmware number comes from version.txt (see the top-level
     # CMakeLists.txt). A release is only a release if its tag names that same
@@ -103,6 +109,10 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    # Downloads the build artifact and attaches the programmers to the release.
+    permissions:
+      contents: write
+      actions: read
     steps:
       - uses: esp-cpp/esp-packaged-programmer-action@de8c8efe3daa81de8d1e0ca66393a5e12fbf284c # v1.0.5
         with:
