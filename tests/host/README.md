@@ -9,6 +9,27 @@ no ESP-IDF and no hardware. They cover:
   including the framing path through the real espp `stream_frame` parser
 - `XacInputReport` (`components/xac`): the byte layout `get_report()` hands
   to `write_hid_report()`, checked against the real espp `hid-rp` headers
+- Calibration math (`test_calibration_math.cpp`): `center_calibration`,
+  `range_calibration`, `finalize_center_deadzone`, manual offsets and
+  `MedianFilter3`, driven by a deterministic fake sensor and an injected
+  no-op `SleepFunction` (`Config::sleep`)
+- `DriftCompensator` (`test_drift.cpp`) through its time-injected `update()`
+  overload: dwell, rate limit, motion reset, `reset()`
+- `espp::TMAG5273` (`test_tmag5273.cpp`) over a fake 256-byte I2C register
+  file: `initialize()`, read-modify-write setters, raw/scaled/temperature/angle
+  reads, bus failures
+- `MouseInputReport` (`test_mouse_report.cpp`): delta clamping, button bounds,
+  reset semantics, report size and byte order
+- HID descriptors (`test_hid_descriptor.cpp`, walker in
+  `hid_descriptor_check.hpp`): a short-item parser totals the Input bits per
+  Report ID and checks collection balance; applied to the XAC and mouse
+  descriptors, whose bit totals must equal 8 * the bytes `get_report()` emits
+- Control core (`test_control.cpp`): `components/omega_control/include/omega_control.hpp`
+  is the pure core of `main/main.cpp` (nudge click, per-report output, drift
+  bookkeeping, recalibration hand-off). Tests drive `mouse_step`/`xac_step` and
+  `mouse_tick`/`xac_tick` with injected time and a fake `Ports` that records
+  every call in order, including that a neutral report brackets every
+  recalibration so a held nudge button is released
 
 ## Running
 
@@ -19,30 +40,54 @@ ctest --test-dir build-host --output-on-failure
 ```
 
 Needs CMake 3.20+ and a C++20 compiler with `<format>` (GCC 13+, Clang 17+,
-MSVC 19.37+). On first configure the two espp headers the protocol depends
-on (`stream_frame.hpp`, `dispatcher.hpp`) are downloaded pinned to the
-release recorded in `dependencies.lock` and checked by SHA-256. If an
-`idf.py build` has already populated `managed_components/`, those copies are
-used instead. The `espp/hid-rp` component archive (about 130 KB, the same
-one idf.py unpacks) is always downloaded and hash-checked, never taken from
-`managed_components/`, so a local patch there cannot change the XAC report
-tests' result.
+MSVC 19.37+). On first configure each espp component is downloaded from the
+ESP component registry, pinned to the version in `dependencies.lock` and
+checked by SHA-256. If an `idf.py build` has already populated
+`managed_components/`, those copies are used instead (except `hid-rp`, which
+is always downloaded and hash-checked, so a local patch there cannot change
+the XAC report tests' result).
+
+### CMake options
+
+All default to OFF.
+
+| Option | Effect |
+|---|---|
+| `OMEGA_HOST_WERROR` | `-Werror` (`/WX` on MSVC) for the tests and the espp sources. espp headers are `SYSTEM` includes, so only project code can fail the build. |
+| `OMEGA_HOST_SANITIZE` | `-fsanitize=address,undefined` on GCC and Clang (not MSVC). Run with `ASAN_OPTIONS=halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1`. Does not link with Windows clang (MSVC ABI): `stl_asan.lib` is missing; use Linux or MSVC `/fsanitize=address` separately. |
+| `OMEGA_HOST_COVERAGE` | `--coverage` on GCC and Clang. Summarise with `gcovr -r . --filter 'components/' --filter 'tests/host/' --exclude 'build.*'` after running ctest. |
+
+```
+cmake -S tests/host -B build-san -DCMAKE_BUILD_TYPE=Debug   -DCMAKE_CXX_COMPILER=clang++ -DOMEGA_HOST_WERROR=ON -DOMEGA_HOST_SANITIZE=ON
+cmake --build build-san
+ctest --test-dir build-san --output-on-failure
+```
 
 ## What is real and what is stubbed
 
+Nothing is stubbed. Every espp piece is the real, pinned component:
+
 | Header | Source |
 |---|---|
-| `omega_calibration.hpp`, `omega_store.hpp`, `calibration_service.hpp` | the component under test |
-| `xac.hpp` | the component under test |
-| `stream_frame.hpp`, `dispatcher.hpp` | real espp, pinned |
-| `hid-rp-gamepad.hpp`, `hid-rp.hpp`, `gamepad_hat.hpp`, `hid/` | real espp `hid-rp` 1.3.3 archive, pinned |
-| `format.hpp`, `hid-rp-gamepad-formatters.hpp` | `stubs/`, empty: only a `fmt::formatter` forward declaration is needed |
-| `logger.hpp`, `base_component.hpp` | `stubs/`, prints to stderr via `std::format` |
-| `joystick.hpp`, `range_mapper.hpp` | `stubs/`, records what `set_calibration` received |
-| `file_system.hpp` | `stubs/`, root under the system temp directory |
+| `omega_calibration.hpp`, `omega_store.hpp`, `calibration_service.hpp`, `xac.hpp` | the components under test |
+| `stream_frame.hpp`, `dispatcher.hpp` | real espp 1.3.5 |
+| `base_component.hpp`, `logger.hpp` (+ `logger.cpp`) | real espp 1.3.5 |
+| `format.hpp` and the vendored fmt | real espp `format` 1.3.5, header-only (`FMT_HEADER_ONLY`, set by `format.hpp`) |
+| `range_mapper.hpp`, `vector2d.hpp` | real espp `math` 1.3.5 |
+| `joystick.hpp` (+ `joystick.cpp`) | real espp 1.3.3 |
+| `file_system.hpp` (+ `file_system.cpp`) | real espp 1.3.4 |
+| `base_peripheral.hpp` | real espp 1.3.3 |
+| `hid-rp-*.hpp`, `hid/` and the `*-formatters.hpp` headers | real espp `hid-rp` 1.3.3 archive |
 
-The stubs deliberately expose a few extra accessors (marked "test-only") so
-tests can assert on what the component pushed into them.
+`logger.cpp`, `file_system.cpp` and `joystick.cpp` are built into the static
+library `espp_host`, the same files espp's own desktop build compiles. Off
+ESP-IDF, `espp::FileSystem::get_root_path()` is the current working
+directory, so `test_main.cpp` switches into a throwaway temp directory before
+running and removes it afterwards.
+
+The real `Joystick` exposes no calibration getters, so tests assert on its
+mapped `x()`/`y()` output (and `center_deadzone_radius()`/`range_deadzone()`)
+after `update(raw_x, raw_y)`.
 
 ## Known-bug tests (`XFAIL_TEST`)
 
@@ -62,18 +107,14 @@ Current XFAIL entries:
 - `service_ok_reply_is_sent_before_mode_change_callback_runs`: the mode
   change callback (which reboots) runs before the OK reply is built, so the
   console always times out on `SET_INPUT_MODE`.
-- `xac_report_bytes_follow_descriptor_order`,
-  `xac_centered_report_is_neutral`, `xac_stick_x_moves_report_x`: espp's
-  `GamepadInputReport::get_report()` (and `set_data()`) skip a fixed 2 bytes
-  at the front of the object. With the default `uint16_t` axes that is the
-  report ID plus one byte of alignment padding, but `XacInputReport` uses
-  `uint8_t` axes, which have no padding, so the copy starts one byte late:
-  X is dropped, every later field moves down a slot, RZ reads 0 (right
-  stick pinned to an edge) and the last byte is read from past the end of
-  the object. This is the "drifts up, only moves in X" behaviour seen on
-  the Xbox Adaptive Controller. The fix belongs upstream in espp
-  (`hid-rp-gamepad.hpp`); until then `XacInputReport` should override
-  `get_report()` with a 1-byte offset (0 when `REPORT_ID` is 0).
+- `range_calibration_rejects_insufficient_sector_coverage`:
+  `MIN_COVERED_SECTORS` is never checked, so a sweep of 8 of 32 sectors is
+  accepted instead of failing with `no_range_samples`.
+- `tmag_angle_conversion_getter_reads_back_what_the_setter_wrote`:
+  `set_angle_conversion` writes `SENSOR_CONFIG_2` bits 3:2 but
+  `angle_conversion()` reads bits 7:6.
+- `mouse_set_button_rejects_indices_that_wrap_into_range`: the button index is
+  narrowed from `int` to `uint16_t`, so 65537 acts as button 1.
 
 ## Component quirks the host build surfaced
 
@@ -86,8 +127,31 @@ Current XFAIL entries:
   work, so `ec == OmegaCalibration::Error::file_open_failed` does not
   compile. The tests go through `support::is_error()` instead.
 
+- `tmag5273.hpp`'s `range_xy_mT()`, `range_z_mT()` and `convert_raw_to_mT()`
+  are private with no public caller, so `test_tmag5273.cpp` opens the class
+  with `#define private public` around that one include. It also relies on
+  the header's `printf` being reachable transitively (no `<cstdio>` include),
+  and `is_connected()` prints the device ID on every call.
+- `hid-rp-mouse.hpp` narrows `int` to `uint16_t` in `set_button`/`get_button`;
+  MSVC flags it (C4244). The two test files that include it silence that one
+  warning (`/wd4244` in `CMakeLists.txt`) until the header is fixed.
+- `range_calibration()` indexes an empty vector (undefined behaviour) when
+  samples read fine but every one sits exactly on the center, because no
+  sector then has a positive radius. Not tested, since it cannot be run safely.
+
+## Golden frames
+
+`test_golden_frames.cpp` drives every console request through the real
+dispatcher and `CalibrationService` from a fixed store state and compares the
+request/reply bytes with `tests/protocol/golden_frames.json`, which
+`tests/web/golden.test.js` also reads. After an intentional protocol change
+regenerate it with `OMEGA_WRITE_GOLDEN=1 build-host/omega_host_tests` and review
+the diff. The ERROR message's platform-specific `std::errc` text is rewritten to
+a fixed string so the file is identical on every platform.
+
 ## Not covered here
 
 Anything that needs a real task scheduler or USB: the concurrent
 `save_to_flash` writers, the joystick recalibration race against the control
-loop, and the held-button-through-calibration report bug in `main.cpp`.
+loop, and the USB/HID writes and sensor sweep inside `EspPorts` in `main.cpp`
+(the control logic itself is covered by `test_control.cpp`).

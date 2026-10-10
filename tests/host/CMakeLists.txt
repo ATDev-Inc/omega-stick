@@ -1,21 +1,31 @@
 # Host-side unit tests for components/omega_calibration.
 #
-# Builds the calibration headers against small stand-ins for the espp pieces
-# that need ESP-IDF (logger, base_component, joystick, file_system) and
-# against the REAL espp stream_frame / dispatcher headers, so the wire
-# protocol under test is the one the device speaks.
+# Builds the calibration headers against the REAL espp components (logger,
+# format/fmt, base_component, math, file_system, joystick, stream_frame,
+# dispatcher, hid-rp), pinned to the versions in dependencies.lock, so the
+# tests run the same code the firmware does.
 #
 #   cmake -S tests/host -B build-host
 #   cmake --build build-host
 #   ctest --test-dir build-host --output-on-failure
 #
-# stream_frame/dispatcher come from managed_components/ when an idf.py build
-# has populated it, otherwise they are downloaded pinned to the version in
-# dependencies.lock and verified by hash. The hid-rp headers used by the XAC
-# report tests are always downloaded that way.
+# Options (all default OFF):
+#   OMEGA_HOST_WERROR    warnings as errors (-Werror or /WX)
+#   OMEGA_HOST_SANITIZE  AddressSanitizer + UBSan (GCC/Clang frontends only)
+#   OMEGA_HOST_COVERAGE  --coverage instrumentation (GCC/Clang only)
+#   OMEGA_HOST_FUZZ      libFuzzer target omega_frame_fuzz (Clang, needs OMEGA_HOST_SANITIZE)
+#
+# Each espp component comes from managed_components/ when an idf.py build has
+# populated it, otherwise the pinned registry archive is downloaded and
+# verified by hash. The hid-rp headers used by the XAC report tests are always
+# downloaded, never taken from managed_components/.
 
 cmake_minimum_required(VERSION 3.20)
 project(omega_stick_host_tests CXX)
+
+option(OMEGA_HOST_WERROR "Treat compiler warnings as errors" OFF)
+option(OMEGA_HOST_SANITIZE "Build with AddressSanitizer and UBSan (not MSVC)" OFF)
+option(OMEGA_HOST_COVERAGE "Build with --coverage instrumentation (GCC/Clang)" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,7 +34,6 @@ set(CMAKE_CXX_EXTENSIONS ON)
 add_compile_definitions(_USE_MATH_DEFINES)
 
 set(OMEGA_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
-set(ESPP_VERSION "v1.3.5") # espp/stream_frame, espp/dispatcher in dependencies.lock
 set(ESPP_HID_RP_VERSION "1.3.3") # espp/hid-rp in dependencies.lock
 
 function(fetch_pinned url dest sha256)
@@ -40,46 +49,81 @@ function(fetch_pinned url dest sha256)
   endif()
 endfunction()
 
-function(fetch_espp_header version component name sha256)
-  fetch_pinned(
-    "https://raw.githubusercontent.com/esp-cpp/espp/${version}/components/${component}/include/${name}"
-    "${CMAKE_CURRENT_BINARY_DIR}/espp-${version}/${component}/${name}" ${sha256})
+# espp_component(<name> <version> <sha256>)
+# Sets ESPP_<NAME>_DIR to the component root: managed_components/espp__<name>
+# when present, else the pinned registry archive extracted into the build dir.
+set(ESPP_MANAGED "${OMEGA_ROOT}/managed_components")
+function(espp_component name version sha256)
+  set(managed "${ESPP_MANAGED}/espp__${name}")
+  if(IS_DIRECTORY "${managed}/include")
+    message(STATUS "Using espp ${name} from managed_components/")
+    set(root "${managed}")
+  else()
+    set(archive "${CMAKE_CURRENT_BINARY_DIR}/espp__${name}-v${version}.zip")
+    set(root "${CMAKE_CURRENT_BINARY_DIR}/espp__${name}-v${version}")
+    fetch_pinned(
+      "https://components-file.espressif.com/components/espp/${name}/${version}/espp__${name}-v${version}.zip"
+      "${archive}" ${sha256})
+    if(NOT IS_DIRECTORY "${root}/include")
+      file(ARCHIVE_EXTRACT INPUT "${archive}" DESTINATION "${root}")
+    endif()
+  endif()
+  string(TOUPPER "${name}" upper)
+  set(ESPP_${upper}_DIR "${root}" PARENT_SCOPE)
 endfunction()
 
-# ---- espp stream_frame / dispatcher ----------------------------------------
-set(ESPP_MANAGED "${OMEGA_ROOT}/managed_components")
-if(EXISTS "${ESPP_MANAGED}/espp__stream_frame/include/stream_frame.hpp"
-   AND EXISTS "${ESPP_MANAGED}/espp__dispatcher/include/dispatcher.hpp")
-  message(STATUS "Using espp stream_frame/dispatcher from managed_components/")
-  set(ESPP_INCLUDE_DIRS
-      "${ESPP_MANAGED}/espp__stream_frame/include"
-      "${ESPP_MANAGED}/espp__dispatcher/include")
-else()
-  fetch_espp_header(${ESPP_VERSION} stream_frame stream_frame.hpp
-    a67f593bbe21484806373ab05b43eb25e77bed98819780f1fc58d8014477deee)
-  fetch_espp_header(${ESPP_VERSION} dispatcher dispatcher.hpp
-    b0ca02a77cd3029428426cc8acae296b7e05495683d0fc2529118aa4c22c68dc)
-  set(ESPP_INCLUDE_DIRS
-      "${CMAKE_CURRENT_BINARY_DIR}/espp-${ESPP_VERSION}/stream_frame"
-      "${CMAKE_CURRENT_BINARY_DIR}/espp-${ESPP_VERSION}/dispatcher")
-endif()
+# Versions and hashes match dependencies.lock.
+espp_component(base_component 1.3.5 764d10c78704e9ce0a0333a3e9d880dbe367688339f7a0446294bb4440ad30ca)
+espp_component(logger 1.3.5 76c9dade62c4a9c63e768b48e7b9c8250825cf629ca77d3b2b7455b3bc1d938b)
+espp_component(format 1.3.5 6578b1e1c9000c79391e12d5e4211070e798ef58fae15c12e0a97e57f8a4f96e)
+espp_component(math 1.3.5 9100b217858d28050b7e9eafa4d2eac4551f9a65ca7b4a06754b721c3a97a8f6)
+espp_component(file_system 1.3.4 bdbe4315a2452bd66986d83868287678eac6cea373c717d1c1e788056b09f4bb)
+espp_component(base_peripheral 1.3.3 2780c1f4502af473cfeb8e397105427ad84f110ac1a198b77975662d5c0947de)
+espp_component(joystick 1.3.3 db43b0391287fdcfcf7933046484566c0306c4e163ed0557479477daa08ba7af)
+espp_component(stream_frame 1.3.5 b55eae2f242a45ee033602a93c2f1adde04d6f7b8d101790781365298a7d5778)
+espp_component(dispatcher 1.3.5 b17f027dc0df6ca413594d5ebaf20dac7f763180a55f372cb551159681ff56c7)
+
+set(ESPP_INCLUDE_DIRS
+    "${ESPP_BASE_COMPONENT_DIR}/include"
+    "${ESPP_LOGGER_DIR}/include"
+    # The format component exposes the vendored fmt next to its own header.
+    "${ESPP_FORMAT_DIR}/include"
+    "${ESPP_FORMAT_DIR}/detail/fmt/include"
+    "${ESPP_MATH_DIR}/include"
+    "${ESPP_FILE_SYSTEM_DIR}/include"
+    "${ESPP_BASE_PERIPHERAL_DIR}/include"
+    "${ESPP_JOYSTICK_DIR}/include"
+    "${ESPP_STREAM_FRAME_DIR}/include"
+    "${ESPP_DISPATCHER_DIR}/include")
 
 # ---- espp hid-rp (XAC report) ----------------------------------------------
 # The pinned component archive from the ESP component registry, the same one
 # idf.py unpacks into managed_components/. It is always downloaded, never taken
 # from managed_components/, so a local patch to the managed copy cannot make
-# the report layout tests pass. The staged copy leaves out the fmt formatter
-# headers; stubs/ provides empty stand-ins for those.
+# the report layout tests pass.
 set(HID_RP_ARCHIVE "${CMAKE_CURRENT_BINARY_DIR}/espp__hid-rp-v${ESPP_HID_RP_VERSION}.zip")
 set(HID_RP_DIR "${CMAKE_CURRENT_BINARY_DIR}/espp__hid-rp-v${ESPP_HID_RP_VERSION}")
 fetch_pinned(
   "https://components-file.espressif.com/components/espp/hid-rp/${ESPP_HID_RP_VERSION}/espp__hid-rp-v${ESPP_HID_RP_VERSION}.zip"
   "${HID_RP_ARCHIVE}"
   986766286692d7a4029c3a7021f72b69d6f6aff161b8d096612ab97398490405)
-if(NOT EXISTS "${HID_RP_DIR}/host-include/hid-rp-gamepad.hpp")
+if(NOT EXISTS "${HID_RP_DIR}/include/hid-rp-gamepad.hpp")
   file(ARCHIVE_EXTRACT INPUT "${HID_RP_ARCHIVE}" DESTINATION "${HID_RP_DIR}")
-  file(COPY "${HID_RP_DIR}/include/" DESTINATION "${HID_RP_DIR}/host-include"
-       PATTERN "*-formatters.hpp" EXCLUDE)
+endif()
+
+# ---- real espp sources ------------------------------------------------------
+# The same files espp's own desktop build compiles. fmt is header-only here:
+# the format component's format.hpp defines FMT_HEADER_ONLY itself, so there
+# is nothing to build for it.
+add_library(espp_host STATIC
+  "${ESPP_LOGGER_DIR}/src/logger.cpp"
+  "${ESPP_FILE_SYSTEM_DIR}/src/file_system.cpp"
+  "${ESPP_JOYSTICK_DIR}/src/joystick.cpp")
+target_include_directories(espp_host SYSTEM PUBLIC ${ESPP_INCLUDE_DIRS})
+if(WIN32)
+  # file_system.cpp calls std::localtime, which the Windows CRT flags as
+  # deprecated. SYSTEM includes cannot hide a warning in a .cpp we compile.
+  target_compile_definitions(espp_host PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
 
 # ---- test binary ------------------------------------------------------------
@@ -88,27 +132,91 @@ add_executable(omega_host_tests
   test_persistence.cpp
   test_store.cpp
   test_service.cpp
-  test_xac_report.cpp)
+  test_xac_report.cpp
+  test_calibration_math.cpp
+  test_drift.cpp
+  test_tmag5273.cpp
+  test_mouse_report.cpp
+  test_hid_descriptor.cpp
+  test_control.cpp
+  test_golden_frames.cpp)
+
+# Shared golden frames: generated by test_golden_frames.cpp, read by tests/web.
+target_compile_definitions(omega_host_tests PRIVATE
+  OMEGA_PROTOCOL_DIR="${OMEGA_ROOT}/tests/protocol")
 
 target_include_directories(omega_host_tests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}"
-  "${CMAKE_CURRENT_SOURCE_DIR}/stubs"
-  ${ESPP_INCLUDE_DIRS}
   "${OMEGA_ROOT}/components/omega_calibration/include"
-  "${OMEGA_ROOT}/components/xac/include")
-# Third-party headers: keep their warnings out of the -Wall -Wextra build.
+  "${OMEGA_ROOT}/components/omega_control/include"
+  "${OMEGA_ROOT}/components/xac/include"
+  "${OMEGA_ROOT}/components/tmag5273/include"
+  "${OMEGA_ROOT}/components/hid-rp-mouse/include")
+# Third-party headers: keep their warnings out of the warning-clean build.
 target_include_directories(omega_host_tests SYSTEM PRIVATE
-  "${HID_RP_DIR}/host-include"
+  "${HID_RP_DIR}/include"
   "${HID_RP_DIR}/detail/hid-rp/hid-rp")
+target_link_libraries(omega_host_tests PRIVATE espp_host)
 
-if(MSVC)
-  target_compile_options(omega_host_tests PRIVATE /W4)
+# ---- compiler flags ---------------------------------------------------------
+# hid-rp's short_item.hpp uses std::bit_cast without including <bit>. libstdc++
+# pulls it in transitively, MSVC's STL does not; force the include everywhere.
+if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+  # fmt requires /utf-8 (espp_host passes it on to the tests as PUBLIC).
+  target_compile_options(espp_host PUBLIC /utf-8)
+  target_compile_options(omega_host_tests PRIVATE /W4 /FIbit)
+  # hid-rp-mouse.hpp narrows the int button index to uint16_t (C4244); this is
+  # the known bug mouse_set_button_rejects_indices_that_wrap_into_range. Only
+  # the translation units that include that header are exempted.
+  set_source_files_properties(test_mouse_report.cpp test_hid_descriptor.cpp
+                              PROPERTIES COMPILE_OPTIONS "/wd4244")
+  if(OMEGA_HOST_WERROR)
+    target_compile_options(omega_host_tests PRIVATE /WX)
+    target_compile_options(espp_host PRIVATE /WX)
+  endif()
 else()
-  target_compile_options(omega_host_tests PRIVATE -Wall -Wextra)
+  target_compile_options(omega_host_tests PRIVATE -Wall -Wextra -include bit)
+  if(OMEGA_HOST_WERROR)
+    target_compile_options(omega_host_tests PRIVATE -Werror)
+    target_compile_options(espp_host PRIVATE -Werror)
+  endif()
+  if(OMEGA_HOST_SANITIZE)
+    foreach(t omega_host_tests espp_host)
+      target_compile_options(${t} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+      target_link_options(${t} PRIVATE -fsanitize=address,undefined)
+    endforeach()
+  endif()
+  if(OMEGA_HOST_COVERAGE)
+    foreach(t omega_host_tests espp_host)
+      target_compile_options(${t} PRIVATE --coverage)
+      target_link_options(${t} PRIVATE --coverage)
+    endforeach()
+  endif()
 endif()
 if(MINGW)
   # Let the binary run from shells that do not have the MinGW bin dir on PATH.
   target_link_options(omega_host_tests PRIVATE -static)
+endif()
+
+# ---- libFuzzer harness (tests/fuzz) ------------------------------------------
+# Clang only; needs OMEGA_HOST_SANITIZE so espp_host carries the same
+# instrumentation. Not part of the default build or of ctest.
+option(OMEGA_HOST_FUZZ "Build the libFuzzer frame fuzzer (Clang, needs OMEGA_HOST_SANITIZE)" OFF)
+if(OMEGA_HOST_FUZZ)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR
+     CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+    message(FATAL_ERROR "OMEGA_HOST_FUZZ needs the Clang GNU-style frontend (clang++)")
+  endif()
+  if(NOT OMEGA_HOST_SANITIZE)
+    message(FATAL_ERROR "OMEGA_HOST_FUZZ requires OMEGA_HOST_SANITIZE=ON")
+  endif()
+  add_executable(omega_frame_fuzz "${OMEGA_ROOT}/tests/fuzz/frame_fuzz.cpp")
+  target_include_directories(omega_frame_fuzz PRIVATE
+    "${OMEGA_ROOT}/components/omega_calibration/include")
+  target_compile_options(omega_frame_fuzz PRIVATE
+    -Wall -Wextra -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer)
+  target_link_options(omega_frame_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+  target_link_libraries(omega_frame_fuzz PRIVATE espp_host)
 endif()
 
 enable_testing()

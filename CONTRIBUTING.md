@@ -187,22 +187,33 @@ Commit both [main/idf_component.yml](main/idf_component.yml) and the updated
 
 ## Testing
 
-There is no automated hardware test suite yet. Until there is:
+Everything that does not need the sensor or a USB host runs in software, on
+every pull request:
 
-- CI verifies that the firmware builds for `esp32s3`.
-- CI runs the host unit tests in [tests/host](tests/host/README.md) (see
-  below).
-- Anything touching sensor reads, HID output, or the calibration sweep itself
-  needs manual verification on real hardware. Describe what you did in the PR.
-- When testing input behavior, check more than the happy path. Test slow
-  movements, held positions, rapid direction changes, and the sensor being
-  unplugged mid-session.
+- **Firmware build** for `esp32s3` (`build.yml`).
+- **Host unit tests** in [tests/host](tests/host/README.md): gcc with
+  coverage, clang with AddressSanitizer and UBSan, and MSVC, all with warnings
+  as errors (`host_tests.yml`).
+- **Web console tests** in [tests/web](tests/web/README.md) under Node
+  (`web_tests.yml`), including golden frames shared with the C++ side.
+- **Fuzzing** of the frame parser and calibration service in
+  [tests/fuzz](tests/fuzz/README.md), a short libFuzzer run (`fuzz.yml`).
+- **Static analysis** with cppcheck (`static_analysis.yml`) and a binary size
+  delta comment (`size_delta.yml`).
+
+There is still no automated hardware test. Anything touching sensor reads, USB
+enumeration, or the calibration sweep's real-world behaviour needs manual
+verification on a board; describe what you did in the PR. When testing input
+behaviour, check more than the happy path: slow movements, held positions,
+rapid direction changes, and the sensor being unplugged mid-session.
 
 ### Host unit tests
 
-The calibration component (`components/omega_calibration`) has unit tests
-that build and run on a desktop with no ESP-IDF and no board. They need CMake
-3.20+ and a C++20 compiler with `<format>` (GCC 13+, Clang 17+, MSVC 19.37+):
+The host suite builds the project's headers (`omega_calibration`,
+`omega_control`, `tmag5273`, `hid-rp-mouse`, `xac`) against the real espp
+components, pinned to the versions in `dependencies.lock` and verified by
+hash, with no ESP-IDF and no board. It needs CMake 3.20+ and a C++20 compiler
+with `<format>` (GCC 13+, Clang 17+, MSVC 19.37+):
 
 ```console
 cmake -S tests/host -B build-host
@@ -210,13 +221,16 @@ cmake --build build-host
 ctest --test-dir build-host --output-on-failure
 ```
 
-The tests compile the component headers unchanged. The espp pieces that need
-ESP-IDF (logger, joystick, file system) are replaced by small stand-ins under
-`tests/host/stubs/`; the espp framing and dispatcher headers are the real ones,
-downloaded pinned to the version in `dependencies.lock` and verified by hash.
+The control loops in `main/main.cpp` are thin adapters around
+`components/omega_control/include/omega_control.hpp`, which is pure and
+host-tested. Hardware access (I2C, time, sleeping, HID writes) is injected, so
+logic changes belong in the testable layer, not in `main.cpp`.
 
-If you change the calibration store, the console protocol, or the calibration
-file format, add or update a test alongside the change.
+If you change the calibration store, the console protocol, the calibration
+file format, the control loop, or a driver's register handling, add or update a
+test alongside the change. Protocol changes must keep the C++ and JavaScript
+sides in step: regenerate `tests/protocol/golden_frames.json` (see
+tests/host/README.md) and the web tests will check the console against it.
 
 **Known-bug tests.** A test registered with `XFAIL_TEST` documents behaviour
 that is currently wrong. It is expected to fail and does not turn the run red.

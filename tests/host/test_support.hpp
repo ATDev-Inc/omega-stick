@@ -17,7 +17,7 @@
 
 namespace support {
 
-/// A unique, empty directory under the stubbed FileSystem root. Removed on
+/// A unique, empty directory under the FileSystem root (the cwd set by test_main.cpp). Removed on
 /// destruction.
 struct TempDir {
   std::filesystem::path path;
