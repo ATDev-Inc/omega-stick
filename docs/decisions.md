@@ -29,6 +29,12 @@ The AT field precedent is Makers Making Change's OpenAT joysticks, which ship
 "USB HID Mouse or USB HID Gamepad" with a **physical mode-cycle switch**. Omega
 Stick differs here: see D11.
 
+**Current firmware (2026-10-10):** the code differs from this decision. Switching
+input mode saves settings and restarts the device (`esp_restart()`), so the host
+re-enumerates. Each mode uses a single-mode descriptor: mouse-only (report ID 0)
+or gamepad-only (report ID 1). There is no composite interface carrying both.
+The gap is tracked in [status.md](status.md#gaps-against-requirements-and-decisions).
+
 **Risk:** Apple forum reports suggest exotic or composite descriptors can make
 iOS ignore a device entirely. Bench-verify on iPadOS early, since that is the
 platform where mouse mode is the only option.
@@ -37,7 +43,10 @@ platform where mouse mode is the only option.
 
 **Decision:** there is **no physical mode control**. Output mode, deadzone,
 response curve, gain, and axis inversion are all set from a browser-based
-configuration page that installs nothing, and **every setting persists to NVS**.
+configuration page that installs nothing, and **every setting persists to
+on-device flash**. The current firmware stores calibration and settings as
+`key=value` files on the LittleFS partition (`omega_calibration.cfg`,
+`omega_settings.cfg`), not in NVS.
 
 **Why persistence carries the design.** The device is configured once on a
 computer and then keeps that configuration everywhere, including on an XAC, a
@@ -75,6 +84,14 @@ already (X/Y left stick, Z/RZ right stick, 2 triggers, 4-bit hat, N buttons).
 
 Caveat: `get_descriptor()` returns a fragment the caller must wrap in
 `usage_page<generic_desktop>` / `usage(GAMEPAD)` / `collection::application`.
+
+**Current firmware (2026-10-10):** the XAC report is the `espp` hid-rp
+`GamepadInputReport` with 12 buttons, 8-bit axes (0 to 255; full deflection
+reaches 0 and 254, since hid-rp maps [-1, 1] to center 127 +/- 127), a hat, and
+triggers held at 0. It is carried in a gamepad-only descriptor, not alongside a
+mouse (see D2). `set_joystick` writes the stick X/Y onto all four axes (X, Y, Z,
+RZ) because the XAC's port-to-axis mapping is not yet confirmed. The gap is
+tracked in [status.md](status.md#gaps-against-requirements-and-decisions).
 
 ## D4: Console support routes through the XAC USB-A port, not direct
 
@@ -149,6 +166,10 @@ USB-IF charges **$6,000** for a VID and forbids sharing it. Espressif allocates
 PIDs by pull request for projects using an Espressif chip with a USB interface,
 at no cost and with no endorsement implied. pid.codes is the fallback.
 
+**Current firmware (2026-10-10):** the firmware uses the pid.codes VID `0x1209`
+with PID `0x0d32`, not an Espressif PID. `main/main.cpp` notes that both should
+be replaced with an allocated PID before shipping. The gap is tracked in [status.md](status.md#gaps-against-requirements-and-decisions).
+
 ---
 
 ## D12: Actuation force is adjustable, defaulting below 10 gf
@@ -178,6 +199,38 @@ depends on. It now constrains the *minimum* achievable force instead.
 differentiator on its own, which matches section 5 of [PRD.md](PRD.md).
 
 ---
+
+## D13: Mouse clicks and scroll come from stick nudge gestures
+
+*Recorded from the implementation on 2026-10-10.*
+
+The stick has no buttons in mouse mode, so clicks and scroll are produced by
+"nudge" gestures: a short push past an enter threshold in one cardinal direction,
+held for a time window, released when the stick falls below an exit threshold.
+In `main/main.cpp`, a forward nudge holds mouse button 1 (primary click), a right
+nudge holds button 2 (secondary click), and left and back nudges scroll. The enter threshold, exit threshold,
+and time window are tunable from the calibration console and persisted with the
+other settings (D11). This is the zero-BOM approach D11 anticipates for mouse
+click (OUT-3).
+
+## D14: The configuration page is one static HTML file over WebUSB and Web Serial
+
+*Recorded from the implementation on 2026-10-10.*
+
+The calibration console is a single static HTML file served from
+`components/omega_calibration/web`, with no install step. It speaks one framed
+protocol over two transports: WebUSB (the vendor interface) and Web Serial (CDC).
+It needs a Chromium-based browser, which is the concrete form of the
+browser-support risk in D11.
+
+## D15: The boot flash window is a developer-only Kconfig option, default 0
+
+*Recorded from the implementation on 2026-10-10.*
+
+`OMEGA_STICK_BOOT_FLASH_WINDOW_S` (range 0 to 60) delays starting USB at boot so
+`idf.py flash` can reset the board into the bootloader without holding BOOT.
+Developers set it locally in menuconfig (`sdkconfig` is gitignored). The default
+is 0 so that anything users run starts responding immediately.
 
 ## Open question: compete with Willow, or collaborate?
 

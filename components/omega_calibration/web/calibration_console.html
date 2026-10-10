@@ -24,9 +24,9 @@
 
     ------------------------------------------------------------------
     CALIBRATION PROTOCOL (MODULE 5) -- this is the contract a firmware-side
-    handler needs to implement (e.g. a calibration_service.hpp alongside
-    the existing coredump_service.hpp / ota_service.hpp, registered with
-    the same espp::Dispatcher those use). This page is the reference
+    handler needs to implement (implemented by calibration_service.hpp
+    alongside the existing coredump_service.hpp / ota_service.hpp, registered
+    with the same espp::Dispatcher those use). This page is the reference
     client for that contract; nothing here is firmware code.
     ------------------------------------------------------------------
 
@@ -300,7 +300,7 @@
       </div>
       <p id="devInfo" class="muted" style="margin: 8px 0 0;">
         Not connected. Needs a firmware build with the calibration module (5) registered on the
-        same dispatcher as coredump/OTA — see the protocol spec in this page's source comment.
+        same dispatcher as coredump/OTA (see the protocol spec in this page's source comment).
       </p>
     </div>
 
@@ -313,7 +313,7 @@
       </div>
 
       <fieldset>
-        <legend>Calibration (read-only — from the last interactive sweep)</legend>
+        <legend>Calibration (read-only, from the last interactive sweep)</legend>
         <div class="field-grid" id="calibrationFields">
           <div class="field"><span class="field-label">Center X / Y</span><span class="field-value" data-f="center">-</span></div>
           <div class="field"><span class="field-label">Center noise radius</span><span class="field-value" data-f="noise">-</span></div>
@@ -387,7 +387,7 @@
           <button id="modeMouseBtn" disabled>Mouse</button>
           <button id="modeXacBtn" disabled>XAC gamepad</button>
         </div>
-        <p class="muted" style="margin: 8px 0 0;">Applies live and takes effect immediately (may re-enumerate the USB HID device).</p>
+        <p class="muted" style="margin: 8px 0 0;">The device saves its settings and restarts to apply the new mode, so this console will disconnect; reconnect afterwards.</p>
       </fieldset>
 
       <fieldset>
@@ -395,7 +395,7 @@
         <p class="warn-text" style="margin: 0 0 8px;">
           Re-runs the full interactive center + range calibration sequence on the device
           (the same one that runs on a fresh boot). This blocks mouse/XAC output for the
-          duration and walks you through moving the stick via printed prompts — connect
+          duration and walks you through moving the stick via printed prompts. Connect
           over <strong>Web Serial</strong> (not WebUSB) to see those prompts in the console
           log below. Manual deadzone overrides, nudge tuning, and input mode are left as-is.
         </p>
@@ -418,8 +418,8 @@
     <footer>
       Speaks a module-5 extension of the espp OT framing shared with the coredump and OTA
       consoles (magic "OT" + flags + module + type + len + payload + CRC-32; see this page's
-      source comment for the full spec). Firmware flashing (.elf) is handled by the separate
-      OTA console — see <a href="ota_console.html">ota_console.html</a> alongside this page.
+      source comment for the full spec). This page does not flash firmware; use
+      <code>idf.py flash</code> as described in the project README.
       Everything here runs locally in your browser.
     </footer>
   </div>
@@ -1034,7 +1034,7 @@
     }
 
     // ===================================================================
-    // STATE decode/encode helpers (fixed 79-byte struct — see the header
+    // STATE decode/encode helpers (fixed 79-byte struct, see the header
     // comment for the exact field order/sizes)
     // ===================================================================
     let state = null; // decoded STATE payload, kept as the form's source of truth

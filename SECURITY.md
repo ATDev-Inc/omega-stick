@@ -12,6 +12,8 @@ not use a network stack today, so the relevant attack surface is primarily:
 
 * USB descriptor and HID report handling (TinyUSB)
 * I2C input handling from the TMAG5273 hall-effect sensor
+* The calibration console protocol, parsed from frames received over the USB
+  vendor (WebUSB) and CDC (serial) interfaces
 * Buffer handling and parsing elsewhere in the firmware
 
 Physical-access attacks against the device itself (someone with the device

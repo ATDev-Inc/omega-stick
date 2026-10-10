@@ -223,8 +223,9 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
               printf("WARNING: failed to save settings before restart: %s\n",
                      save_ec.message().c_str());
             }
-            // Give the calibration console's OK reply a moment to actually
-            // go out over USB before the reset tears the link down.
+            // CalibrationService sends the OK before calling this; give it a
+            // moment to actually go out over USB before the reset tears the
+            // link down.
             std::this_thread::sleep_for(200ms);
             esp_restart();
           },
@@ -397,7 +398,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
   printf("Y maximum:                 %.6f\n", center.effective_center_y() + range.max_y);
 
-  if (!XAC_SELECTION) { // TODO
+  if (!XAC_SELECTION) { // MOUSE mode; the XAC branch is the else below
 
     printf("\n");
     printf("========================================\n");
