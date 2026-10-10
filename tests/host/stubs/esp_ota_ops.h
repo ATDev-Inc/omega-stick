@@ -5,8 +5,8 @@
 // behaviour comes from one global esp_ota_fake() that tests set up and inspect;
 // OtaFixture resets it for every test. C++ only (the real API is C linkage).
 
-#include <cstdio>
-#include <cstring>
+#include <stdio.h>
+#include <string.h>
 
 #include "esp_app_desc.h"
 
@@ -55,15 +55,15 @@ struct esp_ota_ops_fake {
 
   void reset() {
     has_other_partition = true;
-    std::memset(&other, 0, sizeof(other));
-    std::snprintf(other.label, sizeof(other.label), "%s", "ota_1");
+    memset(&other, 0, sizeof(other));
+    snprintf(other.label, sizeof(other.label), "%s", "ota_1");
     other_has_image = true;
-    std::memset(&other_desc, 0, sizeof(other_desc));
+    memset(&other_desc, 0, sizeof(other_desc));
     other_desc.magic_word = 0xABCD5432u;
-    std::snprintf(other_desc.version, sizeof(other_desc.version), "%s", "0.0.9-prev");
-    std::snprintf(other_desc.project_name, sizeof(other_desc.project_name), "%s", "omega_stick");
-    std::snprintf(other_desc.time, sizeof(other_desc.time), "%s", "01:02:03");
-    std::snprintf(other_desc.date, sizeof(other_desc.date), "%s", "Jan  2 2026");
+    snprintf(other_desc.version, sizeof(other_desc.version), "%s", "0.0.9-prev");
+    snprintf(other_desc.project_name, sizeof(other_desc.project_name), "%s", "omega_stick");
+    snprintf(other_desc.time, sizeof(other_desc.time), "%s", "01:02:03");
+    snprintf(other_desc.date, sizeof(other_desc.date), "%s", "Jan  2 2026");
     other_state = ESP_OTA_IMG_VALID;
     set_boot_result = ESP_OK;
     set_boot_calls = 0;

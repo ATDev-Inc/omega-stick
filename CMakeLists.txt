@@ -38,7 +38,18 @@ set(
 # `idf.py -DPROJECT_VER=...` overrides all of this.
 #
 # Keep the result under esp_app_desc_t's 32-byte limit (31 characters).
+#
+# Incremental builds: setting PROJECT_VER here skips ESP-IDF's own version.txt
+# reader, which is what would otherwise make CMake re-run when the file
+# changes, so the inputs are registered as configure dependencies below:
+# version.txt, git's HEAD, and the branch ref HEAD points at. A commit or a
+# version bump therefore re-runs CMake on the next `idf.py build`. The ".dirty"
+# suffix is not tracked that way (it would mean re-running CMake on every
+# edit), so it reflects the tree at the last configure; run `idf.py reconfigure`
+# before a build whose dirty state matters.
 if(NOT DEFINED PROJECT_VER)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+               "${CMAKE_CURRENT_SOURCE_DIR}/version.txt")
   file(READ "${CMAKE_CURRENT_SOURCE_DIR}/version.txt" _base_version)
   string(STRIP "${_base_version}" _base_version)
   if(NOT _base_version MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
@@ -58,6 +69,27 @@ if(NOT DEFINED PROJECT_VER)
     if(NOT _rc EQUAL 0)
       set(_sha "")
     endif()
+    # --git-path resolves worktrees (refs live in the common git dir) and
+    # packed refs. A detached HEAD only needs HEAD itself.
+    execute_process(
+      COMMAND ${GIT_EXECUTABLE} rev-parse --symbolic-full-name HEAD
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      OUTPUT_VARIABLE _head_ref OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET RESULT_VARIABLE _rc)
+    set(_git_paths HEAD packed-refs)
+    if(_rc EQUAL 0 AND _head_ref MATCHES "^refs/")
+      list(APPEND _git_paths "${_head_ref}")
+    endif()
+    foreach(_git_path IN LISTS _git_paths)
+      execute_process(
+        COMMAND ${GIT_EXECUTABLE} rev-parse --path-format=absolute --git-path ${_git_path}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE _git_file OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET RESULT_VARIABLE _rc)
+      if(_rc EQUAL 0 AND EXISTS "${_git_file}")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_git_file}")
+      endif()
+    endforeach()
     execute_process(
       COMMAND ${GIT_EXECUTABLE} status --porcelain --untracked-files=no
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

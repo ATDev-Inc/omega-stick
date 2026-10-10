@@ -30,7 +30,7 @@ The pieces:
   ([calibration_console.html](../components/omega_calibration/web/calibration_console.html)).
 - Bootloader rollback (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` in
   [sdkconfig.defaults](../sdkconfig.defaults)) and a health check in
-  [main/main.cpp](../main/main.cpp) that decides when a new image is trusted.
+  [firmware_health_check.hpp](../components/omega_calibration/include/firmware_health_check.hpp) that decides when a new image is trusted.
 
 ## Partition layout
 
@@ -73,6 +73,13 @@ Every later update goes over USB from the console and keeps the saved data.
 After reconnecting, check the Version field in the same section, then test the
 stick (see [Limitations](#limitations)).
 
+If an upload is interrupted, nothing needs a restart. Disconnecting from the
+console mid-upload sends OTA_ABORT first. If the link dies without that (cable
+pulled, tab closed), reconnecting and clicking Flash again over the same link
+replaces the stale upload, and the firmware drops any upload that has had no
+traffic for 30 seconds. Until then, a Flash attempt over the other link (WebUSB
+versus Web Serial) is refused as busy.
+
 ### Protocol messages
 
 These live in the calibration module (see the protocol comment at the top of
@@ -104,7 +111,8 @@ boots in the **pending verify** state, and the bootloader reverts to the previou
 image at the next reset unless the application confirms itself.
 
 Nothing confirms it automatically by default, so `FirmwareHealthCheck` in
-`main/main.cpp` does it. The new image is confirmed only when all of these hold:
+`components/omega_calibration/include/firmware_health_check.hpp` (used by
+`main/main.cpp`) does it. The new image is confirmed only when all of these hold:
 
 - USB HID has enumerated.
 - The TMAG5273 sensor answers.
@@ -114,6 +122,10 @@ If the image is not healthy within `ROLLBACK_DEADLINE` (90 seconds), the firmwar
 marks itself invalid and reboots into the previous image, rather than limping
 along until a power cycle happens to trigger the rollback.
 
+A fatal init failure on a pending image (magnetic sensor, calibration, or USB
+setup) does not wait for the deadline: the firmware rolls back immediately
+instead of halting on a broken image.
+
 Things to know:
 
 - **Any reset in the first 10 seconds or so after an update reverts to the
@@ -121,7 +133,8 @@ Things to know:
   design: the new image has not yet shown it works.
 - While pending, the console shows "pending verify" and a "Mark running image
   valid" button. It is a manual override that sends MARK_VALID and cancels the
-  rollback.
+  rollback. Once the image is confirmed this way, the automatic check stops and
+  never rolls it back, even if the sensor later fails.
 - The console also shows the running partition and the boot partition (the one
   the bootloader will start next). They differ while an update is pending.
 
@@ -170,6 +183,11 @@ before `project()`. What a build embeds and reports:
 | Git unavailable (for example a source tarball) | `0.1.0+unknown` |
 
 `idf.py -DPROJECT_VER=...` overrides all of this.
+
+CMake re-runs on the next `idf.py build` when `version.txt` changes or a commit
+moves HEAD, so an incremental build picks up a version bump or a new commit.
+The `.dirty` suffix reflects the tree when CMake last ran; run
+`idf.py reconfigure` first if a build's dirty state matters.
 
 The version is embedded in the image's `esp_app_desc_t` and shown in two places:
 
