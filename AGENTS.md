@@ -213,6 +213,10 @@ feature; PATCH for fixes only. Builds embed `X.Y.Z` only at a matching
   reformat lines you are not otherwise changing.
 - Commit subject: short and imperative. Add a body explaining why when it is
   not obvious.
+- Add a line under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md) for any
+  user-visible change (Added, Changed, Fixed or Removed), in the existing
+  style: a bold lead-in sentence, then what it means for the user, then the
+  PR link.
 - Fill in [.github/pull_request_template.md](.github/pull_request_template.md).
   Tick only what was actually done: an agent can usually tick "Built locally
   with `idf.py build`" but not "Flashed and tested on hardware". State the
