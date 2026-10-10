@@ -13,7 +13,7 @@ name: Static analysis
 # Two things keep that safe, so think hard before changing either:
 #   - use_cmake stays false, so no CMake configure step runs on PR code.
 #   - no init_script is set, since that would execute a script from the PR.
-on:
+on: # zizmor: ignore[dangerous-triggers] -- see the explanation above
   # "**" not "*": GitHub branch globs treat "*" as matching any characters
   # EXCEPT "/", so a filter of "*" silently skips every pull request whose base
   # branch contains a slash (feat/..., chore/...). That is a silent skip rather
@@ -22,6 +22,12 @@ on:
     branches:
       - "**"
 
+# The write token exists only so the action can post its report as a PR
+# comment; nothing else here needs more than read access.
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   static_analysis:
     runs-on: ubuntu-latest
@@ -29,6 +35,8 @@ jobs:
     steps:
     - name: Checkout repo
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false # the action clones the PR head with its own token
 
     - name: Run static analysis
       uses: esp-cpp/StaticAnalysis@36a11b0254834d560700eafd3d11f9f9b31bca7c # master on 2026-10-10

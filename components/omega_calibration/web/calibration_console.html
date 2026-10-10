@@ -117,6 +117,10 @@
                                    selection could not be written. The reverted
                                    image boots pending verify and must pass the
                                    same health check.
+      0x5F GET_DIAGNOSTICS        (no payload) -- asks for the sensor fault
+                                   status and the reset log. Reply:
+                                   DIAGNOSTICS, or ERROR when the firmware
+                                   does not publish diagnostics.
       The OTA messages reply ERROR (function_not_supported) if the firmware
       was built without an OTA engine wired in.
       0xD2 FW_INFO  (reply to GET_FW_INFO) -- u8 pending_verify (0/1),
@@ -133,6 +137,14 @@
                     no readable image; version/date/time are then empty). Older
                     firmware sends fewer strings: hosts must tolerate a shorter
                     payload and treat missing strings as empty.
+      0xD3 DIAGNOSTICS (reply to GET_DIAGNOSTICS) -- little-endian:
+                      u8  sensor_fault        (0 none, 1 read failed, 2 stuck)
+                      u8  sensor_first_fault  (same codes; latched since boot)
+                      u32 sensor_fault_count  (trips since boot)
+                      u32 boot_count
+                      u8  reset_count         (N, oldest first)
+                      N x { u32 boot, u8 reason, u8 abnormal, u8 name_len,
+                            name_len bytes of utf8 name }
       0xDF OK      (reply to any SET_*/SAVE_TO_FLASH/START_CALIBRATION) --
                     payload: u32 (0 on success; a device may also just omit
                     the payload). For START_CALIBRATION this only means
@@ -495,6 +507,27 @@
     </div>
 
     <div class="panel">
+      <h2>Diagnostics</h2>
+      <div class="row">
+        <button id="diagRefreshBtn" class="primary" disabled>Refresh diagnostics</button>
+        <span id="diagInfo" class="muted">Not fetched yet.</span>
+      </div>
+      <fieldset>
+        <legend>Sensor (TMAG5273)</legend>
+        <div class="field-grid" id="diagnosticFields">
+          <div class="field"><span class="field-label">Fault now</span><span class="field-value" data-d="sensorFault">-</span></div>
+          <div class="field"><span class="field-label">First fault since boot</span><span class="field-value" data-d="sensorFirstFault">-</span></div>
+          <div class="field"><span class="field-label">Faults since boot</span><span class="field-value" data-d="sensorFaultCount">-</span></div>
+          <div class="field"><span class="field-label">Boot count</span><span class="field-value" data-d="bootCount">-</span></div>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Recent resets (oldest first; abnormal ones marked)</legend>
+        <div id="resetList" class="muted">-</div>
+      </fieldset>
+    </div>
+
+    <div class="panel">
       <h2>Console / log</h2>
       <div class="row" style="margin-bottom: 8px;">
         <label><input type="checkbox" id="logFrames"> log raw frames</label>
@@ -552,9 +585,11 @@
     GET_FW_INFO: 0x5C,
     MARK_VALID: 0x5D,
     REVERT: 0x5E,
+    GET_DIAGNOSTICS: 0x5F,
     STATE: 0xD0,
     CALIBRATION_RESULT: 0xD1,
     FW_INFO: 0xD2,
+    DIAGNOSTICS: 0xD3,
     OK: 0xDF,
     ERROR: 0xFE,
   };
@@ -706,6 +741,27 @@
     return s;
   }
 
+  // Variable-length DIAGNOSTICS reply; see calibration_service.hpp.
+  function decodeDiagnostics(payload) {
+    if (payload.length < 11) throw new Error("malformed DIAGNOSTICS reply (" + payload.length + " B, expected at least 11)");
+    const v = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    let o = 0;
+    const u8 = () => payload[o++];
+    const u32 = () => { const x = v.getUint32(o, true); o += 4; return x; };
+    const d = { sensorFault: u8(), sensorFirstFault: u8(), sensorFaultCount: u32(), bootCount: u32(), resets: [] };
+    const count = u8();
+    const utf8 = new TextDecoder();
+    for (let i = 0; i < count; i++) {
+      if (payload.length < o + 7) throw new Error("malformed DIAGNOSTICS reply: reset entry " + i + " truncated");
+      const r = { boot: u32(), reason: u8(), abnormal: u8() !== 0 };
+      const nameLen = u8();
+      if (payload.length < o + nameLen) throw new Error("malformed DIAGNOSTICS reply: reset name " + i + " truncated");
+      r.name = utf8.decode(payload.subarray(o, o + nameLen)); o += nameLen;
+      d.resets.push(r);
+    }
+    return d;
+  }
+
   // Request payload encoders (GET_STATE, SAVE_TO_FLASH and START_CALIBRATION
   // carry no payload, so the console passes null for them).
   function encodeSetManualOffset(x, y) {
@@ -741,7 +797,7 @@
     FLAGS_REQUEST, FLAGS_REPLY_BIT, FLAG_CORRELATION,
     TYPE, INPUT_MODE,
     crc32, buildFrame, FrameParser, readU32,
-    parseErrorReply, parseDiscovery, decodeState,
+    parseErrorReply, parseDiscovery, decodeState, decodeDiagnostics,
     encodeSetManualOffset, encodeSetDeadzoneOverride,
     encodeSetNudgeSettings, encodeSetInputMode,
   };
@@ -761,7 +817,7 @@
     const VENDOR_CLASS = 0xFF;
     const {
       MAX_FRAME, MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, TYPE, INPUT_MODE,
-      buildFrame, FrameParser, parseErrorReply, parseDiscovery, decodeState,
+      buildFrame, FrameParser, parseErrorReply, parseDiscovery, decodeState, decodeDiagnostics,
       encodeSetManualOffset, encodeSetDeadzoneOverride, encodeSetNudgeSettings, encodeSetInputMode,
     } = globalThis.OmegaProtocol;
     const DISCOVERY_TIMEOUT_MS = 800;
@@ -770,7 +826,8 @@
       0x53: "SET_NUDGE_SETTINGS", 0x54: "SET_INPUT_MODE", 0x55: "SAVE_TO_FLASH",
       0x56: "START_CALIBRATION", 0x57: "RESTART", 0x58: "OTA_BEGIN", 0x59: "OTA_DATA",
       0x5A: "OTA_FINISH", 0x5B: "OTA_ABORT", 0x5C: "GET_FW_INFO", 0x5D: "MARK_VALID", 0x5E: "REVERT",
-      0xD0: "STATE", 0xD1: "CALIBRATION_RESULT", 0xD2: "FW_INFO", 0xDF: "OK", 0xFE: "ERROR",
+      0x5F: "GET_DIAGNOSTICS",
+      0xD0: "STATE", 0xD1: "CALIBRATION_RESULT", 0xD2: "FW_INFO", 0xD3: "DIAGNOSTICS", 0xDF: "OK", 0xFE: "ERROR",
     };
     const CMD_TIMEOUT_MS = 5000;
     const SAVE_TIMEOUT_MS = 8000; // flash write may take longer than a live-apply
@@ -790,6 +847,7 @@
                       "nudgeEnter", "nudgeExit", "nudgeTime", "applyNudgeBtn",
                       "modeMouseBtn", "modeXacBtn",
                       "recalibrateBtn", "recalInfo",
+                      "diagRefreshBtn", "diagInfo", "resetList",
                       "fwRunning", "fwPending", "markValidBtn",
                       "fwVersion", "fwBuild", "fwIdf", "fwRunPart", "fwBootPart", "fwSha", "fwCopyBtn", "fwPrevSlot", "fwPrevVersion", "fwPrevBuild", "fwPrevState", "fwRevertBtn", "fwFile", "flashBtn", "fwProgress", "restartBtn",
                       "logFrames", "clearLogBtn", "log", "unsupported"]) {
@@ -797,6 +855,8 @@
     }
     const fieldEls = {};
     for (const el of document.querySelectorAll("#calibrationFields [data-f]")) fieldEls[el.dataset.f] = el;
+    const diagEls = {};
+    for (const el of document.querySelectorAll("#diagnosticFields [data-d]")) diagEls[el.dataset.d] = el;
 
     function logLine(cls, text) {
       const line = document.createElement("div");
@@ -1119,6 +1179,7 @@
       els.modeMouseBtn.disabled = !connected || busy || !haveState;
       els.modeXacBtn.disabled = !connected || busy || !haveState;
       els.recalibrateBtn.disabled = !connected || busy;
+      els.diagRefreshBtn.disabled = !connected || busy;
       els.flashBtn.disabled = !connected || busy;
       els.restartBtn.disabled = !connected || busy;
       els.markValidBtn.disabled = !connected || busy;
@@ -1305,6 +1366,49 @@
       }
     }
     els.refreshBtn.addEventListener("click", refreshState);
+
+    // ===================================================================
+    // Diagnostics (GET_DIAGNOSTICS / DIAGNOSTICS)
+    // ===================================================================
+    const SENSOR_FAULT_NAMES = { 0: "none", 1: "read failed", 2: "reading stuck" };
+
+    function renderDiagnostics(d) {
+      const faultName = (code) => SENSOR_FAULT_NAMES[code] || ("code " + code);
+      diagEls.sensorFault.textContent = faultName(d.sensorFault);
+      diagEls.sensorFault.classList.toggle("warn-text", d.sensorFault !== 0);
+      diagEls.sensorFirstFault.textContent = faultName(d.sensorFirstFault);
+      diagEls.sensorFaultCount.textContent = String(d.sensorFaultCount);
+      diagEls.bootCount.textContent = String(d.bootCount);
+      els.resetList.replaceChildren();
+      if (d.resets.length === 0) {
+        els.resetList.textContent = "No resets recorded.";
+      } else {
+        for (const r of d.resets) {
+          const line = document.createElement("div");
+          line.textContent = "boot " + r.boot + ": " + r.name + (r.abnormal ? "  (abnormal)" : "");
+          if (r.abnormal) line.classList.add("warn-text");
+          els.resetList.appendChild(line);
+        }
+      }
+      els.diagInfo.textContent = "Last refreshed " + new Date().toLocaleTimeString() + ".";
+    }
+
+    async function refreshDiagnostics() {
+      if (!transport || busy) return;
+      busy = true; updateUI(); setStatus("busy", "Fetching diagnostics...");
+      try {
+        const reply = await transact(TYPE.GET_DIAGNOSTICS, null, [TYPE.DIAGNOSTICS], CMD_TIMEOUT_MS, 1);
+        renderDiagnostics(decodeDiagnostics(reply.payload));
+        logLine("sys", "Fetched diagnostics.");
+        setStatus("connected", "Connected");
+      } catch (e) {
+        logLine("err", "GET_DIAGNOSTICS failed: " + e.message);
+        setStatus(transport ? "error" : "", transport ? "Fetch failed" : "Disconnected");
+      } finally {
+        busy = false; updateUI();
+      }
+    }
+    els.diagRefreshBtn.addEventListener("click", refreshDiagnostics);
 
     async function applyManualOffset(x, y) {
       if (!transport || busy) return;

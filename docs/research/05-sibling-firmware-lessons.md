@@ -60,8 +60,8 @@ centered stick with no buttons pressed.
   see why the stick went dead.
 
 **Done** as D21 in [decisions.md](../decisions.md) and
-`OmegaCalibration::SensorFaultMonitor`, with host tests. The console and LED
-reporting of the latched fault is still open (STA-1, STA-2).
+`OmegaCalibration::SensorFaultMonitor`, with host tests. The console shows
+the latched fault under Diagnostics; an LED status (STA-1, STA-2) is open.
 
 ### 2. Persist a reset-reason log and boot counter
 
@@ -75,7 +75,8 @@ This pairs with the OTA rollback work: the post-update health check can refuse
 to mark an image valid if the reset log shows it crashed, and the same log can
 be exposed through the coredump or calibration console.
 
-**Done** as `ResetLog` and D23; the console and health-check hooks are open.
+**Done** as `ResetLog` and D23, shown on the console under Diagnostics; the
+OTA crash-loop hook is the D18 amendment.
 
 ### 3. Tighten dependency floors in `main/idf_component.yml`
 
@@ -104,8 +105,8 @@ Omega Stick pins actions by tag, and `esp-cpp/StaticAnalysis@master` floats on
 a branch. Because this repository is public and ships firmware to users, a
 compromised action tag is a supply chain risk worth closing.
 
-**Done** for pinning and Dependabot. The secret scan and workflow linting are
-still open.
+**Done**: pinning, Dependabot, and `security.yml` (gitleaks over the history,
+zizmor over the workflows).
 
 ### 5. Write the OTA safety rules down before shipping rollback
 
@@ -131,6 +132,7 @@ safe-state rule in the update path itself belongs to `feat/ota-rollback`.
 
 - **`CONFIG_COMPILER_STACK_CHECK_MODE_STRONG=y`.** ATOS enables it. Measure
   the HID report loop timing before and after; the cost is usually small.
+  **Done**, with the timing measurement still owed on hardware.
 - **Rationale comments in `sdkconfig.defaults`.** `rammp-org/pace-hmi-fw`
   explains every non-default setting next to the line that sets it.
 - **Generate host constants from one source.** `rammp-org/pace-hmi-fw` parses

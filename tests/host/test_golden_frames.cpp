@@ -114,6 +114,34 @@ struct Captured {
   std::string fields;
 };
 
+/// Decoded DIAGNOSTICS fields, in the shape omega_protocol.js's decodeDiagnostics() returns.
+std::string diagnostics_fields(const std::vector<uint8_t> &p) {
+  const std::span<const uint8_t> s(p);
+  Obj o;
+  o.add("sensorFault", num(uint32_t{p[0]}));
+  o.add("sensorFirstFault", num(uint32_t{p[1]}));
+  o.add("sensorFaultCount", num(stream::get_u32(s.subspan(2))));
+  o.add("bootCount", num(stream::get_u32(s.subspan(6))));
+  std::string resets = "[";
+  size_t off = 11;
+  for (unsigned i = 0; i < p[10]; i++) {
+    Obj r;
+    r.add("boot", num(stream::get_u32(s.subspan(off))));
+    off += 4;
+    r.add("reason", num(uint32_t{p[off]}));
+    off += 1;
+    r.add("abnormal", p[off] ? "true" : "false");
+    off += 1;
+    const size_t len = p[off];
+    off += 1;
+    r.add("name", "\"" + std::string(p.begin() + off, p.begin() + off + len) + "\"");
+    off += len;
+    resets += (i ? "," : "") + r.str();
+  }
+  o.add("resets", resets + "]");
+  return o.str();
+}
+
 std::string state_fields(const std::vector<uint8_t> &p) {
   using support::get_f32;
   static const char *const kFloatNames[14] = {"centerX",
@@ -181,7 +209,19 @@ std::string build_golden_json() {
   };
   CalibrationService service({.store = store,
                               .send = transmit,
-                              .start_calibration = [](std::error_code &) { return true; }});
+                              .start_calibration = [](std::error_code &) { return true; },
+                              .diagnostics =
+                                  [] {
+                                    CalibrationService::DiagnosticsData d;
+                                    d.sensor_fault = 2;
+                                    d.sensor_first_fault = 1;
+                                    d.sensor_fault_count = 3;
+                                    d.boot_count = 42;
+                                    d.resets.push_back({40, 9, true, "brownout"});
+                                    d.resets.push_back({41, 1, false, "power-on"});
+                                    d.resets.push_back({42, 3, false, "software"});
+                                    return d;
+                                  }});
   espp::Dispatcher dispatcher;
   dispatcher.register_module(service);
   dispatcher.set_device_info("omega-stick", "golden");
@@ -199,6 +239,7 @@ std::string build_golden_json() {
 
   std::vector<RequestSpec> requests;
   requests.push_back({"GET_STATE", module, type_of(Msg::GetState), {}, "{}"});
+  requests.push_back({"GET_DIAGNOSTICS", module, type_of(Msg::GetDiagnostics), {}, "{}"});
   requests.push_back({"SET_MANUAL_OFFSET", module, type_of(Msg::SetManualOffset),
                       f32_payload({0.75f, -1.25f}),
                       Obj().add("x", num(0.75f)).add("y", num(-1.25f)).str()});
@@ -278,6 +319,9 @@ std::string build_golden_json() {
 
     if (reply->type == type_of(Msg::State)) {
       replies.push_back({req.name, reply->type, reply->module, sent, state_fields(reply->payload)});
+    } else if (reply->type == type_of(Msg::Diagnostics)) {
+      replies.push_back(
+          {req.name, reply->type, reply->module, sent, diagnostics_fields(reply->payload)});
     } else if (reply->type == type_of(Msg::Ok)) {
       replies.push_back({req.name, reply->type, reply->module, sent,
                          Obj().add("value", num(stream::get_u32(reply->payload))).str()});
