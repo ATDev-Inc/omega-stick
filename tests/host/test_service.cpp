@@ -538,7 +538,7 @@ TEST(service_revert_errors) {
 
 TEST(service_revert_sets_boot_partition_and_restarts) {
   OtaFixture fx("svc_revert_ok");
-  auto &fake = esp_ota_fake();
+  const auto &fake = esp_ota_fake();
   CHECK(is(fx.request(Msg::Revert), Msg::Ok));
   CHECK_EQ(fake.set_boot_calls, 1);
   CHECK(fake.last_set_boot == &fake.other);
