@@ -1,32 +1,45 @@
 ## IDF Component Manager Manifest File
+#
+# The espp components are pinned to the exact release this firmware is built
+# and tested against (D20: espp 1.3.6 across the board), and ESP-IDF to the
+# release CI builds with (.github/workflows/build.yml). The component manager
+# re-solves every dependency to the newest matching release whenever this
+# file changes, and ignores dependencies.lock when it does, so a plain floor
+# such as '>=1.3.5' would silently pull in whatever is newest the next time
+# anything here is edited. (espp 1.3.7 added a field to DispatcherModuleInfo
+# that this firmware's -Werror build rejects; that is how this comment got
+# written.)
+#
+# To move to a newer espp: change every espp pin below together, since the
+# components are released as a set, run `idf.py build`, run the host tests,
+# and commit the regenerated dependencies.lock with the code changes.
 dependencies:
-  ## Required IDF version
   idf:
-    version: '>=4.1.0'
-  # # Put list of dependencies here
-  # # For components maintained by Espressif:
-  # component: "~1.0.0"
-  # # For 3rd party components:
-  # username/component: ">=1.0.0,<2.0.0"
-  # username2/component2:
-  #   version: "~1.0.0"
-  #   # For transient dependencies `public` flag can be set.
-  #   # `public` flag doesn't have an effect dependencies of the `main` component.
-  #   # All dependencies of `main` are public by default.
-  #   public: true
-  espp/task: '>=1.0'
-  espp/i2c: '>=1.0'
-  espp/joystick: '>=1.0'
-  espp/hid-rp: '>=1.0'
-  espp/math: '>=1.0'
-  espp/qtpy: '>=1.0'
-  espp/timer: '>=1.0'
-  espp/usb_device: '>=0.1'
-  espp/base_component: '>=1.0'
-  espressif/tinyusb: '>=0.15'
-  espp/base_peripheral: '>=1.0'
-  espp/file_system: '>=1.0'
-  espp/coredump: '>=1.0'
-  espp/dispatcher: '>=1.0'
-  espp/stream_frame: '>=1.0'
-  espp/ota: '>=1.0'
+    version: '>=6.0'
+  espp/task: '==1.3.6'
+  espp/i2c: '==1.3.6'
+  espp/joystick: '==1.3.6'
+  espp/hid-rp: '==1.3.6'
+  espp/math: '==1.3.6'
+  espp/qtpy: '==1.3.6'
+  espp/timer: '==1.3.6'
+  espp/usb_device: '==1.3.6'
+  espp/base_component: '==1.3.6'
+  espressif/tinyusb: '==0.21.0~1'
+  # Pulled in by espp/usb_device; pinned here so a re-solve cannot move it.
+  espressif/esp_tinyusb: '==2.2.1'
+  espp/base_peripheral: '==1.3.6'
+  espp/file_system: '==1.3.6'
+  espp/coredump: '==1.3.6'
+  espp/dispatcher: '==1.3.6'
+  espp/stream_frame: '==1.3.6'
+  espp/ota: '==1.3.6'
+  # Pulled in by the components above, not used directly. Pinned so a
+  # re-solve cannot mix espp releases.
+  espp/cli: '==1.3.6'
+  espp/color: '==1.3.6'
+  espp/format: '==1.3.6'
+  espp/interrupt: '==1.3.6'
+  espp/logger: '==1.3.6'
+  espp/neopixel: '==1.3.6'
+  espp/rmt: '==1.3.6'

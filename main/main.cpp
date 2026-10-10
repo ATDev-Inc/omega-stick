@@ -31,6 +31,7 @@
 #include "omega_store.hpp"
 #include "ota.hpp"
 #include "qtpy.hpp"
+#include "reset_log.hpp"
 #include "task.hpp"
 #include "tmag5273.hpp"
 #include "usb_device.hpp"
@@ -212,6 +213,65 @@ static const std::string CALIBRATION_FILE_NAME = "omega_calibration.cfg";
 // espp::Task with its own generously-sized stack instead.
 static constexpr size_t MAIN_TASK_STACK_SIZE_BYTES = 16 * 1024;
 
+// How many resets the reset-reason log keeps (see D23 in docs/decisions.md).
+static constexpr size_t RESET_LOG_ENTRIES = 16;
+
+static const char *reset_reason_name(esp_reset_reason_t reason) {
+  switch (reason) {
+  case ESP_RST_POWERON:
+    return "power-on";
+  case ESP_RST_EXT:
+    return "external pin";
+  case ESP_RST_SW:
+    return "software";
+  case ESP_RST_PANIC:
+    return "panic";
+  case ESP_RST_INT_WDT:
+    return "interrupt watchdog";
+  case ESP_RST_TASK_WDT:
+    return "task watchdog";
+  case ESP_RST_WDT:
+    return "watchdog";
+  case ESP_RST_DEEPSLEEP:
+    return "deep sleep";
+  case ESP_RST_BROWNOUT:
+    return "brownout";
+  case ESP_RST_SDIO:
+    return "sdio";
+  case ESP_RST_USB:
+    return "usb";
+  case ESP_RST_JTAG:
+    return "jtag";
+  case ESP_RST_EFUSE:
+    return "efuse error";
+  case ESP_RST_PWR_GLITCH:
+    return "power glitch";
+  case ESP_RST_CPU_LOCKUP:
+    return "cpu lockup";
+  case ESP_RST_UNKNOWN:
+  default:
+    return "unknown";
+  }
+}
+
+// A reset nobody asked for: the firmware crashed, hung, or lost power
+// unexpectedly. Power-on, the mode-switch esp_restart() and a USB or JTAG
+// reset are all deliberate.
+static bool reset_reason_is_abnormal(esp_reset_reason_t reason) {
+  switch (reason) {
+  case ESP_RST_PANIC:
+  case ESP_RST_INT_WDT:
+  case ESP_RST_TASK_WDT:
+  case ESP_RST_WDT:
+  case ESP_RST_BROWNOUT:
+  case ESP_RST_EFUSE:
+  case ESP_RST_PWR_GLITCH:
+  case ESP_RST_CPU_LOCKUP:
+    return true;
+  default:
+    return false;
+  }
+}
 // A firmware upload whose console vanished mid-transfer (cable pulled, tab
 // closed) keeps the OTA engine claimed, which blocks a retry and REVERT. The
 // polling loops drop such a session after this long without OTA traffic (see
@@ -226,6 +286,41 @@ static constexpr auto OTA_IDLE_TIMEOUT = 30s;
 // bottom.
 
 static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/) {
+  // ==========================================================================
+  // Reset-reason log (D23): why did we boot, and how have recent boots gone?
+  // ==========================================================================
+  // Recorded before anything that can fail, so a boot that dies in sensor
+  // or USB setup still leaves its reason behind for the next one to print.
+  // ResetLog::default_path() is the first use of espp::FileSystem, which
+  // mounts the filesystem, so this has to come before the I2C and sensor
+  // setup below.
+  {
+    espp::ResetLog reset_log(
+        {.path = espp::ResetLog::default_path(), .max_entries = RESET_LOG_ENTRIES});
+    std::error_code log_ec;
+    if (!reset_log.load(log_ec)) {
+      printf("WARNING: could not read the reset log: %s\n", log_ec.message().c_str());
+    }
+    const esp_reset_reason_t reason = esp_reset_reason();
+    reset_log.record(static_cast<int>(reason), reset_reason_name(reason),
+                     reset_reason_is_abnormal(reason));
+    if (!reset_log.save(log_ec)) {
+      printf("WARNING: could not save the reset log: %s\n", log_ec.message().c_str());
+    }
+    printf("Boot %u, reset reason: %s%s\n", static_cast<unsigned>(reset_log.boot_count()),
+           reset_reason_name(reason), reset_reason_is_abnormal(reason) ? " (abnormal)" : "");
+    if (reset_log.abnormal_count() > 0) {
+      printf("%u of the last %u resets were abnormal:\n",
+             static_cast<unsigned>(reset_log.abnormal_count()),
+             static_cast<unsigned>(reset_log.entries().size()));
+      for (const auto &entry : reset_log.entries()) {
+        if (entry.abnormal) {
+          printf("  boot %u: %s\n", static_cast<unsigned>(entry.boot), entry.name.c_str());
+        }
+      }
+    }
+  }
+
   // ==========================================================================
   // Create I2C bus
   // ==========================================================================

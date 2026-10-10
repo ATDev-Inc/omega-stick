@@ -13,6 +13,8 @@ no ESP-IDF and no hardware. They cover:
   partition set, restart), all against the `ota.hpp` / `esp_ota_ops.h` fakes
 - `OmegaCalibration::SensorFaultMonitor`: the trip, latch and recovery rules
   that center the stick on a sensor fault (D21 in `docs/decisions.md`)
+- `ResetLog`: the boot counter and reset-reason ring persisted across boots
+  (D23), including load tolerance for missing or damaged files
 - `XacInputReport` (`components/xac`): the byte layout `get_report()` hands
   to `write_hid_report()`, checked against the real espp `hid-rp` headers
 - Calibration math (`test_calibration_math.cpp`): `center_calibration`,
@@ -140,6 +142,10 @@ Fixed, now plain tests:
   plus or minus 127.
 
 ## Component quirks the host build surfaced
+
+- hid-rp 1.3.3's `hid/rdf/short_item.hpp` uses `std::bit_cast` without
+  including `<bit>`. GCC's `<array>` happens to pull it in; clang with the
+  MSVC STL does not. `test_xac_report.cpp` includes `<bit>` first.
 
 - `omega_calibration.hpp` uses `M_PI`, which is a GNU/POSIX extension. The
   test build enables GNU extensions to match ESP-IDF's `gnu++2b`; a strict

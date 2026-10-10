@@ -5,6 +5,7 @@
 // dependencies.lock, never managed_components/, so a local patch there cannot
 // make these pass.
 
+#include <bit> // hid-rp 1.3.3's short_item.hpp uses std::bit_cast without including it
 #include <cstdint>
 #include <vector>
 

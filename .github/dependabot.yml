@@ -1,0 +1,14 @@
+# Keeps the SHA-pinned GitHub Actions in .github/workflows current. Each
+# workflow pins actions by commit (with the version in a trailing comment)
+# so a moved or hijacked tag cannot change what CI runs; Dependabot is what
+# moves the pins forward.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
