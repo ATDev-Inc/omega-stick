@@ -7,7 +7,8 @@ Omega Stick should copy, and what should it avoid?
 
 **Method:** Read-only survey of fifteen firmware repositories across the
 ATDev-Inc and rammp-org organizations, compared against this repository on
-`marshall-updates` plus the open OTA rollback and test suite branches. Several
+`owen-updates` (merged: OTA rollback in PR #19, the test suite and control core in PR #20,
+and this research in PR #21). Several
 of the surveyed repositories are private, so this note describes their practices
 without citing their files. File paths are given only for public repositories.
 
@@ -96,7 +97,7 @@ compromised action tag is a supply chain risk worth closing.
 
 The ATOS OTA design study is the most thorough treatment of OTA in the survey,
 even though ATOS has not built it yet. Its rules map directly onto
-`feat/ota-rollback`:
+the merged OTA rollback work (PR #19):
 
 - Only apply an update when the device is in a safe state. For Omega Stick,
   that means the host has stopped sending input and the output is neutral.
@@ -118,7 +119,7 @@ even though ATOS has not built it yet. Its rules map directly onto
 - **Generate host constants from one source.** `rammp-org/pace-hmi-fw` parses
   its C wire-spec header (`main/rammp_rtps_spec.h`) from its Python host tool
   (`scripts/rammp_rtps.py`) so the two cannot drift, and the host tool has a
-  `--self-test` mode. The test suite branch's golden frames already catch most
+  `--self-test` mode. The merged test suite (PR #20)'s golden frames already catch most
   drift; generating the console's message type table from the C++ header would
   close the rest.
 - **Bench logging.** A plain serial-to-CSV logger for raw TMAG5273 counts
@@ -151,7 +152,7 @@ even though ATOS has not built it yet. Its rules map directly onto
 - **Committed binaries, logs, and bulk tuning CSVs.** Build output belongs in
   CI artifacts, not git.
 - **`__DATE__`-based version strings.** They make builds non-reproducible.
-  Derive the version from git, as the OTA rollback branch already does.
+  Derive the version from git, as the merged OTA rollback work (PR #19) already does.
 - **Monolithic `main.cpp` files of several thousand lines.** Two sibling
   projects show where that leads; keep logic in components that host tests can
   reach.
