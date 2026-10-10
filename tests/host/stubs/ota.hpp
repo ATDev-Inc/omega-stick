@@ -5,13 +5,13 @@
 // restart() only records that it was called (the real one never returns).
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string>
 #include <system_error>
 #include <vector>
-#include <atomic>
 
 #include "logger.hpp"
 

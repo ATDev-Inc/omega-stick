@@ -212,8 +212,8 @@ TEST(service_ok_reply_is_sent_before_mode_change_callback_runs) {
   int sends_seen_from_callback = -1;
   const Fixture *self = nullptr;
   Fixture fx("svc_mode_order", {.on_mode_changed = [&](OmegaStore::InputMode) {
-                sends_seen_from_callback = self->send_calls;
-              }});
+               sends_seen_from_callback = self->send_calls;
+             }});
   self = &fx;
 
   CHECK(is(fx.request(Msg::SetInputMode, {1}), Msg::Ok));
@@ -253,17 +253,17 @@ TEST(service_start_calibration_requires_hook_and_relays_its_verdict) {
   std::vector<uint8_t> sent;
   bool accept = true;
   int kicks = 0;
-  CalibrationService svc({.store = store,
-                          .send = [&](std::span<const uint8_t> f) {
-                            sent.assign(f.begin(), f.end());
-                          },
-                          .start_calibration = [&](std::error_code &ec) {
-                            ++kicks;
-                            if (!accept) {
-                              ec = std::make_error_code(std::errc::device_or_resource_busy);
-                            }
-                            return accept;
-                          }});
+  CalibrationService svc(
+      {.store = store,
+       .send = [&](std::span<const uint8_t> f) { sent.assign(f.begin(), f.end()); },
+       .start_calibration =
+           [&](std::error_code &ec) {
+             ++kicks;
+             if (!accept) {
+               ec = std::make_error_code(std::errc::device_or_resource_busy);
+             }
+             return accept;
+           }});
 
   CHECK(svc.handle_frame(static_cast<uint8_t>(Msg::StartCalibration), {}));
   auto f = support::decode_one(sent);
@@ -424,10 +424,9 @@ TEST(service_get_fw_info_reports_flags_and_strings) {
     strs.emplace_back(reinterpret_cast<const char *>(p.data() + pos), n);
     pos += n;
   }
-  const std::vector<std::string> expected{"omega_stick", "v9.9.9-test", "Oct 10 2026", "12:34:56",
-                                          "v6.0.2",      "ota_1",       "deadbeef",    "ota_0",
-                                          "ota_1",       "0.0.9-prev",  "Jan  2 2026", "01:02:03",
-                                          "valid"};
+  const std::vector<std::string> expected{
+      "omega_stick", "v9.9.9-test", "Oct 10 2026", "12:34:56",    "v6.0.2",   "ota_1", "deadbeef",
+      "ota_0",       "ota_1",       "0.0.9-prev",  "Jan  2 2026", "01:02:03", "valid"};
   CHECK_EQ(strs.size(), expected.size());
   for (size_t i = 0; i < expected.size() && i < strs.size(); ++i) {
     CHECK(strs[i] == expected[i]);
@@ -488,7 +487,8 @@ TEST(service_revert_errors) {
   OtaFixture none("svc_revert_none", /*wire_ota=*/false);
   auto reply = none.request(Msg::Revert);
   CHECK(is(reply, Msg::Error));
-  CHECK_EQ(stream::get_u32(reply.payload), static_cast<uint32_t>(std::errc::function_not_supported));
+  CHECK_EQ(stream::get_u32(reply.payload),
+           static_cast<uint32_t>(std::errc::function_not_supported));
 
   OtaFixture fx("svc_revert_err");
   auto &fake = esp_ota_fake();
