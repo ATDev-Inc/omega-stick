@@ -273,6 +273,37 @@ browser-support risk in D11.
 Developers set it locally in menuconfig (`sdkconfig` is gitignored). The default
 is 0 so that anything users run starts responding immediately.
 
+## D16: Control-loop logic lives in a pure header; `main.cpp` is an adapter
+
+*Recorded from the implementation on 2026-10-10.*
+
+Everything in the polling loops that can be reasoned about without hardware
+(nudge-click detection, scroll pacing, drift bookkeeping, the recalibration
+hand-off) is in `components/omega_control/include/omega_control.hpp`, which
+depends only on the standard library and `omega_calibration.hpp`. Time is an
+input, and side effects (HID writes, the calibration sweep, flash saves) go
+through a small `Ports` interface that `main.cpp` implements. The host tests
+drive the same code with a fake `Ports` and a fake clock. New loop behaviour
+goes in the header with a test, not in `main.cpp`.
+
+One consequence is deliberate: a neutral HID report is sent before and after
+every recalibration, so a nudge-held button cannot stay down for the whole
+sweep.
+
+## D17: Host tests run the real espp code, and the console is checked against firmware-generated frames
+
+*Recorded from the implementation on 2026-10-10.*
+
+The host suite compiles the project's headers against the real espp
+components, downloaded from the component registry pinned to
+`dependencies.lock` and verified by hash, rather than hand-written stand-ins.
+The browser console's protocol code is a separate script (`omega_protocol.js`)
+kept inline in the single-file page (D14) by a test that fails if the two
+copies differ. The C++ service generates `tests/protocol/golden_frames.json`;
+the Node tests decode those frames, so the two sides of the protocol cannot
+drift apart unnoticed. A libFuzzer harness covers the frame parser and
+service. Known bugs are kept as expected-failure tests until fixed.
+
 ## Open question: compete with Willow, or collaborate?
 
 **Willow** (Makers Making Change) already occupies most of the position this

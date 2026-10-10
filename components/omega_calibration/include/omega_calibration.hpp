@@ -106,9 +106,15 @@ public:
   /// logger at INFO level.
   using MessageFunction = std::function<void(const std::string &)>;
 
+  /// Blocks the calling task for the given duration. Defaults to
+  /// std::this_thread::sleep_for; tests inject a no-op so calibration runs
+  /// instantly.
+  using SleepFunction = std::function<void(std::chrono::milliseconds)>;
+
   struct Config {
     ReadFunction read;                 ///< Required.
     MessageFunction message = nullptr; ///< Optional; defaults to logger_.
+    SleepFunction sleep = nullptr;     ///< Optional; defaults to std::this_thread::sleep_for.
     espp::Logger::Verbosity verbosity{espp::Logger::Verbosity::INFO};
   };
 
@@ -372,6 +378,9 @@ public:
   explicit OmegaCalibration(const Config &config)
       : read_(config.read)
       , message_(config.message)
+      , sleep_(config.sleep ? config.sleep : SleepFunction([](std::chrono::milliseconds d) {
+        std::this_thread::sleep_for(d);
+      }))
       , logger_({.tag = "OmegaCalibration", .level = config.verbosity}) {}
 
   // --------------------------------------------------------------------------
@@ -386,7 +395,7 @@ public:
 
     message("Release the joystick completely.");
     message("Do not touch or move it.");
-    std::this_thread::sleep_for(SETTLE_DELAY);
+    sleep_(SETTLE_DELAY);
 
     // ------------------------------------------------------------------
     // Determine center
@@ -401,7 +410,7 @@ public:
     for (int i = 0; i < CENTER_SAMPLES; i++) {
       float x, y;
       if (!read_(&x, &y)) {
-        std::this_thread::sleep_for(SAMPLE_DELAY);
+        sleep_(SAMPLE_DELAY);
         continue;
       }
       x = x_filter.update(x);
@@ -409,7 +418,7 @@ public:
       sum_x += x;
       sum_y += y;
       valid_samples++;
-      std::this_thread::sleep_for(SAMPLE_DELAY);
+      sleep_(SAMPLE_DELAY);
     }
 
     if (valid_samples == 0) {
@@ -430,7 +439,7 @@ public:
     // ------------------------------------------------------------------
     message("Measuring center movement/noise...");
     message("shake it a bit but do not touch the end effector.");
-    std::this_thread::sleep_for(SETTLE_DELAY);
+    sleep_(SETTLE_DELAY);
 
     std::vector<float> center_radii;
     center_radii.reserve(CENTER_SAMPLES);
@@ -439,7 +448,7 @@ public:
     for (int i = 0; i < CENTER_SAMPLES; i++) {
       float x, y;
       if (!read_(&x, &y)) {
-        std::this_thread::sleep_for(SAMPLE_DELAY);
+        sleep_(SAMPLE_DELAY);
         continue;
       }
       x = noise_x_filter.update(x);
@@ -447,7 +456,7 @@ public:
       const float dx = x - center_x;
       const float dy = y - center_y;
       center_radii.push_back(std::sqrt(dx * dx + dy * dy));
-      std::this_thread::sleep_for(SAMPLE_DELAY);
+      sleep_(SAMPLE_DELAY);
     }
 
     if (center_radii.empty()) {
@@ -484,8 +493,8 @@ public:
     message("Move the joystick slowly through a COMPLETE circle.");
     message("Reach the physical maximum in every direction.");
     message("Try to reach all edges of the joystick.");
-    std::this_thread::sleep_for(SETTLE_DELAY);
-    std::this_thread::sleep_for(SETTLE_DELAY);
+    sleep_(SETTLE_DELAY);
+    sleep_(SETTLE_DELAY);
     message("START!");
 
     float min_x = std::numeric_limits<float>::max();
@@ -500,7 +509,7 @@ public:
     for (int i = 0; i < RANGE_SAMPLES; i++) {
       float x, y;
       if (!read_(&x, &y)) {
-        std::this_thread::sleep_for(SAMPLE_DELAY);
+        sleep_(SAMPLE_DELAY);
         continue;
       }
 
@@ -529,7 +538,7 @@ public:
       sector_max_radius[sector] = std::max(sector_max_radius[sector], radius);
 
       valid_samples++;
-      std::this_thread::sleep_for(SAMPLE_DELAY);
+      sleep_(SAMPLE_DELAY);
     }
 
     message("STOP!");
@@ -680,8 +689,12 @@ public:
         : config_(config) {}
 
     bool update(float raw_x, float raw_y, float mapped_magnitude, CenterResult &center) {
-      const auto now = std::chrono::steady_clock::now();
+      return update(raw_x, raw_y, mapped_magnitude, center, std::chrono::steady_clock::now());
+    }
 
+    /// Same as above with an explicit timestamp (lets tests drive the clock).
+    bool update(float raw_x, float raw_y, float mapped_magnitude, CenterResult &center,
+                std::chrono::steady_clock::time_point now) {
       if (mapped_magnitude > config_.idle_magnitude_threshold) {
         idle_since_.reset();
         return false;
@@ -978,6 +991,7 @@ protected:
 
   ReadFunction read_;
   MessageFunction message_;
+  SleepFunction sleep_;
   mutable espp::Logger logger_;
 };
 

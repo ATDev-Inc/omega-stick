@@ -9,6 +9,7 @@ Omega Stick.
 | `omega_store.hpp` | the live calibration and settings behind one mutex, with change callbacks |
 | `calibration_service.hpp` | the framed request/reply protocol (dispatcher module 5) that the console talks to |
 | `web/calibration_console.html` | the browser console, a single self-contained page |
+| `web/omega_protocol.js` | the console's framing, CRC and payload code, DOM-free so Node can test it (`tests/web`). The page carries an identical inline copy; a test fails if the two differ |
 
 ## Calibration console
 

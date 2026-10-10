@@ -7,16 +7,62 @@ permissions:
 
 jobs:
   host-tests:
-    runs-on: ubuntu-latest
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc (werror, coverage)
+            os: ubuntu-latest
+            cxx: g++
+            flags: -DOMEGA_HOST_WERROR=ON -DOMEGA_HOST_COVERAGE=ON
+          - name: clang (werror, asan+ubsan)
+            os: ubuntu-latest
+            cxx: clang++
+            flags: -DOMEGA_HOST_WERROR=ON -DOMEGA_HOST_SANITIZE=ON
+          - name: msvc (werror)
+            os: windows-latest
+            flags: -DOMEGA_HOST_WERROR=ON
     steps:
       - name: Checkout repo
         uses: actions/checkout@v7
 
+      - name: Install clang
+        if: matrix.cxx == 'clang++'
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-rt-dev
+
       - name: Configure
-        run: cmake -S tests/host -B build-host -DCMAKE_BUILD_TYPE=Debug
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.cxx }}" ]; then
+            cmake -S tests/host -B build-host -DCMAKE_BUILD_TYPE=Debug \
+              -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} ${{ matrix.flags }}
+          else
+            cmake -S tests/host -B build-host ${{ matrix.flags }}
+          fi
 
       - name: Build
-        run: cmake --build build-host
+        run: cmake --build build-host --config Debug
 
       - name: Test
-        run: ctest --test-dir build-host --output-on-failure
+        env:
+          ASAN_OPTIONS: halt_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --test-dir build-host -C Debug --output-on-failure
+
+      - name: Coverage report
+        if: matrix.cxx == 'g++'
+        run: |
+          pip install gcovr
+          gcovr -r . --filter 'components/' --filter 'tests/host/' \
+            --exclude 'build-host/' \
+            --html-details build-host/coverage.html --txt coverage.txt
+          { echo '### Coverage'; echo '```'; cat coverage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        if: matrix.cxx == 'g++'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: build-host/coverage*.html

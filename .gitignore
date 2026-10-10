@@ -43,4 +43,4 @@ __pycache__/
 .vscode/
 
 # Host unit test build tree (tests/host/README.md)
-build-host/
+build-*/
