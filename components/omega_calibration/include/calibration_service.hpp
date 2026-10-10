@@ -1,5 +1,8 @@
 #pragma once
 
+#include "ota.hpp"
+#include <chrono>
+#include <thread>
 // espp omega-stick calibration service — message ids + a transport-agnostic
 // request handler layered on the espp `stream_frame` codec (magic "OT" +
 // flags u8 + module u8 + type u8 + len u32 + payload + CRC-32, all
@@ -139,8 +142,6 @@ namespace espp {
  * it never blocks this mutex (or whatever transport callback drives feed())
  * for the tens-of-seconds an interactive calibration sweep can take.
  *
- * \section calibration_service_ex1 CalibrationService Example
- * \snippet calibration_example.cpp calibration_example
  */
 class CalibrationService : public BaseComponent {
 public:
@@ -149,7 +150,7 @@ public:
   using RangeResult = OmegaStore::RangeResult;
   using DeviceSettings = OmegaStore::DeviceSettings;
   using InputMode = OmegaStore::InputMode;
-
+  using StickSide = OmegaStore::StickSide;
   /// Calibration protocol message types (the stream_frame `type` byte within
   /// the service's module, 5 by default; see the header comment for the
   /// payload spec). Reply/unsolicited types keep the high bit set, exactly
@@ -158,15 +159,23 @@ public:
   enum class Msg : uint8_t {
     // host -> device
     GetState = 0x50,            ///< request the full calibration + settings state
-    SetManualOffset = 0x51,     ///< set the manual center trim (f32 x, f32 y)
-    SetDeadzoneOverride = 0x52, ///< set/clear the manual deadzone overrides
-    SetNudgeSettings = 0x53,    ///< set the nudge-click distance/hold tuning
-    SetInputMode = 0x54,        ///< switch mouse/XAC mode
-    SaveToFlash = 0x55,         ///< persist the current live state to flash
-    StartCalibration = 0x56,    ///< ASYNC: kick off an interactive recalibration
+    SetDeadzoneOverride = 0x51, ///< set/clear the manual deadzone overrides
+    SetNudgeSettings = 0x52,    ///< set the nudge-click distance/hold tuning
+    SetInputMode = 0x53,        ///< switch mouse/XAC mode
+    SaveToFlash = 0x54,         ///< persist the current live state to flash
+    StartCalibration = 0x55,    ///< ASYNC: kick off an interactive recalibration
     // device -> host
+    SetStickSide = 0x56, ///< u8 side (0 = left, 1 = right)
+    Restart = 0x57,
+    OtaBegin = 0x58,  ///< u32 image_size
+    OtaData = 0x59,   ///< u32 offset + raw image bytes
+    OtaFinish = 0x5A, ///< validate + activate, then reboot
+    OtaAbort = 0x5B,
+    GetFwInfo = 0x5C,
+    MarkValid = 0x5D,         ///< confirm running image (cancel rollback)
     State = 0xD0,             ///< fixed 79-byte calibration + settings struct
     CalibrationResult = 0xD1, ///< UNSOLICITED: outcome of an async StartCalibration
+    FwInfo = 0xD2,            ///< u8 pending_verify, u8 session_active, str project, str version
     Ok = 0xDF,                ///< u32 context-dependent success value
     Error = 0xFE,             ///< u32 informational code + authoritative UTF-8 message
   };
@@ -178,7 +187,7 @@ public:
 
   /// Wire size of the STATE payload (see the header comment for the exact
   /// field layout).
-  static constexpr size_t kStatePayloadSize = 79;
+  static constexpr size_t kStatePayloadSize = 68;
 
   /**
    * @brief Function used to transmit one encoded reply frame to the host.
@@ -215,6 +224,8 @@ public:
     /// way to learn that. When left unset, START_CALIBRATION always replies
     /// with ERROR (function_not_supported).
     std::function<bool(std::error_code &ec)> start_calibration{nullptr};
+    std::function<void()> restart{nullptr};
+    espp::Ota *ota{nullptr}; ///< Optional OTA engine; when null the OTA messages reply ERROR.
     espp::Logger::Verbosity log_level{espp::Logger::Verbosity::WARN}; ///< Logger verbosity.
   };
 
@@ -228,7 +239,9 @@ public:
       , store_(config.store)
       , send_(config.send)
       , module_(config.module)
-      , start_calibration_(config.start_calibration) {}
+      , start_calibration_(config.start_calibration)
+      , restart_(config.restart)
+      , ota_(config.ota) {}
 
   /// @brief The dispatcher module id this service answers on (Config::module;
   ///        kModule by default, which the web console expects).
@@ -239,7 +252,8 @@ public:
     return {.name = "Calibration",
             .app = "calibration_console.html",
             .description = "Live-view and live-edit calibration, deadzones, "
-                           "nudge-click tuning, and mouse/XAC mode"};
+                           "nudge-click tuning, and mouse/XAC mode",
+            .protocol = "espp.calibration"};
   }
 
   /**
@@ -311,6 +325,19 @@ public:
     std::lock_guard<std::mutex> lock(mutex_);
     parser_.reset();
   }
+  /// True while a firmware upload started by THIS service is in flight
+  /// (use it to pause joystick report generation if you want).
+  bool update_in_progress() const { return ota_ && ota_->session_active(); }
+
+  /// Abort an upload this service began (call on transport loss / RX overflow).
+  void abort_update() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (ota_ && ota_owner_) {
+      std::error_code ec;
+      ota_->abort(ec);
+      ota_owner_ = false;
+    }
+  }
 
   /**
    * @brief Send an unsolicited CalibrationResult frame reporting how an
@@ -368,16 +395,134 @@ protected:
       reply = build(Msg::State, build_state_payload(snap), module_id());
       return true;
     }
-    case Msg::SetManualOffset: {
-      if (payload.size() != 8) {
-        reply = build_error(std::errc::invalid_argument,
-                            "SET_MANUAL_OFFSET needs f32 offset_x + f32 offset_y");
+    case Msg::SetStickSide: {
+      if (payload.size() != 1 || payload[0] > 1) {
+        reply = build_error(std::errc::invalid_argument, "SET_STICK_SIDE needs u8 side (0 or 1)");
         return true;
       }
-      const float offset_x = get_f32(payload, 0);
-      const float offset_y = get_f32(payload, 4);
-      store_.set_manual_offset(offset_x, offset_y);
-      logger_.info("SET_MANUAL_OFFSET x={:.6f} y={:.6f}", offset_x, offset_y);
+
+      store_.set_stick_side(static_cast<StickSide>(payload[0]));
+
+      logger_.info("SET_STICK_SIDE {}", payload[0] == 0 ? "LEFT" : "RIGHT");
+
+      reply = build_ok();
+      return true;
+    }
+    case Msg::OtaBegin: {
+      if (!ota_) {
+        reply = build_error(std::errc::function_not_supported, "OTA not wired on this build");
+        return true;
+      }
+      if (payload.size() != 4) {
+        reply = build_error(std::errc::invalid_argument, "OTA_BEGIN needs u32 image size");
+        return true;
+      }
+      std::error_code ec;
+      if (!ota_->begin(stream::get_u32(payload), ec)) {
+        reply = build_error(ec, "OTA_BEGIN failed");
+        return true;
+      }
+      ota_owner_ = true;
+      logger_.info("OTA_BEGIN {} bytes", stream::get_u32(payload));
+      reply = build_ok();
+      return true;
+    }
+    case Msg::OtaData: {
+      if (!ota_ || !ota_owner_) {
+        reply = build_error(std::errc::operation_not_permitted, "no OTA session started here");
+        return true;
+      }
+      if (payload.size() <= 4) {
+        reply = build_error(std::errc::invalid_argument, "OTA_DATA needs u32 offset + data");
+        return true;
+      }
+      if (stream::get_u32(payload) != ota_->bytes_written()) {
+        reply = build_error(std::errc::invalid_argument, "OTA_DATA offset mismatch");
+        return true;
+      }
+      std::error_code ec;
+      if (!ota_->write(payload.subspan(4), ec)) {
+        ota_owner_ = false; // write() already aborted the session
+        reply = build_error(ec, "OTA_DATA write failed");
+        return true;
+      }
+      reply = build_ok(static_cast<uint32_t>(ota_->bytes_written()));
+      return true;
+    }
+    case Msg::OtaFinish: {
+      if (!ota_ || !ota_owner_) {
+        reply = build_error(std::errc::operation_not_permitted, "no OTA session started here");
+        return true;
+      }
+      std::error_code ec;
+      const bool ok = ota_->finish(ec);
+      ota_owner_ = false;
+      if (!ok) {
+        reply = build_error(ec, "OTA_FINISH (validate/activate) failed");
+        return true;
+      }
+      logger_.info("OTA_FINISH ok; rebooting shortly");
+      // The reply is sent after this returns, so reboot from a short-lived
+      // thread to let it flush first.
+      std::thread([o = ota_] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(750));
+        o->restart();
+      }).detach();
+      reply = build_ok();
+      return true;
+    }
+    case Msg::OtaAbort: {
+      if (ota_ && ota_owner_) {
+        std::error_code ec;
+        ota_->abort(ec);
+        ota_owner_ = false;
+      }
+      reply = build_ok();
+      return true;
+    }
+    case Msg::GetFwInfo: {
+      if (!ota_) {
+        reply = build_error(std::errc::function_not_supported, "OTA not wired on this build");
+        return true;
+      }
+      const auto desc = ota_->running_app_description();
+      std::vector<uint8_t> p;
+      p.push_back(ota_->is_pending_verify() ? 1 : 0);
+      p.push_back(ota_->session_active() ? 1 : 0);
+      for (const std::string *s : {&desc.project_name, &desc.version}) {
+        const size_t n = std::min<size_t>(s->size(), 255);
+        p.push_back(static_cast<uint8_t>(n));
+        p.insert(p.end(), s->begin(), s->begin() + n);
+      }
+      reply = build(Msg::FwInfo, p, module_id());
+      return true;
+    }
+    case Msg::MarkValid: {
+      if (!ota_) {
+        reply = build_error(std::errc::function_not_supported, "OTA not wired on this build");
+        return true;
+      }
+      std::error_code ec;
+      if (!ota_->mark_app_valid(ec)) {
+        reply = build_error(ec, "MARK_VALID failed");
+        return true;
+      }
+      reply = build_ok();
+      return true;
+    }
+    case Msg::Restart: {
+      if (!payload.empty()) {
+        reply = build_error(std::errc::invalid_argument, "RESTART takes no payload");
+        return true;
+      }
+      if (!restart_) {
+        reply = build_error(std::errc::function_not_supported, "RESTART not wired on this build");
+        return true;
+      }
+      std::thread([r = restart_] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(750));
+        r();
+      }).detach();
       reply = build_ok();
       return true;
     }
@@ -485,10 +630,7 @@ protected:
 
     put_f32(payload, center.center_x);
     put_f32(payload, center.center_y);
-    put_f32(payload, center.noise_radius);
     put_f32(payload, center.deadzone);
-    put_f32(payload, center.manual_offset_x);
-    put_f32(payload, center.manual_offset_y);
 
     put_f32(payload, range.min_x);
     put_f32(payload, range.max_x);
@@ -500,7 +642,7 @@ protected:
     put_f32(payload, range.deadzone);
 
     payload.push_back(settings.manual_center_deadzone.has_value() ? 1 : 0);
-    put_f32(payload, settings.manual_center_deadzone.value_or(0.0f));
+    put_f32(payload, settings.manual_center_deadzone.value_or(0.5f));
     payload.push_back(settings.manual_range_deadzone.has_value() ? 1 : 0);
     put_f32(payload, settings.manual_range_deadzone.value_or(0.0f));
 
@@ -508,7 +650,7 @@ protected:
     put_f32(payload, settings.nudge_exit_threshold);
     espp::stream_frame::put_u32(payload, static_cast<uint32_t>(settings.nudge_hold_time.count()));
     payload.push_back(static_cast<uint8_t>(settings.input_mode));
-
+    payload.push_back(static_cast<uint8_t>(settings.stick_side)); // new
     return payload;
   }
 
@@ -596,6 +738,10 @@ private:
   send_fn send_;
   const uint8_t module_; // Config::module: routing id for requests + replies
   std::function<bool(std::error_code &ec)> start_calibration_; // Config::start_calibration
+  std::function<void()> restart_;
+  espp::Ota *ota_;
+  bool ota_owner_{
+      false};        // true while an upload begun by this service is active (guarded by mutex_)
   std::mutex mutex_; // guards parser_ + reply-building only; OmegaStore has its own lock
   Stream parser_;
 };

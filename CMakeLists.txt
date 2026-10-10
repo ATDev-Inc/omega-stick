@@ -24,3 +24,4 @@ set(
 project(omega_stick)
 
 set(CMAKE_CXX_STANDARD 20)
+

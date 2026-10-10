@@ -69,6 +69,7 @@ public:
   /// flag the main task checks at a safe point, or persist settings and call
   /// esp_restart().
   using ModeChangedFn = std::function<void(InputMode)>;
+  using StickSide = OmegaCalibration::StickSide; // next to the other using-aliases
 
   struct Config {
     /// Where CenterResult/RangeResult are loaded from / saved to.
@@ -149,15 +150,6 @@ public:
 
   /// Sets the manual per-axis center trim live (see
   /// OmegaCalibration::set_manual_offset()). Fires on_calibration_changed().
-  void set_manual_offset(float offset_x, float offset_y) {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      OmegaCalibration::set_manual_offset(center_, offset_x, offset_y);
-    }
-    if (on_calibration_changed_) {
-      on_calibration_changed_();
-    }
-  }
 
   /// Sets or clears the manual deadzone overrides live. std::nullopt clears
   /// that override back to the calibration-derived value. Fires
@@ -189,15 +181,21 @@ public:
   /// Sets the input mode live and fires on_mode_changed() (outside the
   /// lock) so the application can act on it -- see ModeChangedFn.
   void set_input_mode(InputMode mode) {
+    bool changed;
     {
       std::lock_guard<std::mutex> lock(mutex_);
+      changed = (settings_.input_mode != mode);
       settings_.input_mode = mode;
     }
-    if (on_mode_changed_) {
+    if (changed && on_mode_changed_)
       on_mode_changed_(mode);
-    }
   }
 
+  /// Sets which XAC stick is driven. No callback: the control loop reads settings() each iteration.
+  void set_stick_side(StickSide side) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    settings_.stick_side = side;
+  }
   /// Persists the CURRENT live center/range/settings to flash (both files --
   /// see Config::calibration_path / Config::settings_path). If the
   /// calibration write fails, the settings file is left untouched and this

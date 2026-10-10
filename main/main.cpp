@@ -25,6 +25,7 @@
 #include "logger.hpp"
 #include "omega_calibration.hpp"
 #include "omega_store.hpp"
+#include "ota.hpp"
 #include "qtpy.hpp"
 #include "task.hpp"
 #include "tmag5273.hpp"
@@ -38,14 +39,12 @@ static constexpr uint8_t TMAG_ADDRESS = 0x35;
 // Scales the normalized joystick output (-1..1) into mouse movement counts
 // per polling interval. Lower this to slow the cursor down, raise it to
 // speed the cursor up.
-static constexpr float SENSITIVITY = 15.0f;
+static constexpr float SENSITIVITY = 5.0f;
 
 // Manual per-axis trim, added on top of the measured center, ONLY on a
 // fresh (never-before-calibrated) run -- see the calibration section below.
 // Once calibrated, the manual offset lives in OmegaStore/DeviceSettings and
 // is live-adjustable from the calibration console instead.
-static constexpr float MANUAL_OFFSET_X = 0.0f;
-static constexpr float MANUAL_OFFSET_Y = 0.0f;
 
 // ============================================================================
 // Nudge click
@@ -115,6 +114,18 @@ static constexpr size_t MAIN_TASK_STACK_SIZE_BYTES = 16 * 1024;
 // never returns, spending the rest of its life in the polling loop at the
 // bottom.
 
+[[noreturn]] static void restart_now(espp::OmegaStore &store, bool save_first) {
+  if (save_first) {
+    std::error_code save_ec;
+    if (!store.save_to_flash(save_ec)) {
+      printf("WARNING: failed to save settings before restart: %s\n", save_ec.message().c_str());
+    }
+  }
+  // Let the OK reply leave over USB before the reset tears the link down.
+  std::this_thread::sleep_for(1000ms);
+  esp_restart();
+}
+
 static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/) {
   // ==========================================================================
   // Create I2C bus
@@ -171,7 +182,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   }
 
   printf("TMAG5273 initialized successfully!\n\n");
-
+  espp::Ota ota({.reject_same_version = false, .log_level = espp::Logger::Verbosity::ERROR});
 #if CONFIG_OMEGA_STICK_BOOT_FLASH_WINDOW_S > 0
   // Development aid, off by default: until TinyUSB takes over the USB port,
   // the chip's USB Serial/JTAG can still reset it into the bootloader, so
@@ -192,36 +203,32 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   // be re-applied immediately instead of only taking effect on next boot.
   espp::Joystick *live_joystick = nullptr;
 
+  std::atomic<bool> restart_requested{false};
+  std::atomic<bool> restart_save_first{false};
+
   // NOTE: on_mode_changed/on_calibration_changed capture `store` by
   // reference before `store` itself finishes constructing. This is safe
   // here: the lambdas only take store's address (never dereference it)
   // until CalibrationService actually invokes them later, by which point
   // construction has long completed.
-  espp::OmegaStore store({
-      .calibration_path = calibration_path,
-      .on_calibration_changed =
-          [&live_joystick, &store]() {
-            if (live_joystick) {
-              espp::OmegaCalibration::apply_calibration(*live_joystick, store.center(),
-                                                        store.range(), store.settings());
-            }
-          },
-      .on_mode_changed =
-          [&store](espp::OmegaStore::InputMode mode) {
-            printf("Input mode changed to %s; saving settings and restarting to apply...\n",
-                   mode == espp::OmegaStore::InputMode::XAC ? "XAC" : "MOUSE");
-            std::error_code save_ec;
-            if (!store.save_to_flash(save_ec)) {
-              printf("WARNING: failed to save settings before restart: %s\n",
-                     save_ec.message().c_str());
-            }
-            // Give the calibration console's OK reply a moment to actually
-            // go out over USB before the reset tears the link down.
-            std::this_thread::sleep_for(200ms);
-            esp_restart();
-          },
-      .log_level = espp::Logger::Verbosity::ERROR,
-  });
+  espp::OmegaStore store(
+      {.calibration_path = calibration_path,
+       .on_calibration_changed =
+           [&live_joystick, &store]() {
+             if (live_joystick) {
+               espp::OmegaCalibration::apply_calibration(*live_joystick, store.center(),
+                                                         store.range(), store.settings());
+             }
+           },
+       // declared before `store`, as they already are
+       .on_mode_changed =
+           [&restart_requested, &restart_save_first](espp::OmegaStore::InputMode mode) {
+             printf("Input mode -> %s; restart scheduled\n",
+                    mode == espp::OmegaStore::InputMode::XAC ? "XAC" : "MOUSE");
+             restart_save_first = true; // set this BEFORE restart_requested
+             restart_requested = true;
+           },
+       .log_level = espp::Logger::Verbosity::ERROR});
 
   espp::OmegaCalibration::CenterResult center;
   espp::OmegaCalibration::RangeResult range;
@@ -244,21 +251,20 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     printf("       CENTER CALIBRATION\n");
     printf("========================================\n\n");
 
-    espp::OmegaCalibration calibration({
-        .read =
-            [&tmag](float *x, float *y) {
-              std::error_code read_ec;
-              auto magnetic = tmag.read_magnetic(read_ec);
-              if (read_ec) {
-                return false;
-              }
-              *x = magnetic.x;
-              *y = magnetic.y;
-              return true;
-            },
-        .message = [](const std::string &text) { printf("%s\n", text.c_str()); },
-        .verbosity = espp::Logger::Verbosity::ERROR,
-    });
+    espp::OmegaCalibration calibration(
+        {.read =
+             [&tmag](float *x, float *y) {
+               std::error_code read_ec;
+               auto magnetic = tmag.read_magnetic(read_ec);
+               if (read_ec) {
+                 return false;
+               }
+               *x = magnetic.x;
+               *y = magnetic.y;
+               return true;
+             },
+         .message = [](const std::string &text) { printf("%s\n", text.c_str()); },
+         .verbosity = espp::Logger::Verbosity::ERROR});
 
     if (!calibration.center_calibration(center, cal_ec)) {
       printf("ERROR: Center calibration failed: %s\n", cal_ec.message().c_str());
@@ -279,16 +285,6 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
       }
     }
 
-    calibration.finalize_center_deadzone(center, range);
-
-    // Manual per-axis trim (see MANUAL_OFFSET_X/Y above) is applied here,
-    // on a fresh calibration, and then persisted below. A LOADED
-    // calibration keeps whatever offset was already saved instead of
-    // being reset to these constants every boot -- that offset might have
-    // been runtime-adjusted since (via the calibration console) and saved
-    // again, and we don't want to clobber that.
-    espp::OmegaCalibration::set_manual_offset(center, MANUAL_OFFSET_X, MANUAL_OFFSET_Y);
-
     if (!espp::OmegaCalibration::save(center, range, calibration_path, cal_ec)) {
       // Not fatal: we still have a valid in-memory calibration, it just
       // won't be cached for next boot.
@@ -302,7 +298,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   // Keep the store's cached copy in sync with whatever we just loaded/ran,
   // regardless of which path above produced it.
   store.set_calibration(center, range);
-
+  printf("stick_side loaded: %s\n",
+         store.settings().stick_side == espp::OmegaStore::StickSide::LEFT ? "LEFT" : "RIGHT");
   // Mode is now a live setting rather than a hardcoded constant -- flip it
   // from the calibration console (which saves + restarts to apply it).
   const bool XAC_SELECTION = store.settings().input_mode == espp::OmegaStore::InputMode::XAC;
@@ -349,17 +346,11 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
   printf("Center Y:                  %.6f\n", center.center_y);
 
-  printf("99%% noise radius:          %.6f\n", center.noise_radius);
-
   printf("Center margin:             %.2fx\n", espp::OmegaCalibration::CENTER_MARGIN);
 
   printf("Center deadzone (auto):    %.6f\n", center.deadzone);
 
   printf("Center deadzone (auto):    %.2f%%\n", center.deadzone * 100.0f);
-
-  printf("Manual offset X:           %.6f\n", center.manual_offset_x);
-
-  printf("Manual offset Y:           %.6f\n", center.manual_offset_y);
 
   printf("Effective center X:        %.6f\n", center.effective_center_x());
 
@@ -444,8 +435,9 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
               }
               return true;
             },
-        .log_level = espp::Logger::Verbosity::ERROR,
-    };
+        .restart = [&restart_requested]() { restart_requested = true; },
+        .ota = &ota,
+        .log_level = espp::Logger::Verbosity::ERROR};
     espp::CalibrationService calibration_vendor(calibration_cfg);
     calibration_cfg.send = [](std::span<const uint8_t> frame) {
       if (usb_ptr)
@@ -497,7 +489,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
           return true;
         }));
     live_joystick = &js; // let on_calibration_changed re-apply live edits
-
+    espp::OmegaCalibration::apply_calibration(js, center, range, store.settings());
     std::this_thread::sleep_for(1s);
 
     // Corrects slow center drift while the device runs (see
@@ -518,28 +510,30 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     float prev_x = js.x();
     float prev_y = js.y();
     while (true) {
+      if (restart_requested.load()) {
+        std::this_thread::sleep_for(
+            1000ms); // Let the OK reply leave over USB before the reset tears the link down.
+        restart_now(store, restart_save_first.load());
+      }
       // --- Recalibration-on-demand (see the section above) ---
       if (recalibration_requested.exchange(false)) {
         printf("\n=== RE-CALIBRATION REQUESTED (calibration console) ===\n");
-        const float old_manual_offset_x = center.manual_offset_x;
-        const float old_manual_offset_y = center.manual_offset_y;
         espp::OmegaCalibration::CenterResult new_center;
         espp::OmegaCalibration::RangeResult new_range;
         std::error_code recal_ec;
-        espp::OmegaCalibration recal({
-            .read =
-                [&tmag](float *x, float *y) {
-                  std::error_code read_ec;
-                  auto magnetic = tmag.read_magnetic(read_ec);
-                  if (read_ec)
-                    return false;
-                  *x = magnetic.x;
-                  *y = magnetic.y;
-                  return true;
-                },
-            .message = [](const std::string &text) { printf("%s\n", text.c_str()); },
-            .verbosity = espp::Logger::Verbosity::ERROR,
-        });
+        espp::OmegaCalibration recal(
+            {.read =
+                 [&tmag](float *x, float *y) {
+                   std::error_code read_ec;
+                   auto magnetic = tmag.read_magnetic(read_ec);
+                   if (read_ec)
+                     return false;
+                   *x = magnetic.x;
+                   *y = magnetic.y;
+                   return true;
+                 },
+             .message = [](const std::string &text) { printf("%s\n", text.c_str()); },
+             .verbosity = espp::Logger::Verbosity::ERROR});
         bool recal_ok = recal.center_calibration(new_center, recal_ec) &&
                         recal.range_calibration(new_center, new_range, recal_ec);
         if (recal_ok) {
@@ -549,9 +543,6 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
           // previously-tuned trim (deadzone overrides, nudge tuning and
           // input mode already live outside CenterResult/RangeResult, in
           // DeviceSettings, so they're untouched either way).
-          espp::OmegaCalibration::set_manual_offset(new_center, old_manual_offset_x,
-                                                    old_manual_offset_y);
-          recal.finalize_center_deadzone(new_center, new_range);
           center = new_center;
           range = new_range;
           store.set_calibration(center, range); // fires on_calibration_changed -> re-applies live
@@ -710,8 +701,9 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
               }
               return true;
             },
-        .log_level = espp::Logger::Verbosity::ERROR,
-    };
+        .restart = [&restart_requested]() { restart_requested = true; },
+        .ota = &ota,
+        .log_level = espp::Logger::Verbosity::ERROR};
     espp::CalibrationService calibration_vendor(calibration_cfg);
     calibration_cfg.send = [](std::span<const uint8_t> frame) {
       if (usb_ptr)
@@ -777,7 +769,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
           return true;
         }));
     live_joystick = &js;
-
+    espp::OmegaCalibration::apply_calibration(js, center, range, store.settings());
     std::this_thread::sleep_for(1s);
 
     // ------------------------------------------------------------
@@ -796,33 +788,30 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
     while (true) {
       // --- Recalibration-on-demand (see the section above the mouse loop) ---
+      if (restart_requested.load()) {
+        restart_now(store, restart_save_first.load());
+      }
       if (recalibration_requested.exchange(false)) {
         printf("\n=== RE-CALIBRATION REQUESTED (calibration console) ===\n");
-        const float old_manual_offset_x = center.manual_offset_x;
-        const float old_manual_offset_y = center.manual_offset_y;
         espp::OmegaCalibration::CenterResult new_center;
         espp::OmegaCalibration::RangeResult new_range;
         std::error_code recal_ec;
-        espp::OmegaCalibration recal({
-            .read =
-                [&tmag](float *x, float *y) {
-                  std::error_code read_ec;
-                  auto magnetic = tmag.read_magnetic(read_ec);
-                  if (read_ec)
-                    return false;
-                  *x = magnetic.x;
-                  *y = magnetic.y;
-                  return true;
-                },
-            .message = [](const std::string &text) { printf("%s\n", text.c_str()); },
-            .verbosity = espp::Logger::Verbosity::ERROR,
-        });
+        espp::OmegaCalibration recal(
+            {.read =
+                 [&tmag](float *x, float *y) {
+                   std::error_code read_ec;
+                   auto magnetic = tmag.read_magnetic(read_ec);
+                   if (read_ec)
+                     return false;
+                   *x = magnetic.x;
+                   *y = magnetic.y;
+                   return true;
+                 },
+             .message = [](const std::string &text) { printf("%s\n", text.c_str()); },
+             .verbosity = espp::Logger::Verbosity::ERROR});
         bool recal_ok = recal.center_calibration(new_center, recal_ec) &&
                         recal.range_calibration(new_center, new_range, recal_ec);
         if (recal_ok) {
-          espp::OmegaCalibration::set_manual_offset(new_center, old_manual_offset_x,
-                                                    old_manual_offset_y);
-          recal.finalize_center_deadzone(new_center, new_range);
           center = new_center;
           range = new_range;
           store.set_calibration(center, range);
@@ -846,10 +835,9 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
       const float raw_x = js.raw().x();
       const float raw_y = js.raw().y();
+
       const float mapped_magnitude = std::hypot(js.x(), js.y());
-
       if (drift_compensator.update(raw_x, raw_y, mapped_magnitude, center)) {
-
         store.set_calibration(center, range);
         espp::OmegaCalibration::apply_calibration(js, center, range, store.settings());
 
@@ -869,6 +857,9 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
       // IMPORTANT:
       // Gamepad/XAC axes are already normalized [-1, +1].
+      xac_input_report.set_stick(store.settings().stick_side == espp::OmegaStore::StickSide::LEFT
+                                     ? XacInput::Stick::LEFT
+                                     : XacInput::Stick::RIGHT);
       xac_input_report.set_joystick(js.x(), js.y());
       auto report = xac_input_report.get_report();
 
@@ -887,15 +878,14 @@ extern "C" void app_main(void) {
   // were a local variable here, it would be destroyed (stopping the task)
   // the moment app_main() fell through to the sleep loop below.
 
-  static auto task = espp::Task::make_unique(espp::Task::Config{
-      .callback = run_omega_stick,
-      .task_config =
-          {
-              .name = "omega-stick",
-              .stack_size_bytes = MAIN_TASK_STACK_SIZE_BYTES,
-          },
-      .log_level = espp::Logger::Verbosity::ERROR,
-  });
+  static auto task = espp::Task::make_unique(
+      espp::Task::Config{.callback = run_omega_stick,
+                         .task_config =
+                             {
+                                 .name = "omega-stick",
+                                 .stack_size_bytes = MAIN_TASK_STACK_SIZE_BYTES,
+                             },
+                         .log_level = espp::Logger::Verbosity::ERROR});
   task->start();
 
   // app_main()'s own task can now stay small and idle forever; all the

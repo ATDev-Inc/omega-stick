@@ -1,10 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>espp Omega Calibration Console (WebUSB / Web Serial)</title>
-<meta name="description" content="Live-view and live-edit the omega-stick's calibration and device settings (manual deadzone overrides, nudge-click distance/hold tuning, mouse/XAC mode) over WebUSB or Web Serial, and save them to the device's file_system.">
+  <meta name="description"
+    content="Live-view and live-edit the omega-stick's calibration and device settings (manual deadzone overrides, nudge-click distance/hold tuning, mouse/XAC mode) over WebUSB or Web Serial, and save them to the device's file_system.">
   <!--
     espp Omega Calibration Console (WebUSB / Web Serial)
     ======================================================
@@ -137,8 +139,9 @@
       --input-bg: #ffffff;
       --input-border: #c3cbd6;
       --chip-bg: #eef2f8;
-      --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
     }
+
     @media (prefers-color-scheme: dark) {
       :root {
         --bg: #0b0e14;
@@ -162,28 +165,66 @@
         --input-bg: #0e1219;
         --input-border: #2b3341;
         --chip-bg: #1b2230;
-        --shadow: 0 1px 3px rgba(0,0,0,0.4);
+        --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
       }
     }
+
     :root[data-theme="dark"] {
-      --bg: #0b0e14; --panel-bg: #151a23; --panel-border: #262d3a; --text: #e6eaf2;
-      --text-muted: #98a2b3; --accent: #3b82f6; --accent-hover: #60a5fa;
-      --accent-contrast: #0b0e14; --danger: #ef4444; --ok: #22c55e; --warn: #f59e0b;
-      --log-bg: #05070c; --log-text: #cdd4e0; --tx-color: #38bdf8; --rx-color: #4ade80;
-      --err-color: #f87171; --sys-color: #fbbf24; --input-bg: #0e1219;
-      --input-border: #2b3341; --chip-bg: #1b2230;
-    }
-    :root[data-theme="light"] {
-      --bg: #f4f6f9; --panel-bg: #ffffff; --panel-border: #d9dee6; --text: #1c2330;
-      --text-muted: #5c6675; --accent: #2563eb; --accent-hover: #1d4ed8;
-      --accent-contrast: #ffffff; --danger: #dc2626; --ok: #16a34a; --warn: #b45309;
-      --log-bg: #0f1420; --log-text: #d6dbe6; --tx-color: #7dd3fc; --rx-color: #86efac;
-      --err-color: #fca5a5; --sys-color: #fcd34d; --input-bg: #ffffff;
-      --input-border: #c3cbd6; --chip-bg: #eef2f8;
+      --bg: #0b0e14;
+      --panel-bg: #151a23;
+      --panel-border: #262d3a;
+      --text: #e6eaf2;
+      --text-muted: #98a2b3;
+      --accent: #3b82f6;
+      --accent-hover: #60a5fa;
+      --accent-contrast: #0b0e14;
+      --danger: #ef4444;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --log-bg: #05070c;
+      --log-text: #cdd4e0;
+      --tx-color: #38bdf8;
+      --rx-color: #4ade80;
+      --err-color: #f87171;
+      --sys-color: #fbbf24;
+      --input-bg: #0e1219;
+      --input-border: #2b3341;
+      --chip-bg: #1b2230;
     }
 
-    * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; }
+    :root[data-theme="light"] {
+      --bg: #f4f6f9;
+      --panel-bg: #ffffff;
+      --panel-border: #d9dee6;
+      --text: #1c2330;
+      --text-muted: #5c6675;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --accent-contrast: #ffffff;
+      --danger: #dc2626;
+      --ok: #16a34a;
+      --warn: #b45309;
+      --log-bg: #0f1420;
+      --log-text: #d6dbe6;
+      --tx-color: #7dd3fc;
+      --rx-color: #86efac;
+      --err-color: #fca5a5;
+      --sys-color: #fcd34d;
+      --input-bg: #ffffff;
+      --input-border: #c3cbd6;
+      --chip-bg: #eef2f8;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+    }
+
     body {
       background: var(--bg);
       color: var(--text);
@@ -192,22 +233,70 @@
       line-height: 1.45;
       min-height: 100vh;
     }
-    .wrap { max-width: 900px; margin: 0 auto; padding: 16px; }
-    header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
-    header h1 { font-size: 18px; margin: 0; }
+
+    .wrap {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+
+    header h1 {
+      font-size: 18px;
+      margin: 0;
+    }
+
     .status-pill {
-      display: inline-flex; align-items: center; gap: 6px;
-      padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
-      background: var(--chip-bg); color: var(--text-muted);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--chip-bg);
+      color: var(--text-muted);
       border: 1px solid var(--panel-border);
     }
-    .status-pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
-    .status-pill.connected { color: var(--ok); }
-    .status-pill.connected::before { background: var(--ok); }
-    .status-pill.error { color: var(--danger); }
-    .status-pill.error::before { background: var(--danger); }
-    .status-pill.busy { color: var(--warn); }
-    .status-pill.busy::before { background: var(--warn); }
+
+    .status-pill::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+
+    .status-pill.connected {
+      color: var(--ok);
+    }
+
+    .status-pill.connected::before {
+      background: var(--ok);
+    }
+
+    .status-pill.error {
+      color: var(--danger);
+    }
+
+    .status-pill.error::before {
+      background: var(--danger);
+    }
+
+    .status-pill.busy {
+      color: var(--warn);
+    }
+
+    .status-pill.busy::before {
+      background: var(--warn);
+    }
 
     .panel {
       background: var(--panel-bg);
@@ -217,25 +306,82 @@
       padding: 14px;
       margin-bottom: 14px;
     }
-    .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin: 0 0 10px; }
-    .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-    .muted { color: var(--text-muted); font-size: 12.5px; }
-    .warn-text { color: var(--warn); font-size: 12.5px; }
+
+    .panel h2 {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin: 0 0 10px;
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .muted {
+      color: var(--text-muted);
+      font-size: 12.5px;
+    }
+
+    .warn-text {
+      color: var(--warn);
+      font-size: 12.5px;
+    }
 
     button {
-      font: inherit; padding: 7px 14px; border-radius: 7px; cursor: pointer;
-      border: 1px solid var(--panel-border); background: var(--chip-bg); color: var(--text);
+      font: inherit;
+      padding: 7px 14px;
+      border-radius: 7px;
+      cursor: pointer;
+      border: 1px solid var(--panel-border);
+      background: var(--chip-bg);
+      color: var(--text);
     }
-    button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
-    button.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
-    button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    input[type="text"], input[type="number"] {
-      font: inherit; color: var(--text); background: var(--input-bg);
-      border: 1px solid var(--input-border); border-radius: 7px; padding: 6px 10px;
+
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--accent-contrast);
+    }
+
+    button.primary:hover:not(:disabled) {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+
+    button.danger {
+      background: var(--danger);
+      border-color: var(--danger);
+      color: #fff;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    input[type="text"],
+    input[type="number"] {
+      font: inherit;
+      color: var(--text);
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      border-radius: 7px;
+      padding: 6px 10px;
       min-width: 110px;
     }
-    label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted); }
+
+    label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
 
     .field-grid {
       display: grid;
@@ -243,42 +389,125 @@
       gap: 10px 18px;
       margin-top: 4px;
     }
+
     .field {
-      display: flex; flex-direction: column; gap: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
     }
-    .field .field-label { font-size: 12.5px; color: var(--text-muted); }
-    .field .field-value { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13.5px; }
 
-    .edit-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
-    .edit-row .grow { flex: 1; min-width: 140px; }
-    fieldset { border: 1px solid var(--panel-border); border-radius: 8px; padding: 10px 12px; margin: 10px 0 0; }
-    legend { font-size: 12.5px; color: var(--text-muted); padding: 0 6px; }
+    .field .field-label {
+      font-size: 12.5px;
+      color: var(--text-muted);
+    }
 
-    .mode-toggle { display: flex; gap: 8px; }
-    .mode-toggle button { flex: 1; }
-    .mode-toggle button.active { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
+    .field .field-value {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13.5px;
+    }
+
+    .edit-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+
+    .edit-row .grow {
+      flex: 1;
+      min-width: 140px;
+    }
+
+    fieldset {
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin: 10px 0 0;
+    }
+
+    legend {
+      font-size: 12.5px;
+      color: var(--text-muted);
+      padding: 0 6px;
+    }
+
+    .mode-toggle {
+      display: flex;
+      gap: 8px;
+    }
+
+    .mode-toggle button {
+      flex: 1;
+    }
+
+    .mode-toggle button.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--accent-contrast);
+    }
 
     .log {
-      background: var(--log-bg); color: var(--log-text);
-      border-radius: 8px; padding: 10px 12px;
+      background: var(--log-bg);
+      color: var(--log-text);
+      border-radius: 8px;
+      padding: 10px 12px;
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 12px; line-height: 1.5;
-      height: 220px; overflow-y: auto; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+      font-size: 12px;
+      line-height: 1.5;
+      height: 220px;
+      overflow-y: auto;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
     }
-    .log .t { color: var(--time-color); }
-    .log .tx { color: var(--tx-color); }
-    .log .rx { color: var(--rx-color); }
-    .log .err { color: var(--err-color); }
-    .log .warn { color: #d08770; }
-    .log .sys { color: var(--sys-color); }
-    footer { color: var(--text-muted); font-size: 12px; margin-top: 10px; }
-    footer a { color: var(--accent); }
+
+    .log .t {
+      color: var(--time-color);
+    }
+
+    .log .tx {
+      color: var(--tx-color);
+    }
+
+    .log .rx {
+      color: var(--rx-color);
+    }
+
+    .log .err {
+      color: var(--err-color);
+    }
+
+    .log .warn {
+      color: #d08770;
+    }
+
+    .log .sys {
+      color: var(--sys-color);
+    }
+
+    footer {
+      color: var(--text-muted);
+      font-size: 12px;
+      margin-top: 10px;
+    }
+
+    footer a {
+      color: var(--accent);
+    }
+
     #unsupported {
-      display: none; background: var(--panel-bg); border: 1px solid var(--danger);
-      color: var(--danger); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px;
+      display: none;
+      background: var(--panel-bg);
+      border: 1px solid var(--danger);
+      color: var(--danger);
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 14px;
     }
   </style>
 </head>
+
 <body>
   <div class="wrap">
     <header>
@@ -303,7 +532,63 @@
         same dispatcher as coredump/OTA — see the protocol spec in this page's source comment.
       </p>
     </div>
-
+      <fieldset>
+        <legend>Device</legend>
+        <div class="edit-row">
+          <button id="restartBtn" class="danger" disabled>Restart device</button>
+          <span class="muted">Software reset. USB re-enumerates, so reconnect afterwards.</span>
+        </div>
+      </fieldset>
+      <div class="panel"><h2>Device control</h2>
+      <fieldset>
+        <legend>Recalibration</legend>
+        <p class="warn-text" style="margin: 0 0 8px;">
+          Re-runs the full interactive center + range calibration sequence on the device
+          (the same one that runs on a fresh boot). This blocks mouse/XAC output for the
+          duration and walks you through moving the stick via printed prompts — connect
+          over <strong>Web Serial</strong> (not WebUSB) to see those prompts in the console
+          log below. Manual deadzone overrides, nudge tuning, and input mode are left as-is.
+        </p>
+        <div class="edit-row">
+          <button id="recalibrateBtn" class="danger" disabled>Re-run calibration&hellip;</button>
+          <span id="recalInfo" class="muted"></span>
+        </div>
+      </fieldset>
+      <div class="panel">
+  <h2>Initial flash (ROM bootloader)</h2>
+  <p class="muted" style="margin:0 0 8px">
+    For blank or boot-looping boards. Put the board in download mode first (hold BOOT, tap RESET,
+    release BOOT), then click Flash. Files come from <code>build/</code>
+    (<code>build/bootloader/bootloader.bin</code>, <code>build/partition_table/partition-table.bin</code>,
+    <code>build/ota_data_initial.bin</code>, <code>build/&lt;project&gt;.bin</code>).
+    Or use a single <code>merged-binary.bin</code> at 0x0.
+  </p>
+  <div id="flashRows"></div>
+  <div class="edit-row">
+    <label><input type="checkbox" id="flashErase"> erase entire flash first (also wipes saved calibration)</label>
+  </div>
+  <div class="edit-row">
+    <button id="romFlashBtn" class="danger">Flash via ROM bootloader</button>
+  </div>
+  <progress id="romProgress" value="0" max="1" style="width:100%" hidden></progress>
+</div>
+      <div class="panel">
+          <h2>Firmware update</h2>
+          <div class="row">
+            <span class="muted">Running: <span id="fwRunning">-</span></span>
+            <span id="fwPending" class="warn-text" hidden>PENDING VERIFY: rolls back on next reset unless
+              confirmed</span>
+            <button id="markValidBtn" disabled hidden>Mark running image valid</button>
+          </div>
+          <div class="edit-row">
+            <input type="file" id="fwFile" accept=".bin">
+            <button id="flashBtn" class="danger" disabled>Flash firmware</button>
+          </div>
+          <progress id="fwProgress" value="0" max="1" style="width:100%" hidden></progress>
+          <p class="muted" style="margin:8px 0 0">Select the app image (<code>build/&lt;project&gt;.bin</code>, not the
+            .elf). The device validates it, switches slots and reboots, so reconnect afterwards.</p>
+        </div>
+      </div>
     <div class="panel">
       <h2>Live calibration &amp; settings</h2>
       <div class="row">
@@ -315,15 +600,20 @@
       <fieldset>
         <legend>Calibration (read-only — from the last interactive sweep)</legend>
         <div class="field-grid" id="calibrationFields">
-          <div class="field"><span class="field-label">Center X / Y</span><span class="field-value" data-f="center">-</span></div>
-          <div class="field"><span class="field-label">Center noise radius</span><span class="field-value" data-f="noise">-</span></div>
-          <div class="field"><span class="field-label">Center deadzone (auto)</span><span class="field-value" data-f="centerDeadzoneAuto">-</span></div>
-          <div class="field"><span class="field-label">Manual offset X / Y</span><span class="field-value" data-f="manualOffset">-</span></div>
-          <div class="field"><span class="field-label">Range X</span><span class="field-value" data-f="rangeX">-</span></div>
-          <div class="field"><span class="field-label">Range Y</span><span class="field-value" data-f="rangeY">-</span></div>
-          <div class="field"><span class="field-label">Usable radius</span><span class="field-value" data-f="usableRadius">-</span></div>
-          <div class="field"><span class="field-label">Reliable max radius (normalized)</span><span class="field-value" data-f="reliableRadius">-</span></div>
-          <div class="field"><span class="field-label">Range deadzone (auto)</span><span class="field-value" data-f="rangeDeadzoneAuto">-</span></div>
+          <div class="field"><span class="field-label">Center X / Y</span><span class="field-value"
+              data-f="center">-</span></div>
+          <div class="field"><span class="field-label">Center deadzone</span><span class="field-value"
+              data-f="centerDeadzoneAuto">-</span></div>
+          <div class="field"><span class="field-label">Range X</span><span class="field-value" data-f="rangeX">-</span>
+          </div>
+          <div class="field"><span class="field-label">Range Y</span><span class="field-value" data-f="rangeY">-</span>
+          </div>
+          <div class="field"><span class="field-label">Usable radius</span><span class="field-value"
+              data-f="usableRadius">-</span></div>
+          <div class="field"><span class="field-label">Reliable max radius (normalized)</span><span class="field-value"
+              data-f="reliableRadius">-</span></div>
+          <div class="field"><span class="field-label">Range deadzone (auto)</span><span class="field-value"
+              data-f="rangeDeadzoneAuto">-</span></div>
         </div>
       </fieldset>
 
@@ -372,25 +662,21 @@
           <button id="modeMouseBtn" disabled>Mouse</button>
           <button id="modeXacBtn" disabled>XAC gamepad</button>
         </div>
-        <p class="muted" style="margin: 8px 0 0;">Applies live and takes effect immediately (may re-enumerate the USB HID device).</p>
+        <p class="muted" style="margin: 8px 0 0;">Applies live and takes effect immediately (may re-enumerate the USB
+          HID device).</p>
       </fieldset>
-
       <fieldset>
-        <legend>Recalibration</legend>
-        <p class="warn-text" style="margin: 0 0 8px;">
-          Re-runs the full interactive center + range calibration sequence on the device
-          (the same one that runs on a fresh boot). This blocks mouse/XAC output for the
-          duration and walks you through moving the stick via printed prompts — connect
-          over <strong>Web Serial</strong> (not WebUSB) to see those prompts in the console
-          log below. Manual deadzone overrides, nudge tuning, and input mode are left as-is.
-        </p>
-        <div class="edit-row">
-          <button id="recalibrateBtn" class="danger" disabled>Re-run calibration&hellip;</button>
-          <span id="recalInfo" class="muted"></span>
+        <legend>XAC stick side</legend>
+        <div class="mode-toggle">
+          <button id="stickLeftBtn" disabled>Left stick</button>
+          <button id="stickRightBtn" disabled>Right stick</button>
         </div>
+        <p class="muted" style="margin: 8px 0 0;">
+          Which XAC stick this device drives (the other stays centered). Applies live; use
+          "Save current state to flash" to keep it across reboots. Only affects XAC mode.
+        </p>
       </fieldset>
-    </div>
-
+      </div>
     <div class="panel">
       <h2>Console / log</h2>
       <div class="row" style="margin-bottom: 8px;">
@@ -427,41 +713,51 @@
     const FLAGS_REQUEST = (FLAGS_VERSION << 4) | 0; // 0x10
     const FLAGS_REPLY_BIT = 0x01;
     const FLAG_CORRELATION = 0x02;
-    const TYPE = {
-      GET_STATE: 0x50,
-      SET_MANUAL_OFFSET: 0x51,
-      SET_DEADZONE_OVERRIDE: 0x52,
-      SET_NUDGE_SETTINGS: 0x53,
-      SET_INPUT_MODE: 0x54,
-      SAVE_TO_FLASH: 0x55,
-      START_CALIBRATION: 0x56,
-      STATE: 0xD0,
-      CALIBRATION_RESULT: 0xD1,
-      OK: 0xDF,
-      ERROR: 0xFE,
-    };
-    const TYPE_NAME = {
-      0x50: "GET_STATE", 0x51: "SET_MANUAL_OFFSET", 0x52: "SET_DEADZONE_OVERRIDE",
-      0x53: "SET_NUDGE_SETTINGS", 0x54: "SET_INPUT_MODE", 0x55: "SAVE_TO_FLASH",
-      0x56: "START_CALIBRATION",
-      0xD0: "STATE", 0xD1: "CALIBRATION_RESULT", 0xDF: "OK", 0xFE: "ERROR",
-    };
+const TYPE = {
+  GET_STATE: 0x50,
+  SET_DEADZONE_OVERRIDE: 0x51,
+  SET_NUDGE_SETTINGS: 0x52,
+  SET_INPUT_MODE: 0x53,
+  SAVE_TO_FLASH: 0x54,
+  START_CALIBRATION: 0x55,
+  SET_STICK_SIDE: 0x56,
+  RESTART: 0x57,
+  OTA_BEGIN: 0x58,
+  OTA_DATA: 0x59,
+  OTA_FINISH: 0x5A,
+  OTA_ABORT: 0x5B,
+  GET_FW_INFO: 0x5C,
+  MARK_VALID: 0x5D,
+  STATE: 0xD0, CALIBRATION_RESULT: 0xD1, FW_INFO: 0xD2, OK: 0xDF, ERROR: 0xFE,
+};
+const TYPE_NAME = {
+  0x50:"GET_STATE",0x51:"SET_DEADZONE_OVERRIDE",0x52:"SET_NUDGE_SETTINGS",
+  0x53:"SET_INPUT_MODE",0x54:"SAVE_TO_FLASH",0x55:"START_CALIBRATION",
+  0x56:"SET_STICK_SIDE",0x57:"RESTART",0x58:"OTA_BEGIN",0x59:"OTA_DATA",
+  0x5A:"OTA_FINISH",0x5B:"OTA_ABORT",0x5C:"GET_FW_INFO",0x5D:"MARK_VALID",
+  0xD0:"STATE",0xD1:"CALIBRATION_RESULT",0xD2:"FW_INFO",0xDF:"OK",0xFE:"ERROR",
+};
+
     const CMD_TIMEOUT_MS = 5000;
     const SAVE_TIMEOUT_MS = 8000; // flash write may take longer than a live-apply
     const SERIAL_BAUD = 115200;
+    const OTA_BEGIN_TIMEOUT_MS = 60000;  // BEGIN erases the target partition
+    const OTA_FINISH_TIMEOUT_MS = 30000; // image validation
+    const OTA_CHUNK = 4000;              // payload max is 4096, minus 4-byte offset
     const INPUT_MODE = { MOUSE: 0, XAC: 1 };
-
+    const STICK_SIDE = { LEFT: 0, RIGHT: 1 };
     // ===================================================================
     // Elements & logging
     // ===================================================================
     const els = {};
     for (const id of ["status", "usbBtn", "serialBtn", "anyDevice", "devInfo",
-                      "refreshBtn", "saveFlashBtn", "stateInfo",
-                      "centerDzEnable", "centerDzValue", "rangeDzEnable", "rangeDzValue", "applyDeadzoneBtn",
-                      "nudgeEnter", "nudgeExit", "nudgeTime", "applyNudgeBtn",
-                      "modeMouseBtn", "modeXacBtn",
-                      "recalibrateBtn", "recalInfo",
-                      "logFrames", "clearLogBtn", "log", "unsupported"]) {
+      "refreshBtn", "saveFlashBtn", "stateInfo",
+      "centerDzEnable", "centerDzValue", "rangeDzEnable", "rangeDzValue", "applyDeadzoneBtn",
+      "nudgeEnter", "nudgeExit", "nudgeTime", "applyNudgeBtn",
+      "modeMouseBtn", "modeXacBtn",
+      "recalibrateBtn", "recalInfo",
+      "fwRunning", "fwPending", "markValidBtn", "fwFile", "flashBtn", "fwProgress",
+      "logFrames", "clearLogBtn", "log", "unsupported", "stickLeftBtn", "stickRightBtn", "restartBtn"]) {
       els[id] = document.getElementById(id);
     }
     const fieldEls = {};
@@ -533,7 +829,7 @@
       view.setUint32(5, payload.length, true);
       frame.set(payload, HEADER_SIZE);
       view.setUint32(HEADER_SIZE + payload.length,
-                     crc32(frame.subarray(0, HEADER_SIZE + payload.length)), true);
+        crc32(frame.subarray(0, HEADER_SIZE + payload.length)), true);
       return frame;
     }
 
@@ -554,10 +850,10 @@
           textLen += end - start;
         };
         let pos = 0;
-        for (;;) {
+        for (; ;) {
           const runStart = pos;
           while (pos < merged.length &&
-                 !(merged[pos] === 0x54 && (pos + 1 >= merged.length || merged[pos + 1] === 0x4F))) {
+            !(merged[pos] === 0x54 && (pos + 1 >= merged.length || merged[pos + 1] === 0x4F))) {
             pos++;
           }
           skip(runStart, pos);
@@ -575,12 +871,14 @@
           const actual = crc32(merged.subarray(pos, pos + headerSize + len));
           if (actual !== expected) { skip(pos, pos + 1); pos++; continue; }
           const correlation = ext ? (merged[pos + 5] | (merged[pos + 6] << 8)) : null;
-          frames.push({ flags,
-                        reply: (flags & FLAGS_REPLY_BIT) !== 0,
-                        correlation,
-                        module: merged[pos + 3],
-                        type: merged[pos + 4],
-                        payload: merged.slice(pos + headerSize, pos + headerSize + len) });
+          frames.push({
+            flags,
+            reply: (flags & FLAGS_REPLY_BIT) !== 0,
+            correlation,
+            module: merged[pos + 3],
+            type: merged[pos + 4],
+            payload: merged.slice(pos + headerSize, pos + headerSize + len)
+          });
           pos += total;
         }
         this.buf = merged.slice(pos);
@@ -607,7 +905,7 @@
     function parseErrorReply(payload) {
       if (payload.length < 4) return { code: 0, message: "(malformed error reply)" };
       let message = "";
-      try { message = new TextDecoder().decode(payload.subarray(4)); } catch (_) {}
+      try { message = new TextDecoder().decode(payload.subarray(4)); } catch (_) { }
       return { code: readU32(payload, 0), message };
     }
 
@@ -677,8 +975,10 @@
               else if (ep.direction === "out" && outEp === null) outEp = ep;
             }
             if (inEp && outEp) {
-              found = { interfaceNumber: itf.interfaceNumber,
-                        alternateSetting: alt.alternateSetting, inEp, outEp };
+              found = {
+                interfaceNumber: itf.interfaceNumber,
+                alternateSetting: alt.alternateSetting, inEp, outEp
+              };
               break;
             }
           }
@@ -693,9 +993,9 @@
         const t = {
           kind: "usb",
           name: (device.productName || "USB device") + " (" +
-                device.vendorId.toString(16).padStart(4, "0") + ":" +
-                device.productId.toString(16).padStart(4, "0") + ") · vendor iface " +
-                found.interfaceNumber,
+            device.vendorId.toString(16).padStart(4, "0") + ":" +
+            device.productId.toString(16).padStart(4, "0") + ") · vendor iface " +
+            found.interfaceNumber,
           device,
           closing: false,
           async send(bytes) {
@@ -703,7 +1003,7 @@
             while (remaining.length > 0) {
               const result = await device.transferOut(epOut, remaining);
               if (result.status === "stall") {
-                try { await device.clearHalt("out", epOut); } catch (_) {}
+                try { await device.clearHalt("out", epOut); } catch (_) { }
                 throw new Error("OUT endpoint stalled");
               }
               if (result.status !== "ok")
@@ -715,12 +1015,12 @@
           },
           async close() {
             this.closing = true;
-            try { await device.releaseInterface(found.interfaceNumber); } catch (_) {}
-            try { await device.close(); } catch (_) {}
+            try { await device.releaseInterface(found.interfaceNumber); } catch (_) { }
+            try { await device.close(); } catch (_) { }
           },
         };
         (async () => {
-          for (;;) {
+          for (; ;) {
             let result;
             try { result = await device.transferIn(epIn, MAX_FRAME); }
             catch (e) {
@@ -729,7 +1029,7 @@
             }
             if (t.closing) return;
             if (result.status === "stall") {
-              try { await device.clearHalt("in", epIn); } catch (_) {}
+              try { await device.clearHalt("in", epIn); } catch (_) { }
               continue;
             }
             if (result.data && result.data.byteLength)
@@ -738,7 +1038,7 @@
         })();
         return t;
       } catch (e) {
-        try { await device.close(); } catch (_) {}
+        try { await device.close(); } catch (_) { }
         throw e;
       }
     }
@@ -772,9 +1072,9 @@
         async send(bytes) { await writer.write(bytes); },
         async close() {
           this.closing = true;
-          try { if (this.reader) await this.reader.cancel(); } catch (_) {}
-          try { writer.releaseLock(); } catch (_) {}
-          try { await port.close(); } catch (_) {}
+          try { if (this.reader) await this.reader.cancel(); } catch (_) { }
+          try { writer.releaseLock(); } catch (_) { }
+          try { await port.close(); } catch (_) { }
         },
       };
       (async () => {
@@ -782,7 +1082,7 @@
           const reader = port.readable.getReader();
           t.reader = reader;
           try {
-            for (;;) {
+            for (; ;) {
               const { value, done } = await reader.read();
               if (done) break;
               if (value && value.length) handleRxBytes(value);
@@ -790,7 +1090,7 @@
           } catch (e) {
             if (!t.closing) logLine("err", "Serial read error: " + e.message);
           } finally {
-            try { reader.releaseLock(); } catch (_) {}
+            try { reader.releaseLock(); } catch (_) { }
           }
           if (t.closing) return;
         }
@@ -829,7 +1129,7 @@
       if (transport !== t) return;
       transport = null;
       failPending(new Error("transport lost"));
-      Promise.resolve(t.close()).catch(() => {});
+      Promise.resolve(t.close()).catch(() => { });
       parser.reset();
       consoleCarry = "";
       updateUI();
@@ -865,8 +1165,9 @@
       setStatus("connected", "Connected");
       els.devInfo.textContent = "Connected: " + t.name;
       logLine("sys", "Connected (" + (t.kind === "usb" ? "WebUSB vendor interface" : "Web Serial / CDC") + ").");
-      checkModulePresent().catch(() => {});
+      checkModulePresent().catch(() => { });
       refreshState();
+      refreshFwInfo();
     }
 
     let haveState = false;
@@ -887,8 +1188,13 @@
       els.applyDeadzoneBtn.disabled = !connected || busy || !haveState;
       els.applyNudgeBtn.disabled = !connected || busy || !haveState;
       els.modeMouseBtn.disabled = !connected || busy || !haveState;
+      els.stickLeftBtn.disabled = !connected || busy || !haveState;
+      els.stickRightBtn.disabled = !connected || busy || !haveState;
+      els.restartBtn.disabled = !connected || busy;
       els.modeXacBtn.disabled = !connected || busy || !haveState;
       els.recalibrateBtn.disabled = !connected || busy;
+      els.flashBtn.disabled = !connected || busy;
+      els.markValidBtn.disabled = !connected || busy;
       if (!connected) { els.devInfo.textContent = "Not connected."; els.recalInfo.textContent = ""; }
     }
 
@@ -925,14 +1231,14 @@
           refreshState();
         } else {
           const info = frame.payload.length > 1 ? parseErrorReply(frame.payload.subarray(1))
-                                                  : { code: 0, message: "(no details)" };
+            : { code: 0, message: "(no details)" };
           els.recalInfo.textContent = "Failed: " + info.message;
           logLine("err", "Recalibration failed (code " + info.code + "): " + info.message);
         }
         return;
       }
       if (pendingTxn && frame.module === MODULE_CALIBRATION && frame.reply &&
-          (pendingTxn.expect.has(frame.type) || frame.type === TYPE.ERROR)) {
+        (pendingTxn.expect.has(frame.type) || frame.type === TYPE.ERROR)) {
         clearTimeout(pendingTxn.timer);
         const p = pendingTxn;
         pendingTxn = null;
@@ -946,7 +1252,7 @@
       }
       if (!els.logFrames.checked)
         logLine("sys", "Unsolicited frame " + (TYPE_NAME[frame.type] || ("0x" + frame.type.toString(16))) +
-                " (" + frame.payload.length + " B payload)");
+          " (" + frame.payload.length + " B payload)");
     }
 
     function transact(type, payload, expectTypes, timeoutMs, retries) {
@@ -967,7 +1273,7 @@
       });
       const run = async () => {
         let attempts = 1 + (retries || 0);
-        for (;;) {
+        for (; ;) {
           try { return await attempt(); }
           catch (e) {
             attempts--;
@@ -977,7 +1283,7 @@
         }
       };
       const result = txnChain.then(run, run);
-      txnChain = result.then(() => {}, () => {});
+      txnChain = result.then(() => { }, () => { });
       return result;
     }
 
@@ -1012,7 +1318,7 @@
       }
       const names = info.modules.map((m) => m.name + " (#" + m.id + ")").join(", ") || "none";
       logLine("warn", "This device does not advertise the calibration module. Detected: " + names +
-              ". You may have selected the wrong device, or its firmware lacks this feature yet.");
+        ". You may have selected the wrong device, or its firmware lacks this feature yet.");
     }
 
     // ===================================================================
@@ -1022,15 +1328,14 @@
     let state = null; // decoded STATE payload, kept as the form's source of truth
 
     function decodeState(payload) {
-      if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79)");
+      if (payload.length < 68) throw new Error("malformed STATE reply (" + payload.length + " B, expected 68)");
       const v = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
       let o = 0;
       const f32 = () => { const x = v.getFloat32(o, true); o += 4; return x; };
       const u8 = () => payload[o++];
       const u32 = () => { const x = v.getUint32(o, true); o += 4; return x; };
       const s = {
-        centerX: f32(), centerY: f32(), centerNoise: f32(), centerDeadzoneAuto: f32(),
-        manualOffsetX: f32(), manualOffsetY: f32(),
+        centerX: f32(), centerY: f32(), centerDeadzoneAuto: f32(),
         rangeMinX: f32(), rangeMaxX: f32(), rangeMinY: f32(), rangeMaxY: f32(),
         usableRadius: f32(), reliableMaxRadius: f32(), normalizedMaxRadius: f32(), rangeDeadzoneAuto: f32(),
       };
@@ -1044,14 +1349,13 @@
       s.nudgeExitThreshold = f32();
       s.nudgeTimeMs = u32();
       s.inputMode = u8();
+      s.stickSide = u8();
       return s;
     }
 
     function renderState(s) {
       fieldEls.center.textContent = s.centerX.toFixed(6) + " / " + s.centerY.toFixed(6);
-      fieldEls.noise.textContent = s.centerNoise.toFixed(6);
       fieldEls.centerDeadzoneAuto.textContent = s.centerDeadzoneAuto.toFixed(6);
-      fieldEls.manualOffset.textContent = s.manualOffsetX.toFixed(6) + " / " + s.manualOffsetY.toFixed(6);
       fieldEls.rangeX.textContent = s.rangeMinX.toFixed(6) + " to +" + s.rangeMaxX.toFixed(6);
       fieldEls.rangeY.textContent = s.rangeMinY.toFixed(6) + " to +" + s.rangeMaxY.toFixed(6);
       fieldEls.usableRadius.textContent = s.usableRadius.toFixed(6);
@@ -1071,6 +1375,8 @@
       els.nudgeTime.value = String(s.nudgeTimeMs);
 
       els.modeMouseBtn.classList.toggle("active", s.inputMode === INPUT_MODE.MOUSE);
+      els.stickLeftBtn.classList.toggle("active", s.stickSide === STICK_SIDE.LEFT);
+      els.stickRightBtn.classList.toggle("active", s.stickSide === STICK_SIDE.RIGHT);
       els.modeXacBtn.classList.toggle("active", s.inputMode === INPUT_MODE.XAC);
 
       els.stateInfo.textContent = "Last refreshed " + new Date().toLocaleTimeString() + ".";
@@ -1079,7 +1385,74 @@
     els.centerDzEnable.addEventListener("change", () => { els.centerDzValue.disabled = !els.centerDzEnable.checked; });
     els.rangeDzEnable.addEventListener("change", () => { els.rangeDzValue.disabled = !els.rangeDzEnable.checked; });
 
-    async function refreshState() {
+    async function refreshFwInfo() {
+      if (!transport) return;
+      try {
+        const r = await transact(TYPE.GET_FW_INFO, null, [TYPE.FW_INFO], CMD_TIMEOUT_MS, 1);
+        const p = r.payload; let i = 2;
+        const str = () => { const n = p[i++]; const s = new TextDecoder().decode(p.subarray(i, i + n)); i += n; return s; };
+        const pending = p[0] === 1;
+        els.fwRunning.textContent = str() + " " + str();
+        els.fwPending.hidden = !pending;
+        els.markValidBtn.hidden = !pending;
+      } catch (e) { els.fwRunning.textContent = "(unavailable)"; }
+    }
+
+    els.markValidBtn.addEventListener("click", async () => {
+      try {
+        await transact(TYPE.MARK_VALID, null, [TYPE.OK], CMD_TIMEOUT_MS, 0);
+        logLine("sys", "Running image marked valid.");
+      } catch (e) { logLine("err", "MARK_VALID failed: " + e.message); }
+      refreshFwInfo();
+    });
+
+    els.flashBtn.addEventListener("click", async () => {
+      if (!transport || busy) return;
+      const file = els.fwFile.files && els.fwFile.files[0];
+      if (!file) { logLine("err", "Choose a .bin file first."); return; }
+      const img = new Uint8Array(await file.arrayBuffer());
+      if (img.length === 0 || img[0] !== 0xE9) {
+        logLine("err", "That doesn't look like an ESP app image (first byte should be 0xE9). Use the .bin, not the .elf.");
+        return;
+      }
+      if (!window.confirm("Flash " + file.name + " (" + img.length + " bytes)? The device will reboot into it.")) return;
+
+      busy = true; updateUI(); setStatus("busy", "Flashing...");
+      els.fwProgress.hidden = false; els.fwProgress.value = 0;
+      let began = false;
+      try {
+        const begin = new Uint8Array(4);
+        new DataView(begin.buffer).setUint32(0, img.length, true);
+        logLine("sys", "OTA: erasing target partition...");
+        await transact(TYPE.OTA_BEGIN, begin, [TYPE.OK], OTA_BEGIN_TIMEOUT_MS, 0);
+        began = true;
+
+        for (let off = 0; off < img.length; off += OTA_CHUNK) {
+          const chunk = img.subarray(off, Math.min(off + OTA_CHUNK, img.length));
+          const payload = new Uint8Array(4 + chunk.length);
+          new DataView(payload.buffer).setUint32(0, off, true);
+          payload.set(chunk, 4);
+          await transact(TYPE.OTA_DATA, payload, [TYPE.OK], CMD_TIMEOUT_MS * 2, 0);
+          els.fwProgress.value = (off + chunk.length) / img.length;
+        }
+
+        logLine("sys", "OTA: validating and activating...");
+        await transact(TYPE.OTA_FINISH, null, [TYPE.OK], OTA_FINISH_TIMEOUT_MS, 0);
+        began = false;
+        logLine("sys", "Firmware accepted. The device is rebooting; reconnect in a few seconds.");
+      } catch (e) {
+        logLine("err", "Flash failed: " + e.message);
+        if (began && transport) {
+          try { await transact(TYPE.OTA_ABORT, null, [TYPE.OK], CMD_TIMEOUT_MS, 0); } catch (_) { }
+        }
+      } finally {
+        busy = false; updateUI();
+        els.fwProgress.hidden = true;
+        if (transport) setStatus("connected", "Connected");
+      }
+    });
+
+    async function refreshState(force) {
       if (!transport || busy) return;
       busy = true; updateUI(); setStatus("busy", "Fetching state...");
       try {
@@ -1115,7 +1488,7 @@
       try {
         await transact(TYPE.SET_DEADZONE_OVERRIDE, payload, [TYPE.OK], CMD_TIMEOUT_MS, 1);
         logLine("sys", "Deadzone override applied live" + (centerOn || rangeOn ? "." : " (cleared)."));
-        await refreshState();
+        await refreshState(true);
       } catch (e) {
         logLine("err", "SET_DEADZONE_OVERRIDE failed: " + e.message);
       } finally {
@@ -1147,7 +1520,7 @@
       try {
         await transact(TYPE.SET_NUDGE_SETTINGS, payload, [TYPE.OK], CMD_TIMEOUT_MS, 1);
         logLine("sys", "Nudge-click settings applied live.");
-        await refreshState();
+        await refreshState(true);
       } catch (e) {
         logLine("err", "SET_NUDGE_SETTINGS failed: " + e.message);
       } finally {
@@ -1155,14 +1528,46 @@
         if (transport) setStatus("connected", "Connected");
       }
     });
+    async function setStickSide(side) {
+      if (!transport || busy) return;
+      busy = true; updateUI(); setStatus("busy", "Setting stick side...");
+      try {
+        await transact(TYPE.SET_STICK_SIDE, new Uint8Array([side]), [TYPE.OK], CMD_TIMEOUT_MS, 1);
+        logLine("sys", "XAC stick side set to " + (side === STICK_SIDE.LEFT ? "left" : "right"));
+        //await refreshState(true);
+      } catch (e) {
+        logLine("err", "SET_STICK_SIDE failed: " + e.message);
+      } finally {
+        busy = false; updateUI();
+        if (transport) setStatus("connected", "Connected");
+      }
+    }
+    els.stickLeftBtn.addEventListener("click", () => setStickSide(STICK_SIDE.LEFT));
+    els.stickRightBtn.addEventListener("click", () => setStickSide(STICK_SIDE.RIGHT));
 
+    els.restartBtn.addEventListener("click", async () => {
+      if (!transport || busy) return;
+      if (!window.confirm("Restart the device now? Unsaved live changes (offsets, deadzones, " +
+        "nudge tuning, stick side) will be lost. You'll need to reconnect."))
+        return;
+      busy = true; updateUI(); setStatus("busy", "Restarting...");
+      try {
+        await transact(TYPE.RESTART, null, [TYPE.OK], CMD_TIMEOUT_MS, 0);
+        logLine("sys", "Restart accepted; the device is rebooting. Reconnect in a few seconds.");
+      } catch (e) {
+        logLine("err", "RESTART failed: " + e.message);
+      } finally {
+        busy = false; updateUI();
+        if (transport) setStatus("connected", "Connected");
+      }
+    });
     async function setInputMode(mode) {
       if (!transport || busy) return;
       busy = true; updateUI(); setStatus("busy", "Switching mode...");
       try {
         await transact(TYPE.SET_INPUT_MODE, new Uint8Array([mode]), [TYPE.OK], CMD_TIMEOUT_MS, 1);
         logLine("sys", "Switched to " + (mode === INPUT_MODE.XAC ? "XAC gamepad" : "mouse") + " mode.");
-        await refreshState();
+        //await refreshState(true);
       } catch (e) {
         logLine("err", "SET_INPUT_MODE failed: " + e.message);
       } finally {
@@ -1206,7 +1611,7 @@
         // CALIBRATION_RESULT frame, handled in dispatchFrame() above.
         await transact(TYPE.START_CALIBRATION, null, [TYPE.OK], CMD_TIMEOUT_MS, 0);
         logLine("sys", "Recalibration accepted; follow the device's console prompts " +
-                "(Web Serial) \u2014 this page updates automatically when it's done.");
+          "(Web Serial) \u2014 this page updates automatically when it's done.");
       } catch (e) {
         logLine("err", "START_CALIBRATION failed: " + e.message);
         els.recalInfo.textContent = "Request failed: " + e.message;
@@ -1218,7 +1623,93 @@
 
     updateUI();
     logLine("sys", "Omega Calibration Console ready. Connect a device running the calibration module " +
-            "(module 5) alongside coredump/OTA.");
+      "(module 5) alongside coredump/OTA.");
   </script>
+  <script>
+(function () {
+  const ESPTOOL_URL = "https://cdn.jsdelivr.net/npm/esptool-js@0.5.4/bundle.js";
+  const DEFAULTS = [
+    ["bootloader.bin", "0x0"],
+    ["partition-table.bin", "0x8000"],
+    ["ota_data_initial.bin", "0xd000"],
+    ["omega_stick.bin", "0x10000"],
+  ];
+  const rowsEl = document.getElementById("flashRows");
+  const btn = document.getElementById("romFlashBtn");
+  const prog = document.getElementById("romProgress");
+  const rows = DEFAULTS.map(([label, addr]) => {
+    const div = document.createElement("div");
+    div.className = "edit-row";
+    div.innerHTML = '<label style="min-width:150px"></label>' +
+      '<input type="file" accept=".bin" class="grow">' +
+      '<input type="text" style="width:90px">';
+    div.querySelector("label").textContent = label;
+    div.querySelector('input[type="text"]').value = addr;
+    rowsEl.appendChild(div);
+    return { file: div.querySelector('input[type="file"]'), addr: div.querySelector('input[type="text"]') };
+  });
+	function toBinaryString(u8) {
+  let s = "";
+  const CHUNK = 0x8000; // avoids call-stack limits on large images
+  for (let i = 0; i < u8.length; i += CHUNK)
+    s += String.fromCharCode.apply(null, u8.subarray(i, i + CHUNK));
+  return s;
+}
+  btn.addEventListener("click", async () => {
+    if (!navigator.serial) { logLine("err", "Web Serial is not supported in this browser."); return; }
+    const chosen = rows.filter(r => r.file.files && r.file.files[0]);
+    if (chosen.length === 0) { logLine("err", "Choose at least one .bin file."); return; }
+    const fileArray = [];
+    for (const r of chosen) {
+      const address = parseInt(r.addr.value.trim(), 16);
+      if (!Number.isFinite(address)) { logLine("err", "Bad address: " + r.addr.value); return; }
+      fileArray.push({
+  data: toBinaryString(new Uint8Array(await r.file.files[0].arrayBuffer())),
+  address
+});}
+    if (!window.confirm("Flash " + fileArray.length + " file(s) over the ROM bootloader?" +
+        (document.getElementById("flashErase").checked ? " The whole flash will be erased first." : ""))) return;
+
+    if (transport) await disconnect();       // release the console connection
+    btn.disabled = true; busy = true; updateUI();
+    setStatus("busy", "ROM flashing...");
+    prog.hidden = false; prog.value = 0;
+    let port = null, tp = null;
+    try {
+      logLine("sys", "Loading esptool-js...");
+      const { ESPLoader, Transport } = await import(ESPTOOL_URL);
+      port = await navigator.serial.requestPort();   // pick the download-mode port
+      tp = new Transport(port, true);
+      const terminal = {
+        clean() {},
+        write: (s) => logLine("sys", s),
+        writeLine: (s) => logLine("sys", s),
+      };
+      const loader = new ESPLoader({ transport: tp, baudrate: 460800, romBaudrate: 115200, terminal });
+      const chip = await loader.main();
+      logLine("sys", "Connected to " + chip);
+      await loader.writeFlash({
+        fileArray,
+        flashSize: "keep", flashMode: "keep", flashFreq: "keep",
+        eraseAll: document.getElementById("flashErase").checked,
+        compress: true,
+        reportProgress: (i, written, total) => {
+          prog.value = written / total;
+        },
+      });
+      logLine("sys", "Flash complete. Resetting...");
+      try { await loader.after(); } catch (_) {}
+      logLine("sys", "If the board did not restart, press RESET, then reconnect.");
+    } catch (e) {
+      logLine("err", "ROM flash failed: " + (e && e.message ? e.message : e));
+    } finally {
+      try { if (tp) await tp.disconnect(); } catch (_) {}
+      prog.hidden = true; btn.disabled = false; busy = false; updateUI();
+      setStatus("", "Disconnected");
+    }
+  });
+})();
+</script>
 </body>
+
 </html>

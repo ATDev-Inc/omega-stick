@@ -31,8 +31,8 @@ public:
   // Tunables
   // --------------------------------------------------------------------------
 
-  static constexpr int CENTER_SAMPLES = 200;
-  static constexpr int RANGE_SAMPLES = 200;
+  static constexpr int CENTER_SAMPLES = 500;
+  static constexpr int RANGE_SAMPLES = 500;
 
   static constexpr int RANGE_SECTORS = 32;
 
@@ -43,8 +43,7 @@ public:
   // Add 10% margin to measured center noise.
   static constexpr float CENTER_MARGIN = 1.50f;
 
-  // Don't allow a calibration accident to create a huge deadzone.
-  static constexpr float MAX_CENTER_DEADZONE = 0.5f;
+  static constexpr float DEADZONE_VAL = 0.5f;
 
   // Use the 10th percentile of reachable sector radii as the "reliable" edge,
   // so one bad direction can't wreck the whole calibration and one unusually
@@ -115,8 +114,7 @@ public:
   struct CenterResult {
     float center_x{0.0f};
     float center_y{0.0f};
-    float noise_radius{0.0f}; ///< 99th-percentile radius of center noise.
-    float deadzone{0.0f};     ///< Normalized [0, MAX_CENTER_DEADZONE].
+    float deadzone{0.5f};
 
     // Manual per-axis trim added on top of the measured center. Intended
     // for compensating mechanical alignment issues an automatic
@@ -127,13 +125,11 @@ public:
     // correction; set via set_manual_offset() / adjust_manual_offset().
     // In the same raw sensor units as the calibration itself. Defaults to
     // zero (no adjustment).
-    float manual_offset_x{0.0f};
-    float manual_offset_y{0.0f};
 
     /// The center actually used when building or updating a Joystick: the
     /// measured center plus whatever manual trim has been set.
-    float effective_center_x() const { return center_x + manual_offset_x; }
-    float effective_center_y() const { return center_y + manual_offset_y; }
+    float effective_center_x() const { return center_x; }
+    float effective_center_y() const { return center_y; }
   };
 
   struct RangeResult {
@@ -151,6 +147,8 @@ public:
   /// reflash to switch between the two.
   enum class InputMode : uint8_t { MOUSE = 0, XAC = 1 };
 
+  /// Which of the XAC's two sticks (left/right USB port) this device drives.
+  enum class StickSide : uint8_t { LEFT = 0, RIGHT = 1 };
   /// Live-tunable device settings that sit alongside (but are distinct
   /// from) the CenterResult/RangeResult produced by an interactive
   /// calibration sweep. Unlike center/range, these are meant to be edited
@@ -194,7 +192,7 @@ public:
     /// threshold" / distance threshold). This is a DELTA (current magnitude
     /// minus the magnitude at the start of the window), not an absolute
     /// position.
-    float nudge_distance_threshold{0.5f};
+    float nudge_distance_threshold{0.85f};
 
     /// Absolute normalized magnitude the stick must fall back to (or below)
     /// before a held nudge is released ("nudge exit threshold"). Unlike
@@ -215,6 +213,7 @@ public:
     // ------------------------------------------------------------------
     InputMode input_mode{InputMode::MOUSE};
 
+    StickSide stick_side{StickSide::RIGHT};
     // ------------------------------------------------------------------
     // Persistence
     // ------------------------------------------------------------------
@@ -254,6 +253,7 @@ public:
       out << "nudge_exit_threshold=" << settings.nudge_exit_threshold << "\n";
       out << "nudge_hold_time_ms=" << static_cast<float>(settings.nudge_hold_time.count()) << "\n";
       out << "input_mode=" << static_cast<float>(static_cast<uint8_t>(settings.input_mode)) << "\n";
+      out << "stick_side=" << static_cast<float>(static_cast<uint8_t>(settings.stick_side)) << "\n";
       out.flush();
 
       if (!out) {
@@ -307,7 +307,7 @@ public:
                                            ? std::optional<float>(values["manual_range_deadzone"])
                                            : std::nullopt;
       settings.nudge_distance_threshold =
-          values.count("nudge_distance_threshold") ? values["nudge_distance_threshold"] : 0.5f;
+          values.count("nudge_distance_threshold") ? values["nudge_distance_threshold"] : 0.85f;
       settings.nudge_exit_threshold =
           values.count("nudge_exit_threshold") ? values["nudge_exit_threshold"] : 0.8f;
       settings.nudge_hold_time = std::chrono::milliseconds(
@@ -316,6 +316,9 @@ public:
       settings.input_mode = values.count("input_mode")
                                 ? static_cast<InputMode>(static_cast<uint8_t>(values["input_mode"]))
                                 : InputMode::MOUSE;
+      settings.stick_side = (values.count("stick_side") && values["stick_side"] < 0.5f)
+                                ? StickSide::LEFT
+                                : StickSide::RIGHT;
       return true;
     }
   };
@@ -324,7 +327,6 @@ public:
   enum class Error {
     read_failure = 1,
     no_center_samples,
-    no_center_noise_samples,
     no_range_samples,
     file_open_failed,
     file_write_failed,
@@ -341,8 +343,6 @@ public:
           return "sensor read failed";
         case Error::no_center_samples:
           return "no valid center samples";
-        case Error::no_center_noise_samples:
-          return "no valid center-noise samples";
         case Error::no_range_samples:
           return "insufficient angular coverage during range calibration";
         case Error::file_open_failed:
@@ -420,57 +420,15 @@ public:
 
     const float center_x = sum_x / static_cast<float>(valid_samples);
     const float center_y = sum_y / static_cast<float>(valid_samples);
+    const float deadzone = DEADZONE_VAL;
 
     logger_.info("Center:");
     logger_.info("  X = {:.6f}", center_x);
     logger_.info("  Y = {:.6f}", center_y);
 
-    // ------------------------------------------------------------------
-    // Measure center noise
-    // ------------------------------------------------------------------
-    message("Measuring center movement/noise...");
-    message("shake it a bit but do not touch the end effector.");
-    std::this_thread::sleep_for(SETTLE_DELAY);
-
-    std::vector<float> center_radii;
-    center_radii.reserve(CENTER_SAMPLES);
-    MedianFilter3 noise_x_filter, noise_y_filter;
-
-    for (int i = 0; i < CENTER_SAMPLES; i++) {
-      float x, y;
-      if (!read_(&x, &y)) {
-        std::this_thread::sleep_for(SAMPLE_DELAY);
-        continue;
-      }
-      x = noise_x_filter.update(x);
-      y = noise_y_filter.update(y);
-      const float dx = x - center_x;
-      const float dy = y - center_y;
-      center_radii.push_back(std::sqrt(dx * dx + dy * dy));
-      std::this_thread::sleep_for(SAMPLE_DELAY);
-    }
-
-    if (center_radii.empty()) {
-      logger_.error("No valid center-noise samples!");
-      ec = make_error_code(Error::no_center_noise_samples);
-      return false;
-    }
-
-    std::sort(center_radii.begin(), center_radii.end());
-    const size_t percentile_index =
-        static_cast<size_t>((center_radii.size() - 1) * CENTER_PERCENTILE);
-    const float noise_radius = center_radii[percentile_index];
-
-    logger_.info("Center noise:");
-    logger_.info("  99th percentile radius = {:.6f}", noise_radius);
-
     out.center_x = center_x;
     out.center_y = center_y;
-    out.noise_radius = noise_radius;
-    // Deadzone gets finalized (relative to usable_radius) once range
-    // calibration has run; store the raw noise radius for now and let
-    // finalize_center_deadzone() compute the normalized value.
-    out.deadzone = 0.0f;
+    out.deadzone = deadzone;
     return true;
   }
 
@@ -607,31 +565,11 @@ public:
   /// DriftCompensator, so it survives recalibration. Call
   /// apply_calibration() afterward to push the change into a live
   /// Joystick, and save() if it should persist across reboots.
-  static void set_manual_offset(CenterResult &center, float offset_x, float offset_y) {
-    center.manual_offset_x = offset_x;
-    center.manual_offset_y = offset_y;
-  }
 
   /// Nudges the current manual offset by a delta rather than setting it
   /// outright -- convenient for an interactive "press left/right to trim"
   /// style adjustment, or a console command that steps the trim by a fixed
   /// increment each call.
-  static void adjust_manual_offset(CenterResult &center, float delta_x, float delta_y) {
-    center.manual_offset_x += delta_x;
-    center.manual_offset_y += delta_y;
-  }
-
-  /// Normalizes a CenterResult's noise radius into a deadzone fraction of
-  /// usable_radius. Call this after range_calibration() has produced a
-  /// RangeResult, then use the updated CenterResult when building the
-  /// Joystick.
-  void finalize_center_deadzone(CenterResult &center, const RangeResult &range) const {
-    float deadzone = 0.0f;
-    if (range.usable_radius > 0.0f) {
-      deadzone = (center.noise_radius * CENTER_MARGIN) / range.usable_radius;
-    }
-    center.deadzone = std::clamp(deadzone, 0.0f, MAX_CENTER_DEADZONE);
-  }
 
   /// Convenience: runs center calibration, then range calibration, then
   /// finalizes the center deadzone. Returns false (with ec set) at whichever
@@ -643,7 +581,6 @@ public:
     if (!range_calibration(center, range, ec)) {
       return false;
     }
-    finalize_center_deadzone(center, range);
     return true;
   }
 
@@ -847,10 +784,7 @@ public:
 
     out << "center_x=" << center.center_x << "\n";
     out << "center_y=" << center.center_y << "\n";
-    out << "center_noise_radius=" << center.noise_radius << "\n";
     out << "center_deadzone=" << center.deadzone << "\n";
-    out << "center_manual_offset_x=" << center.manual_offset_x << "\n";
-    out << "center_manual_offset_y=" << center.manual_offset_y << "\n";
     out << "range_min_x=" << range.min_x << "\n";
     out << "range_max_x=" << range.max_x << "\n";
     out << "range_min_y=" << range.min_y << "\n";
@@ -917,14 +851,7 @@ public:
 
     center.center_x = values["center_x"];
     center.center_y = values["center_y"];
-    center.noise_radius =
-        values.count("center_noise_radius") ? values["center_noise_radius"] : 0.0f;
     center.deadzone = values["center_deadzone"];
-    center.manual_offset_x =
-        values.count("center_manual_offset_x") ? values["center_manual_offset_x"] : 0.0f;
-    center.manual_offset_y =
-        values.count("center_manual_offset_y") ? values["center_manual_offset_y"] : 0.0f;
-
     range.min_x = values["range_min_x"];
     range.max_x = values["range_max_x"];
     range.min_y = values["range_min_y"];
