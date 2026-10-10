@@ -8,6 +8,7 @@ adjustable across roughly 5 to 25 grams and defaults to under 10.
 
 [![Build and Package Main](https://github.com/ATDev-Inc/omega-stick/actions/workflows/package_main.yml/badge.svg)](https://github.com/ATDev-Inc/omega-stick/actions/workflows/package_main.yml)
 [![Static analysis](https://github.com/ATDev-Inc/omega-stick/actions/workflows/static_analysis.yml/badge.svg)](https://github.com/ATDev-Inc/omega-stick/actions/workflows/static_analysis.yml)
+[![Host tests](https://github.com/ATDev-Inc/omega-stick/actions/workflows/host_tests.yml/badge.svg)](https://github.com/ATDev-Inc/omega-stick/actions/workflows/host_tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
 This repository holds the **firmware**: an ESP-IDF project for the ESP32-S3,
@@ -139,6 +140,19 @@ idf.py -p PORT flash monitor
 Replace `PORT` with your serial port (`COM7` on Windows, `/dev/ttyACM0` on
 Linux, `/dev/cu.usbmodem*` on macOS). Exit the monitor with `Ctrl-]`.
 
+### Run the host tests
+
+The calibration component has unit tests that run on your desktop without a
+board or ESP-IDF. They need CMake and a C++20 compiler:
+
+```console
+cmake -S tests/host -B build-host
+cmake --build build-host
+ctest --test-dir build-host --output-on-failure
+```
+
+See [tests/host/README.md](tests/host/README.md) for what they cover.
+
 ### Expected output
 
 With a TMAG5273 connected on the Qwiic bus, the bring-up app prints the device
@@ -166,7 +180,10 @@ and confirm the sensor's address strap.
 ```
 main/                     application entry point and IDF component manifest
 components/tmag5273/      TMAG5273 Hall-effect sensor driver
-.github/workflows/        build, packaging, and static analysis CI
+components/omega_calibration/
+                          calibration, persisted settings, and the USB console protocol
+tests/host/               desktop unit tests for omega_calibration (no hardware needed)
+.github/workflows/        build, packaging, static analysis, and host test CI
 sdkconfig.defaults        project-wide ESP-IDF configuration defaults
 ```
 

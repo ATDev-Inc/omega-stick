@@ -161,11 +161,14 @@ over widening the global list.
    cleanups belong in their own PR.
 3. Write a clear commit message: a short imperative subject line, then a body
    explaining *why* the change is needed if that is not obvious.
-4. Make sure `idf.py build` succeeds before you open the PR.
+4. Make sure `idf.py build` succeeds before you open the PR. If you touched
+   `components/omega_calibration`, run the host tests too (see
+   [Testing](#testing)).
 5. Open a pull request and fill in the template. Say which hardware and which
    host OS you tested on, or say explicitly that you could not test on hardware.
    That is fine, just tell us so a maintainer can.
-6. CI runs a build and static analysis on every PR. Both should pass.
+6. CI runs a build, static analysis, and the host tests on every PR. All three
+   should pass.
 
 Maintainers may ask for changes. Accessibility tradeoffs in particular tend to
 need discussion, because a change that helps one person's use case can make the
@@ -187,14 +190,43 @@ Commit both [main/idf_component.yml](main/idf_component.yml) and the updated
 There is no automated hardware test suite yet. Until there is:
 
 - CI verifies that the firmware builds for `esp32s3`.
-- Anything touching sensor reads, calibration, or HID output needs manual
-  verification on real hardware. Describe what you did in the PR.
+- CI runs the host unit tests in [tests/host](tests/host/README.md) (see
+  below).
+- Anything touching sensor reads, HID output, or the calibration sweep itself
+  needs manual verification on real hardware. Describe what you did in the PR.
 - When testing input behavior, check more than the happy path. Test slow
   movements, held positions, rapid direction changes, and the sensor being
   unplugged mid-session.
 
-If you add a component that can be tested without hardware, adding tests for it
-is very welcome.
+### Host unit tests
+
+The calibration component (`components/omega_calibration`) has unit tests
+that build and run on a desktop with no ESP-IDF and no board. They need CMake
+3.20+ and a C++20 compiler with `<format>` (GCC 13+, Clang 17+, MSVC 19.37+):
+
+```console
+cmake -S tests/host -B build-host
+cmake --build build-host
+ctest --test-dir build-host --output-on-failure
+```
+
+The tests compile the component headers unchanged. The espp pieces that need
+ESP-IDF (logger, joystick, file system) are replaced by small stand-ins under
+`tests/host/stubs/`; the espp framing and dispatcher headers are the real ones,
+downloaded pinned to the version in `dependencies.lock` and verified by hash.
+
+If you change the calibration store, the console protocol, or the calibration
+file format, add or update a test alongside the change.
+
+**Known-bug tests.** A test registered with `XFAIL_TEST` documents behaviour
+that is currently wrong. It is expected to fail and does not turn the run red.
+When the bug is fixed the test starts passing, the runner reports `XPASS`, and
+the run fails until the marker is changed to `TEST`. That keeps a fix and its
+regression test in the same PR. Do not delete an XFAIL test to make CI green;
+fix the bug or leave the marker in place.
+
+If you add another component that can be tested without hardware, adding
+tests for it in the same way is very welcome.
 
 ## Reporting security issues
 

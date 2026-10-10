@@ -41,3 +41,6 @@ __pycache__/
 
 # Editor settings are per-machine (COM ports, local toolchain paths)
 .vscode/
+
+# Host unit test build tree (tests/host/README.md)
+build-host/

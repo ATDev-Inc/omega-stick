@@ -2,7 +2,7 @@ menu "Omega Stick Configuration"
 
 config OMEGA_STICK_BOOT_FLASH_WINDOW_S
     int "Seconds to wait at boot before starting USB"
-    default 0
+    default 15
     range 0 60
     help
       Development aid. Until the firmware starts TinyUSB, the ESP32-S3's
