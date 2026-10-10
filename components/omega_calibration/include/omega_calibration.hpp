@@ -718,7 +718,7 @@ public:
   /// report a centered stick instead of whatever espp::Joystick last mapped
   /// (its update() returns early on a failed read and keeps the old output,
   /// which would hold a deflection forever once the sensor drops off the
-  /// bus). See D13 in docs/decisions.md for the rules and their rationale.
+  /// bus). See D14 in docs/decisions.md for the rules and their rationale.
   ///
   /// Call update() every loop tick with whether the read succeeded and the
   /// raw reading. While it returns true the output must be neutral. Two

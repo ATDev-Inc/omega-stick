@@ -177,7 +177,7 @@ depends on. It now constrains the *minimum* achievable force instead.
 **Consequence.** The README no longer presents "under 10 grams" as the
 differentiator on its own, which matches section 5 of [PRD.md](PRD.md).
 
-## D13: A sensor fault centers the stick, after three failures, not one
+## D14: A sensor fault centers the stick, after three failures, not one
 
 When the TMAG5273 stops answering, the firmware reports a centered stick with
 no buttons held until the sensor is back. The HID report keeps going out every

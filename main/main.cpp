@@ -486,7 +486,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     mouse.reset();
 
     // Joystick::update() keeps its old output when a read fails, so the read
-    // result is recorded here for the SensorFaultMonitor below (D13).
+    // result is recorded here for the SensorFaultMonitor below (D14).
     bool sensor_read_ok = true;
     espp::Joystick js(espp::OmegaCalibration::make_joystick_config(
         center, range, store.settings(), [&tmag, &sensor_read_ok](float *x, float *y) {
@@ -518,7 +518,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     int scroll_poll_count = 0;
 
     // Holds the mouse idle while the sensor is dead or frozen, instead of
-    // replaying the last deflection forever (D13 in docs/decisions.md). The
+    // replaying the last deflection forever (D14 in docs/decisions.md). The
     // defaults assume this loop's 10 ms tick.
     espp::OmegaCalibration::SensorFaultMonitor sensor_monitor;
     bool sensor_was_faulted = false;
@@ -834,7 +834,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     static constexpr int SAVE_EVERY_N_NUDGES = 20;
 
     // ------------------------------------------------------------
-    // Sensor fault handling (D13 in docs/decisions.md)
+    // Sensor fault handling (D14 in docs/decisions.md)
     // ------------------------------------------------------------
 
     // This loop ticks every 5 ms, so the tick counts are doubled to keep

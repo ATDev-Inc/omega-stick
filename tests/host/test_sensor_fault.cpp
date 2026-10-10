@@ -1,5 +1,5 @@
 // SensorFaultMonitor: when a sensor fault trips, when it clears, and what is
-// latched for status reporting. See D13 in docs/decisions.md.
+// latched for status reporting. See D14 in docs/decisions.md.
 
 #include "omega_calibration.hpp"
 #include "test_harness.hpp"
