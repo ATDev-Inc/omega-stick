@@ -330,6 +330,38 @@
     .log .sys { color: var(--sys-color); }
     footer { color: var(--text-muted); font-size: 12px; margin-top: 10px; }
     footer a { color: var(--accent); }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    button:focus-visible, input:focus-visible, .fw-drop:focus-visible, .confirm-panel:focus-visible,
+    .update-status:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+    .fw-drop {
+      border: 2px dashed var(--input-border); border-radius: 8px; padding: 16px 12px; margin: 8px 0;
+      text-align: center; cursor: pointer; color: var(--text);
+    }
+    .fw-drop:hover, .fw-drop.over { border-color: var(--accent); background: var(--chip-bg); }
+    .fw-drop[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
+    .confirm-panel {
+      border: 2px solid var(--accent); border-radius: 8px; padding: 12px 14px; margin: 10px 0;
+      background: var(--panel-bg);
+    }
+    .confirm-panel h3 { margin: 0 0 6px; font-size: 15px; }
+    .confirm-panel p { margin: 4px 0; }
+    .confirm-panel ul { margin: 6px 0; padding-left: 20px; }
+    .confirm-panel li.err { color: var(--danger); }
+    .confirm-panel li.warn { color: var(--warn); }
+    .confirm-panel .edit-row { margin-top: 10px; }
+    .update-status { border: 1px solid var(--panel-border); border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
+    .update-status.ok { border-color: var(--ok); }
+    .update-status.warn { border-color: var(--warn); }
+    .update-status.err { border-color: var(--danger); }
+    .update-status .steps {
+      list-style: none; display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0; margin: 0;
+      font-size: 12.5px; color: var(--text-muted);
+    }
+    .update-status .steps li.current { color: var(--text); font-weight: 600; }
+    .update-status .steps li.done::before { content: "\2713 "; }
+    #updateMessage { font-size: 16px; font-weight: 600; margin: 8px 0 4px; }
+    #updateError { color: var(--danger); font-weight: 600; margin: 4px 0; }
+    #updateDetail { margin: 4px 0; }
     #unsupported {
       display: none; background: var(--panel-bg); border: 1px solid var(--danger);
       color: var(--danger); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px;
@@ -489,15 +521,52 @@
           </dl>
           <button id="fwRevertBtn" class="danger" disabled title="No previous firmware in the other slot">Revert to previous firmware</button>
         </div>
+        <div class="latest" aria-labelledby="latestHeading">
+          <h3 id="latestHeading" style="margin: 0 0 6px; font-size: 14px;">Latest release</h3>
+          <div class="edit-row">
+            <button id="latestCheckBtn">Check for latest firmware</button>
+            <button id="latestInstallBtn" class="danger" hidden>Download and install</button>
+          </div>
+          <p id="latestResult" class="muted" aria-live="polite" style="margin: 6px 0 0;"></p>
+          <p class="muted" style="margin: 4px 0 0;">
+            <a id="latestNotes" href="https://github.com/ATDev-Inc/omega-stick/releases" target="_blank" rel="noopener">All releases on GitHub</a>
+          </p>
+          <label style="display: block; margin: 6px 0 10px;">
+            <input type="checkbox" id="latestAuto" checked>
+            Check for new firmware when I connect
+          </label>
+        </div>
+        <div id="fwDrop" class="fw-drop" role="button" tabindex="0" aria-describedby="fwHint">
+          <strong>Drop a firmware .bin file here</strong><br>
+          or press Enter or Space to choose one
+        </div>
+        <p id="fwHint" class="muted" style="margin: 0 0 6px;">
+          Choose the app image (<code>build/&lt;project&gt;.bin</code>, not the .elf). The page checks
+          the file before anything is sent. The device validates it, switches slots and restarts,
+          and this page reconnects by itself.
+        </p>
         <div class="edit-row">
-          <input type="file" id="fwFile" accept=".bin">
+          <input type="file" id="fwFile" accept=".bin" aria-label="Firmware file (.bin)">
           <button id="flashBtn" class="danger" disabled>Flash firmware</button>
         </div>
-        <progress id="fwProgress" value="0" max="1" style="width:100%" hidden></progress>
-        <p class="muted" style="margin: 8px 0 0;">
-          Select the app image (<code>build/&lt;project&gt;.bin</code>, not the .elf). The device
-          validates it, switches slots and reboots, so reconnect afterwards.
-        </p>
+        <p id="fwFileInfo" class="muted" aria-live="polite" style="margin: 6px 0 0;"></p>
+        <div id="confirmPanel" class="confirm-panel" role="dialog" aria-labelledby="confirmTitle"
+             aria-describedby="confirmBody" tabindex="-1" hidden>
+          <h3 id="confirmTitle"></h3>
+          <div id="confirmBody"></div>
+          <div class="edit-row">
+            <button id="confirmOkBtn" class="primary">Confirm</button>
+            <button id="confirmCancelBtn">Cancel</button>
+          </div>
+        </div>
+        <div id="updateStatus" class="update-status" role="group" aria-label="Firmware update status" tabindex="-1" hidden>
+          <ol id="updateSteps" class="steps"></ol>
+          <p id="updateMessage" role="status"></p>
+          <progress id="fwProgress" aria-label="Firmware update progress" value="0" max="1" style="width:100%" hidden></progress>
+          <p id="updateDetail" class="muted" aria-hidden="true"></p>
+          <p id="updateError" role="alert"></p>
+          <button id="fwReconnectBtn" hidden>Reconnect to the device</button>
+        </div>
       </fieldset>
 
       <fieldset>
@@ -794,7 +863,463 @@
     return new Uint8Array([mode]);
   }
 
+  // ---------------------------------------------------------------------
+  // Firmware image inspection and update planning (pure, no DOM).
+  // Offsets come from esp_image_header_t (bootloader_support/esp_app_format.h)
+  // and esp_app_desc_t (esp_app_format/esp_app_desc.h) in ESP-IDF.
+  // ---------------------------------------------------------------------
+  const OTA_SLOT_SIZE = 0x1E0000;       // ota_0 / ota_1 in partitions.csv (1920K)
+  const CHIP_ID_ESP32S3 = 9;            // ESP_CHIP_ID_ESP32S3
+  const DEFAULT_PROJECT = "omega_stick"; // project(omega_stick) in CMakeLists.txt
+  const IMAGE_MAGIC = 0xE9;             // ESP_IMAGE_HEADER_MAGIC
+  const APP_DESC_MAGIC = 0xABCD5432;    // ESP_APP_DESC_MAGIC_WORD
+  const IMAGE_HEADER_SIZE = 24, SEGMENT_HEADER_SIZE = 8;
+  const APP_DESC_OFFSET = IMAGE_HEADER_SIZE + SEGMENT_HEADER_SIZE; // 32
+  const APP_DESC_SIZE = 256;
+  const MAX_SEGMENTS = 16;              // ESP_IMAGE_MAX_SEGMENTS
+  const CHIP_NAMES = {
+    0: "ESP32", 2: "ESP32-S2", 5: "ESP32-C3", 9: "ESP32-S3", 12: "ESP32-C2", 13: "ESP32-C6",
+    16: "ESP32-H2", 18: "ESP32-P4", 20: "ESP32-C61", 23: "ESP32-C5", 25: "ESP32-H21", 28: "ESP32-H4",
+  };
+
+  function cString(bytes, start, len) {
+    let end = start;
+    const limit = Math.min(bytes.length, start + len);
+    while (end < limit && bytes[end] !== 0) end++;
+    let s = "";
+    for (let i = start; i < end; i++) s += String.fromCharCode(bytes[i]);
+    return s;
+  }
+  function hexOf(bytes, start, len) {
+    let s = "";
+    for (let i = start; i < start + len; i++) s += bytes[i].toString(16).padStart(2, "0");
+    return s;
+  }
+  function formatBytes(n) {
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",") + " B";
+  }
+
+  // Inspects a firmware file before it is sent. Returns
+  //   { ok, errors: [{code, message}], warnings: [{code, message}], info }
+  // where ok is true when there are no errors. info is null until the file is
+  // recognised as an ESP image, and has appDesc set only for an app image.
+  // options: expectedProject (default "omega_stick"), slotSize, chipId.
+  function inspectImage(bytes, options) {
+    const opt = options || {};
+    const slotSize = opt.slotSize || OTA_SLOT_SIZE;
+    const chipId = opt.chipId === undefined ? CHIP_ID_ESP32S3 : opt.chipId;
+    const project = opt.expectedProject || DEFAULT_PROJECT;
+    const errors = [], warnings = [];
+    const fail = (code, message) => { errors.push({ code, message }); };
+    const result = (info) => ({ ok: errors.length === 0, errors, warnings, info: info || null });
+
+    if (!bytes || bytes.length === 0) {
+      fail("empty", "The file is empty.");
+      return result();
+    }
+    if (bytes.length >= 4 && bytes[0] === 0x7F && bytes[1] === 0x45 && bytes[2] === 0x4C && bytes[3] === 0x46) {
+      fail("elf", "This is an .elf file, not a firmware image. Choose the .bin file from the build folder instead.");
+      return result();
+    }
+    if (bytes.length >= 2 && bytes[0] === 0xAA && bytes[1] === 0x50) {
+      fail("partition_table", "This is a partition table, not a firmware image. Choose the main application .bin file (omega_stick.bin).");
+      return result();
+    }
+    if (bytes[0] !== IMAGE_MAGIC) {
+      fail("not_esp_image", "This is not an ESP32 firmware image. Choose the application .bin file from the build folder (omega_stick.bin).");
+      return result();
+    }
+    if (bytes.length < IMAGE_HEADER_SIZE) {
+      fail("truncated", "The file is cut short (" + bytes.length + " bytes). Copy or build it again.");
+      return result();
+    }
+    const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const info = {
+      size: bytes.length,
+      segmentCount: bytes[1],
+      chipId: v.getUint16(12, true),
+      minChipRev: v.getUint16(15, true),
+      maxChipRev: v.getUint16(17, true),
+      hashAppended: bytes[23] === 1,
+      appDesc: null,
+    };
+    info.chipName = CHIP_NAMES[info.chipId] || ("chip id " + info.chipId);
+
+    if (info.segmentCount === 0 || info.segmentCount > MAX_SEGMENTS) {
+      fail("not_esp_image", "This does not look like a valid ESP32 firmware image (bad header). Choose the application .bin file.");
+      return result(info);
+    }
+    if (info.chipId !== chipId) {
+      fail("wrong_chip", "This firmware is built for the " + info.chipName + ", but this device is an " +
+           (CHIP_NAMES[chipId] || ("chip id " + chipId)) + ". Flashing it would not work.");
+    }
+
+    // Walk the segment list to learn how long a complete image must be.
+    let pos = IMAGE_HEADER_SIZE, walkOk = true;
+    for (let i = 0; i < info.segmentCount; i++) {
+      if (pos + SEGMENT_HEADER_SIZE > bytes.length) { walkOk = false; break; }
+      pos += SEGMENT_HEADER_SIZE + v.getUint32(pos + 4, true);
+      if (pos > bytes.length) { walkOk = false; break; }
+    }
+    if (walkOk) {
+      // The checksum byte ends the 16-byte block after the last segment, then comes the optional SHA-256.
+      info.expectedSize = (pos | 15) + 1 + (info.hashAppended ? 32 : 0);
+      if (bytes.length < info.expectedSize) walkOk = false;
+    }
+    if (!walkOk) {
+      fail("truncated", "The file is incomplete (it ends before the image does). Build it again or copy it again.");
+    }
+
+    // App descriptor: first bytes of the first segment's data.
+    const hasDesc = bytes.length >= APP_DESC_OFFSET + 4 && v.getUint32(APP_DESC_OFFSET, true) === APP_DESC_MAGIC;
+    if (!hasDesc) {
+      if (walkOk) {
+        fail("not_app_image", "This is an ESP32 image but not an application (it could be a bootloader). Choose the application .bin file (omega_stick.bin).");
+      }
+    } else if (bytes.length >= APP_DESC_OFFSET + APP_DESC_SIZE) {
+      const d = APP_DESC_OFFSET;
+      info.appDesc = {
+        secureVersion: v.getUint32(d + 4, true),
+        version: cString(bytes, d + 16, 32),
+        project: cString(bytes, d + 48, 32),
+        time: cString(bytes, d + 80, 16),
+        date: cString(bytes, d + 96, 16),
+        idf: cString(bytes, d + 112, 32),
+        sha256: hexOf(bytes, d + 144, 32),
+      };
+      info.appDesc.shaShort = info.appDesc.sha256.slice(0, 8);
+      if (info.appDesc.project !== project) {
+        fail("wrong_project", "This firmware is for a different product (\"" + (info.appDesc.project || "unnamed") +
+             "\" instead of \"" + project + "\"). Choose the " + project + " application .bin file.");
+      }
+      if (info.appDesc.secureVersion !== 0) {
+        warnings.push({ code: "secure_version", message: "This image sets a secure (anti-rollback) version of " + info.appDesc.secureVersion + "." });
+      }
+    }
+
+    if (bytes.length > slotSize) {
+      fail("too_big", "The file is " + formatBytes(bytes.length) + ", which is larger than the " + formatBytes(slotSize) +
+           " update slot on the device. It cannot be installed.");
+    }
+    return result(info);
+  }
+
+  // Parses X.Y.Z, X.Y.Z+sha, X.Y.Z+sha.dirty (see D19). Anything else is invalid.
+  function parseVersion(text) {
+    const raw = String(text === undefined || text === null ? "" : text).trim();
+    const m = /^v?(\d+)\.(\d+)\.(\d+)(?:\+([0-9A-Za-z]+))?(\.dirty)?$/.exec(raw);
+    if (!m) return { valid: false, raw, dev: false };
+    return {
+      valid: true, raw, major: +m[1], minor: +m[2], patch: +m[3],
+      sha: m[4] || "", dirty: !!m[5], dev: !!(m[4] || m[5]),
+    };
+  }
+
+  // running: { version, sha } from FW_INFO (sha = 8 hex chars of the ELF hash).
+  // candidate: { version, sha } (sha may be the full 64 hex or the short form).
+  // kind: upgrade | downgrade | same-version | same-build | dev | unknown.
+  function compareFirmware(running, candidate) {
+    const r = parseVersion(running && running.version), c = parseVersion(candidate && candidate.version);
+    const rs = String((running && running.sha) || "").toLowerCase();
+    const cs = String((candidate && candidate.sha) || "").toLowerCase();
+    const n = Math.min(rs.length, cs.length);
+    const sameBuild = n >= 8 && rs.slice(0, n) === cs.slice(0, n);
+    let kind;
+    if (sameBuild) kind = "same-build";
+    else if (!r.valid || !c.valid) kind = "unknown";
+    else {
+      const d = (c.major - r.major) || (c.minor - r.minor) || (c.patch - r.patch);
+      if (d > 0) kind = "upgrade";
+      else if (d < 0) kind = "downgrade";
+      else kind = (r.dev || c.dev) ? "dev" : "same-version";
+    }
+    return { kind, sameBuild, runningDev: r.dev, candidateDev: c.dev };
+  }
+
+  const KIND_LABEL = {
+    "upgrade": "Upgrade",
+    "downgrade": "Downgrade (older than the running version)",
+    "same-version": "Same version number, different build",
+    "same-build": "Same build as the running firmware",
+    "dev": "Development build (same base version)",
+    "unknown": "Version could not be compared",
+  };
+
+  function kindWarnings(cmp, running) {
+    const w = [];
+    const rv = (running && running.version) || "unknown";
+    if (cmp.kind === "downgrade") {
+      w.push({ code: "downgrade", message: "This is an older version than the one running (" + rv +
+               "). Going back is allowed, but the older firmware may lack recent fixes." });
+    } else if (cmp.kind === "same-build") {
+      w.push({ code: "same_build", message: "This exact build is already running. Flashing it again changes nothing." });
+    } else if (cmp.kind === "same-version") {
+      w.push({ code: "same_version", message: "This has the same version number as the running firmware, but it is a different build." });
+    } else if (cmp.kind === "unknown") {
+      w.push({ code: "version_unknown", message: "The versions could not be compared, so it is not clear whether this is newer." });
+    }
+    if (cmp.candidateDev && cmp.kind !== "same-build") {
+      w.push({ code: "dev_build", message: "This is a development build (its version has a commit suffix), not a tagged release." });
+    }
+    return w;
+  }
+
+  // Everything the confirm panel needs for a Flash. inspection is the result of
+  // inspectImage, running is FW_INFO ({ version, sha }) or null when it could
+  // not be read, fileInfo is { name, size }.
+  function buildFlashPlan(inspection, running, fileInfo) {
+    const errors = inspection.errors.slice();
+    const warnings = inspection.warnings.slice();
+    const app = inspection.info && inspection.info.appDesc;
+    const plan = {
+      blocked: errors.length > 0, errors, warnings,
+      fileName: (fileInfo && fileInfo.name) || "firmware.bin",
+      size: (fileInfo && fileInfo.size) || (inspection.info ? inspection.info.size : 0),
+      kind: "unknown", kindLabel: "", headline: "",
+      newVersion: app ? app.version : "", newSha: app ? app.shaShort : "",
+    };
+    if (!app) return plan;
+    const newLabel = app.version || "unknown";
+    if (!running || !running.version) {
+      warnings.push({ code: "running_unknown", message: "The running firmware version could not be read, so the new version cannot be compared with it." });
+      plan.headline = "New " + newLabel;
+      return plan;
+    }
+    const cmp = compareFirmware(running, { version: app.version, sha: app.shaShort });
+    plan.kind = cmp.kind;
+    plan.kindLabel = KIND_LABEL[cmp.kind];
+    plan.headline = "Running " + running.version + " -> New " + newLabel;
+    for (const w of kindWarnings(cmp, running)) warnings.push(w);
+    return plan;
+  }
+
+  // prev: { version, label, state } from FW_INFO. Used for the Revert panel.
+  function buildRevertPlan(running, prev) {
+    const warnings = [], errors = [];
+    const pv = (prev && prev.version) || "";
+    if (!pv) errors.push({ code: "no_previous", message: "The other slot has no firmware to go back to." });
+    const plan = { blocked: errors.length > 0, errors, warnings, kind: "unknown", kindLabel: "", headline: "" };
+    if (!pv) return plan;
+    const rv = (running && running.version) || "unknown";
+    plan.headline = "Running " + rv + " -> Previous " + pv;
+    const cmp = compareFirmware(running || {}, { version: pv, sha: "" });
+    plan.kind = cmp.kind;
+    plan.kindLabel = KIND_LABEL[cmp.kind];
+    if (plan.kind === "upgrade") {
+      warnings.push({ code: "revert_newer", message: "The previous slot holds a newer version than the one running." });
+    }
+    if (plan.kind === "same-version" || plan.kind === "dev") {
+      warnings.push({ code: "same_version", message: "The previous firmware has the same base version number as the running one." });
+    }
+    const st = (prev && prev.state) || "";
+    if (st && st !== "valid") {
+      warnings.push({ code: "prev_state", message: "The previous firmware is in state \"" + st +
+                      "\". It will have to pass the self-test again, or the device goes back." });
+    }
+    return plan;
+  }
+
+  // Compares the build the page expects after a reboot with what FW_INFO now
+  // reports. expected: { kind: "flash" | "revert", version, sha? (short or
+  // full), before: { version, sha } }. after: parsed FW_INFO
+  // ({ version, sha, pending }) or null when nothing could be read.
+  // state: confirming | confirmed | rolled_back | unexpected | same_build | no_device.
+  function decideOutcome(expected, after) {
+    const before = expected.before || {};
+    const noun = expected.kind === "revert" ? "Reverted to" : "Updated to";
+    if (!after || !after.version) {
+      return { state: "no_device", message: "The device did not come back, or its firmware version could not be read." };
+    }
+    const sameAs = (a, b) => {
+      if (!a || !b || !a.version || !b.version || a.version !== b.version) return false;
+      const x = String(a.sha || "").toLowerCase(), y = String(b.sha || "").toLowerCase();
+      const n = Math.min(x.length, y.length);
+      return n < 8 || x.slice(0, n) === y.slice(0, n); // sha unknown on either side: version alone
+    };
+    const isNew = sameAs(after, expected);
+    const isOld = sameAs(after, before);
+    if (isNew && isOld) {
+      // Reflashing the identical build: only the pending flag tells.
+      if (after.pending) {
+        return { state: "confirming", message: noun + " " + after.version + ". Checking it works..." };
+      }
+      return { state: "same_build", message: "The device is running " + after.version +
+               ", the same build as before, so it cannot be told whether the new copy started." };
+    }
+    if (isNew) {
+      if (after.pending) return { state: "confirming", message: noun + " " + after.version + ". Checking it works..." };
+      return { state: "confirmed", message: "Update confirmed. The device is running " + after.version + "." };
+    }
+    if (isOld) {
+      return { state: "rolled_back",
+               message: "The new firmware did not pass its self-test, so the device went back to " + after.version + "." };
+    }
+    return { state: "unexpected",
+             message: "The device is running " + after.version + ", which is not the version that was installed (" +
+                      (expected.version || "unknown") + ")." };
+  }
+
+  // Maps a raw failure (Error text from the page's transactions, device ERROR
+  // replies, espp OTA error strings) to plain language. Returns
+  // { category, title, advice }. Device ERROR replies read
+  // "device error (code N): <context>: <errc text>"; the text is used in
+  // preference to the number because std::errc numbers are not portable.
+  function describeUpdateError(raw) {
+    const t = String(raw === undefined || raw === null ? "" : (raw.message || raw));
+    const has = (re) => re.test(t);
+    const code = (/\(code (\d+)\)/.exec(t) || [])[1];
+    const out = (category, title, advice) => ({ category, title, advice });
+    if (has(/^not connected/i)) {
+      return out("disconnected", "The device is not connected.", "Connect the device and try again.");
+    }
+    if (has(/transport lost|disconnected|upload cancelled|NetworkError|device has been lost/i)) {
+      return out("lost", "The connection to the device was lost.",
+        "Unplug the device, plug it in again, reconnect, and check which firmware it runs before trying again. A half-written update never replaces the working firmware.");
+    }
+    if (has(/timed out/i)) {
+      return out("timeout", /OTA_BEGIN/.test(t) ? "The device took too long to get ready for the update."
+                                                 : "The device stopped answering during the update.",
+        "Wait a few seconds, reconnect, and try again. If it keeps happening, use a different USB cable or port.");
+    }
+    if (has(/Function not implemented|not wired on this build|function_not_supported/i) || code === "88") {
+      return out("unsupported", "This device's firmware cannot be updated from here.",
+        "Update it over the serial cable with the flashing tool instead.");
+    }
+    if (has(/other slot holds no app image|No such device/i)) {
+      return out("no_previous", "There is no previous firmware to go back to.",
+        "Nothing was changed. Flash a firmware file instead.");
+    }
+    if (has(/already in progress|upload is in progress|operation in progress/i)) {
+      return out("busy", "Another update is already running on the device.",
+        "Wait a minute or unplug and reconnect the device, then try again. Close other copies of this page first.");
+    }
+    if (has(/Device or resource busy|busy/i)) {
+      return out("busy", "The device is busy and refused the update.",
+        "Close other tabs or programs connected to the device (including the other connection type), wait about 30 seconds, and try again.");
+    }
+    if (has(/offset mismatch|no OTA session/i) || (/Operation not permitted/i.test(t) && /OTA/.test(t))) {
+      return out("session", "The update session was lost part way.",
+        "Nothing was installed. Reconnect and start the update again.");
+    }
+    if (has(/OTA_FINISH/)) {
+      return out("rejected", "The device checked the new firmware and rejected it.",
+        "The file may be damaged or built for something else. Nothing was installed. Build or copy the file again and retry.");
+    }
+    if (has(/Bad message|checksum|digest|invalid image|Invalid argument/i) && /OTA/.test(t)) {
+      return out("rejected", "The device rejected the firmware data.",
+        "The file may be damaged. Nothing was installed. Build or copy the file again and retry.");
+    }
+    if (has(/No space left|Not enough space|Cannot allocate memory/i)) {
+      return out("too_big", "The firmware does not fit in the device's update slot.",
+        "Check you chose the application .bin file for this device.");
+    }
+    if (has(/OTA_DATA|Input\/output error|write failed|stalled|USB write/i) || code === "5") {
+      return out("write", "Writing to the device failed.",
+        "Nothing was installed and the working firmware is untouched. Reconnect and try again, using a different USB port or cable if it repeats.");
+    }
+    if (has(/OTA_BEGIN/)) {
+      return out("begin", "The device would not start the update.",
+        "Reconnect the device and try again.");
+    }
+    if (has(/REVERT/)) {
+      return out("revert", "The device could not switch back to the previous firmware.",
+        "Nothing was changed. Reconnect and try again.");
+    }
+    return out("other", "The update did not complete.",
+      "Reconnect the device and try again. The log below has the technical detail.");
+  }
+
+  // Progress text for the write phase.
+  function formatProgress(written, total) {
+    const t = total > 0 ? total : 1;
+    const w = Math.max(0, Math.min(written, t));
+    const percent = Math.floor((w * 100) / t);
+    return { percent, text: "Writing " + percent + "% (" + formatBytes(w) + " of " + formatBytes(t) + ")" };
+  }
+
+  // ---------------------------------------------------------------------
+  // Latest-release feed (published by CI, see scripts/release_feed.mjs).
+  // ---------------------------------------------------------------------
+  const FEED_URL = "https://atdev-inc.github.io/omega-stick/firmware/latest.json";
+  const PAGES_ORIGIN = "https://atdev-inc.github.io";
+  const PAGES_BASE = "/omega-stick/";
+  const RELEASES_URL = "https://github.com/ATDev-Inc/omega-stick/releases";
+  const NOTES_PREFIX = RELEASES_URL + "/";
+
+  // Where to read the feed from. Served from the project's own Pages site the
+  // feed is a sibling path, so it stays same-origin; anywhere else (file://,
+  // a local server, a fork) the published feed is used. There is deliberately
+  // no way to override this from the page address.
+  function feedUrlFor(locationHref) {
+    try {
+      const u = new URL(String(locationHref));
+      if (u.origin === PAGES_ORIGIN && u.pathname.indexOf(PAGES_BASE) === 0) {
+        return new URL("../firmware/latest.json", u.origin + u.pathname).href;
+      }
+    } catch (_) { /* fall through */ }
+    return FEED_URL;
+  }
+
+  // Validates the parsed latest.json. Returns { ok, error, release } where
+  // release is { version, tag, publishedAt, notesUrl, appUrl, size, sha256 }.
+  function parseReleaseFeed(json, feedUrl) {
+    const bad = (error) => ({ ok: false, error, release: null });
+    if (!json || typeof json !== "object" || Array.isArray(json)) return bad("The release information is not in the expected format.");
+    if (json.schema !== 1) return bad("The release information uses a format this page does not understand (schema " + json.schema + ").");
+    if (json.project !== DEFAULT_PROJECT) return bad("The release information is for a different project.");
+    if (json.chip !== "esp32s3") return bad("The release information is for a different chip.");
+    if (typeof json.version !== "string" || !/^\d+\.\d+\.\d+$/.test(json.version)) return bad("The release version is not valid.");
+    if (json.tag !== "v" + json.version) return bad("The release tag does not match its version.");
+    const app = json.app;
+    if (!app || typeof app !== "object") return bad("The release information has no firmware file.");
+    if (!Number.isInteger(app.size) || app.size < 1 || app.size > OTA_SLOT_SIZE) return bad("The release firmware size is not valid.");
+    if (typeof app.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(app.sha256)) return bad("The release firmware checksum is not valid.");
+    if (typeof app.path !== "string" || !/^[A-Za-z0-9._-]+$/.test(app.path) || app.path.indexOf("..") >= 0) {
+      return bad("The release firmware file name is not valid.");
+    }
+    let appUrl;
+    try { appUrl = new URL(app.path, feedUrl).href; } catch (_) { return bad("The release address is not valid."); }
+    const notesUrl = (typeof json.notes_url === "string" && json.notes_url.indexOf(NOTES_PREFIX) === 0) ? json.notes_url : "";
+    const publishedAt = (typeof json.published_at === "string" && !Number.isNaN(Date.parse(json.published_at))) ? json.published_at : "";
+    return {
+      ok: true, error: "",
+      release: { version: json.version, tag: json.tag, publishedAt, notesUrl, appUrl, fileName: app.path, size: app.size, sha256: app.sha256 },
+    };
+  }
+
+  // Compares the running firmware ({ version, sha } from FW_INFO, or null)
+  // with a parsed release. Returns { state, message, canInstall }.
+  // state: update-available | up-to-date | running-newer | running-dev-build | unknown
+  function summarizeAvailability(running, release) {
+    const rv = running && running.version ? String(running.version) : "";
+    const latest = release.version;
+    if (!rv || !parseVersion(rv).valid) {
+      return { state: "unknown", canInstall: false,
+               message: "The latest release is " + latest + ". The version on your device could not be read, so it cannot be compared." };
+    }
+    const cmp = compareFirmware(running, { version: latest, sha: "" });
+    switch (cmp.kind) {
+      case "upgrade":
+        return { state: "update-available", canInstall: true, message: "Firmware " + latest + " is available. You have " + rv + "." };
+      case "same-version":
+        return { state: "up-to-date", canInstall: false, message: "You have the latest release (" + latest + ")." };
+      case "downgrade":
+        return { state: "running-newer", canInstall: false,
+                 message: "You have " + rv + ", which is newer than the latest release (" + latest + ")." };
+      case "dev":
+        return { state: "running-dev-build", canInstall: false,
+                 message: "You are running a development build (" + rv + "). The latest release is " + latest + "." };
+      default:
+        return { state: "unknown", canInstall: false,
+                 message: "The latest release is " + latest + ". Your version (" + rv + ") could not be compared." };
+    }
+  }
+
   const OmegaProtocol = {
+    FEED_URL, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
+    OTA_SLOT_SIZE, CHIP_ID_ESP32S3, DEFAULT_PROJECT, KIND_LABEL,
+    inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
+    decideOutcome, describeUpdateError, formatProgress, formatBytes,
     HEADER_SIZE, CRC_SIZE, MAX_PAYLOAD, MAX_FRAME,
     MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES,
     FLAGS_REQUEST, FLAGS_REPLY_BIT, FLAG_CORRELATION,
@@ -822,6 +1347,8 @@
       MAX_FRAME, MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, TYPE, INPUT_MODE,
       buildFrame, FrameParser, readU32, parseErrorReply, parseDiscovery, decodeState, decodeDiagnostics,
       encodeSetManualOffset, encodeSetDeadzoneOverride, encodeSetNudgeSettings, encodeSetInputMode,
+      inspectImage, buildFlashPlan, buildRevertPlan, decideOutcome, describeUpdateError, formatProgress, formatBytes,
+      DEFAULT_PROJECT, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
     } = globalThis.OmegaProtocol;
     const DISCOVERY_TIMEOUT_MS = 800;
     const TYPE_NAME = {
@@ -853,6 +1380,9 @@
                       "diagRefreshBtn", "diagInfo", "resetList",
                       "fwRunning", "fwPending", "markValidBtn",
                       "fwVersion", "fwBuild", "fwIdf", "fwRunPart", "fwBootPart", "fwSha", "fwCopyBtn", "fwPrevSlot", "fwPrevVersion", "fwPrevBuild", "fwPrevState", "fwRevertBtn", "fwFile", "flashBtn", "fwProgress", "restartBtn",
+                      "latestCheckBtn", "latestInstallBtn", "latestAuto", "latestResult", "latestNotes",
+                      "fwDrop", "fwFileInfo", "confirmPanel", "confirmTitle", "confirmBody", "confirmOkBtn", "confirmCancelBtn",
+                      "updateStatus", "updateSteps", "updateMessage", "updateDetail", "updateError", "fwReconnectBtn",
                       "logFrames", "clearLogBtn", "log", "unsupported"]) {
       els[id] = document.getElementById(id);
     }
@@ -930,10 +1460,11 @@
       }
     }
 
-    async function connectUsb() {
-      let device;
+    // preselected: an already granted USBDevice (automatic reconnect); omit to show the picker.
+    async function connectUsb(preselected) {
+      let device = preselected;
       try {
-        device = await requestUsbDevice(els.anyDevice.checked);
+        if (!device) device = await requestUsbDevice(els.anyDevice.checked);
       } catch (e) {
         if (e && e.name === "NotFoundError") logLine("sys", "Device selection cancelled.");
         else logLine("err", "Device selection failed: " + (e && e.message ? e.message : e));
@@ -1022,6 +1553,7 @@
     }
 
     if (navigator.usb && navigator.usb.addEventListener) {
+      navigator.usb.addEventListener("connect", () => { if (reconnectWake) reconnectWake(); });
       navigator.usb.addEventListener("disconnect", (e) => {
         if (transport && transport.kind === "usb" && e.device === transport.device) {
           logLine("err", "USB device disconnected.");
@@ -1030,10 +1562,11 @@
       });
     }
 
-    async function connectSerial() {
-      let port;
+    // preselected: an already granted SerialPort (automatic reconnect); omit to show the picker.
+    async function connectSerial(preselected) {
+      let port = preselected;
       try {
-        port = await navigator.serial.requestPort();
+        if (!port) port = await navigator.serial.requestPort();
       } catch (e) {
         if (e && e.name === "NotFoundError") logLine("sys", "Port selection cancelled.");
         else logLine("err", "Port selection failed: " + (e && e.message ? e.message : e));
@@ -1078,6 +1611,7 @@
     }
 
     if (navigator.serial && navigator.serial.addEventListener) {
+      navigator.serial.addEventListener("connect", () => { if (reconnectWake) reconnectWake(); });
       navigator.serial.addEventListener("disconnect", (e) => {
         const eventPort = e.port ?? e.target;
         if (transport && transport.kind === "serial" && eventPort === transport.port) {
@@ -1121,6 +1655,7 @@
       consoleCarry = "";
       updateUI();
       setStatus("", "Disconnected");
+      onUpdateTransportGone();
     }
 
     els.usbBtn.addEventListener("click", async () => {
@@ -1146,6 +1681,9 @@
 
     function onConnected(t) {
       transport = t;
+      lastLink = t.kind === "usb"
+        ? { kind: "usb", vid: t.device.vendorId, pid: t.device.productId, serial: t.device.serialNumber || "" }
+        : { kind: "serial", port: t.port, info: (t.port.getInfo ? t.port.getInfo() : {}) };
       parser.reset();
       consoleCarry = "";
       // Whatever was known about the last device is stale now.
@@ -1156,14 +1694,18 @@
       logLine("sys", "Connected (" + (t.kind === "usb" ? "WebUSB vendor interface" : "Web Serial / CDC") + ").");
       checkModulePresent().catch(() => {});
       refreshState();
-      refreshFwInfo().then((ok) => {
-        if (!ok) return;
-        logLine("sys", fwSummary());
-        if (fwInfo.pending) watchPendingVerify();
+      return refreshFwInfo().then((ok) => {
+        if (ok) {
+          logLine("sys", fwSummary());
+          if (fwInfo.pending) watchPendingVerify();
+        }
+        maybeAutoCheck();
+        return onUpdateReconnected(ok).then(() => ok);
       });
     }
 
     let haveState = false;
+    let latestBusy = false; // a feed check or image download is running
 
     function updateUI() {
       const connected = !!transport;
@@ -1187,6 +1729,9 @@
       els.recalibrateBtn.disabled = !connected || busy;
       els.diagRefreshBtn.disabled = !connected || busy;
       els.flashBtn.disabled = !connected || busy;
+      els.latestCheckBtn.disabled = latestBusy || busy;
+      els.latestInstallBtn.disabled = !connected || busy || latestBusy;
+      els.fwDrop.setAttribute("aria-disabled", busy ? "true" : "false");
       els.restartBtn.disabled = !connected || busy;
       els.markValidBtn.disabled = !connected || busy;
       const canRevert = connected && !busy && prevSlotUsable();
@@ -1638,6 +2183,7 @@
         if (!ok || fwInfo.pending) return;
         clearInterval(pendingWatch); pendingWatch = null;
         logLine("sys", "Firmware confirmed healthy; rollback cancelled. Running " + fwSummary());
+        onUpdatePendingCleared();
       }, 3000);
     }
 
@@ -1658,76 +2204,735 @@
       refreshFwInfo();
     });
 
-    els.fwRevertBtn.addEventListener("click", async () => {
-      if (!transport || busy || !prevSlotUsable()) return;
-      const f = fwInfo;
-      const ver = f.prevVersion || "unknown version";
-      const build = (f.prevDate || f.prevTime) ? (f.prevDate + " " + f.prevTime).trim() : "unknown build";
-      if (!window.confirm("Revert to previous firmware " + ver + " (built " + build + ", slot " +
-        (f.prevLabel || "?") + ", state " + f.prevState + ")?\n\n" +
-        "The device will reboot. The reverted " +
-        "firmware boots pending verify and will have to pass the health check, or it rolls back again."))
-        return;
-      busy = true; updateUI(); setStatus("busy", "Reverting...");
-      try {
-        await transact(TYPE.REVERT, null, [TYPE.OK], CMD_TIMEOUT_MS, 0);
-        logLine("sys", "Reverting to " + ver + " (" + (f.prevLabel || "?") +
-                "). The device is rebooting; reconnect in a few seconds.");
-      } catch (e) {
-        logLine("err", "Revert failed: " + e.message);
-      } finally {
-        busy = false; updateUI();
-        if (transport) setStatus("connected", "Connected");
+    // ===================================================================
+    // Update flow: inspect, confirm, flash/revert, reconnect, report.
+    // Pure decisions live in OmegaProtocol (inspectImage, buildFlashPlan,
+    // buildRevertPlan, decideOutcome, describeUpdateError, formatProgress).
+    // ===================================================================
+    const RECONNECT_TIMEOUT_MS = 40000;
+    const DROP_WAIT_MS = 15000;
+    const STEP_SETS = {
+      flash: [["check", "Checking file"], ["erase", "Erasing"], ["write", "Writing"], ["verify", "Verifying"],
+              ["restart", "Restarting"], ["reconnect", "Reconnecting"], ["confirm", "Confirming"]],
+      revert: [["revert", "Reverting"], ["restart", "Restarting"], ["reconnect", "Reconnecting"],
+               ["confirm", "Confirming"]],
+      download: [["download", "Downloading"], ["verify", "Checking download"]],
+    };
+    // upd: the update or revert in progress, kept in memory for this page session.
+    //   { kind, before: {version, sha}, expected: {kind, version, sha, before}, phase }
+    // phase: running | rebooting | confirming | done
+    let upd = null;
+    let lastLink = null;       // how the current or last transport was opened
+    let reconnectWake = null;  // set while waiting; the 'connect' events call it
+    let stepList = [], stepTimer = null, stepStart = 0;
+
+    function sleepMs(ms) { return new Promise((r) => setTimeout(r, ms)); }
+    function wakeOrSleep(ms) {
+      return new Promise((resolve) => {
+        const done = () => { clearTimeout(timer); reconnectWake = null; resolve(); };
+        const timer = setTimeout(done, ms);
+        reconnectWake = done;
+      });
+    }
+
+    function showStatusBox() { els.updateStatus.hidden = false; }
+    function renderSteps(currentId, allDone) {
+      els.updateSteps.textContent = "";
+      let seen = false;
+      for (const [id, label] of stepList) {
+        const li = document.createElement("li");
+        let state = "todo";
+        if (allDone) state = "done";
+        else if (id === currentId) { state = "current"; seen = true; }
+        else if (!seen && currentId) state = "done";
+        li.className = state;
+        li.textContent = label;
+        if (state === "current") li.setAttribute("aria-current", "step");
+        if (state === "done") {
+          const s = document.createElement("span");
+          s.className = "sr-only"; s.textContent = " (done)";
+          li.appendChild(s);
+        }
+        els.updateSteps.appendChild(li);
       }
+    }
+    function beginStatus(kind) {
+      stopStepTimer();
+      stepList = STEP_SETS[kind];
+      showStatusBox();
+      els.updateStatus.className = "update-status";
+      els.updateError.textContent = "";
+      els.updateDetail.textContent = "";
+      els.fwReconnectBtn.hidden = true;
+      renderSteps(stepList[0][0]);
+    }
+    function setStep(id, message, indeterminateSeconds) {
+      stopStepTimer();
+      renderSteps(id);
+      els.updateMessage.textContent = message;
+      els.updateError.textContent = "";
+      if (indeterminateSeconds) {
+        // Indeterminate bar plus an elapsed counter so a long erase does not look frozen.
+        setProgress(null, "Working, please wait");
+        stepStart = Date.now();
+        const tick = () => { els.updateDetail.textContent = "Elapsed " + Math.round((Date.now() - stepStart) / 1000) + " s"; };
+        tick();
+        stepTimer = setInterval(tick, 1000);
+      }
+    }
+    function stopStepTimer() { if (stepTimer) { clearInterval(stepTimer); stepTimer = null; } }
+    // fraction null means indeterminate.
+    function setProgress(fraction, valueText) {
+      els.fwProgress.hidden = false;
+      if (fraction === null) els.fwProgress.removeAttribute("value");
+      else { els.fwProgress.max = 1; els.fwProgress.value = fraction; }
+      els.fwProgress.setAttribute("aria-valuetext", valueText);
+      els.fwProgress.title = valueText;
+    }
+    function hideProgress() { els.fwProgress.hidden = true; }
+    function finishStatus(kind, message) {
+      stopStepTimer();
+      hideProgress();
+      els.updateStatus.className = "update-status " + kind;
+      if (kind === "ok") renderSteps(null, true);
+      els.updateDetail.textContent = "";
+      if (kind === "err") { els.updateError.textContent = message; els.updateMessage.textContent = ""; }
+      else { els.updateError.textContent = ""; els.updateMessage.textContent = message; }
+    }
+    // A failed step: plain wording, raw text stays in the log.
+    function failUpdate(prefix, e) {
+      const raw = (e && e.message) ? e.message : String(e);
+      logLine("err", prefix + " failed: " + raw);
+      const d = describeUpdateError(raw);
+      showStatusBox();
+      finishStatus("err", d.title + " " + d.advice);
+      if (!transport) els.fwReconnectBtn.hidden = false;
+      if (upd) upd.phase = "done";
+    }
+
+    // ---- Inline confirm panel (replaces window.confirm for Flash and Revert) ----
+    let confirmResolve = null, confirmReturn = null;
+    function closeConfirm(result) {
+      if (!confirmResolve) return;
+      const resolve = confirmResolve; confirmResolve = null;
+      els.confirmPanel.hidden = true;
+      resolve(result);
+    }
+    // spec: { title, headline, lines[], errors[], warnings[], notes[], confirmLabel, returnTo }
+    function askConfirm(spec) {
+      return new Promise((resolve) => {
+        confirmResolve = resolve;
+        confirmReturn = spec.returnTo || null;
+        els.confirmTitle.textContent = spec.title;
+        els.confirmBody.textContent = "";
+        const add = (tag, text, cls) => {
+          const el = document.createElement(tag); el.textContent = text;
+          if (cls) el.className = cls;
+          els.confirmBody.appendChild(el); return el;
+        };
+        const list = (items, cls) => {
+          if (!items.length) return;
+          const ul = document.createElement("ul");
+          for (const t of items) { const li = document.createElement("li"); li.className = cls || ""; li.textContent = t; ul.appendChild(li); }
+          els.confirmBody.appendChild(ul);
+        };
+        if (spec.headline) add("p", spec.headline).style.fontWeight = "600";
+        if (spec.kindLabel) add("p", spec.kindLabel);
+        list(spec.lines || [], "");
+        if (spec.errors.length) {
+          add("p", "This cannot be flashed:").style.fontWeight = "600";
+          list(spec.errors, "err");
+        }
+        if (spec.warnings.length) {
+          add("p", "Please note:").style.fontWeight = "600";
+          list(spec.warnings, "warn");
+        }
+        list(spec.notes || [], "");
+        const blocked = spec.errors.length > 0;
+        els.confirmOkBtn.hidden = blocked;
+        els.confirmOkBtn.textContent = spec.confirmLabel || "Confirm";
+        els.confirmCancelBtn.textContent = blocked ? "Close" : "Cancel";
+        els.confirmPanel.hidden = false;
+        els.confirmPanel.focus();
+        els.confirmPanel.scrollIntoView({ block: "nearest" });
+      });
+    }
+    els.confirmOkBtn.addEventListener("click", () => closeConfirm(true));
+    els.confirmCancelBtn.addEventListener("click", () => closeConfirm(false));
+    els.confirmPanel.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { e.preventDefault(); closeConfirm(false); }
+    });
+    function focusAfterConfirm(confirmed) {
+      const target = confirmed ? els.updateStatus : confirmReturn;
+      if (target && !target.disabled && !target.hidden) target.focus();
+    }
+
+    // ---- File selection, drop zone, early file check ----
+    let fileCheckToken = 0;
+    function selectedFile() { return els.fwFile.files && els.fwFile.files[0]; }
+    function expectedProject() { return (fwInfo && fwInfo.project) || DEFAULT_PROJECT; }
+    function runningForCompare() { return fwInfo ? { version: fwInfo.version, sha: fwInfo.sha } : null; }
+
+    async function describeSelectedFile() {
+      const file = selectedFile();
+      const token = ++fileCheckToken;
+      if (!file) { els.fwFileInfo.textContent = ""; return; }
+      els.fwFileInfo.textContent = file.name + ": checking...";
+      try {
+        const img = new Uint8Array(await file.arrayBuffer());
+        if (token !== fileCheckToken) return;
+        const r = inspectImage(img, { expectedProject: expectedProject() });
+        const size = formatBytes(file.size);
+        if (!r.ok) els.fwFileInfo.textContent = file.name + " (" + size + "): " + r.errors[0].message;
+        else els.fwFileInfo.textContent = file.name + " (" + size + "): " + r.info.appDesc.project + " " +
+          r.info.appDesc.version + " for " + r.info.chipName + ". Ready to flash.";
+      } catch (e) {
+        if (token === fileCheckToken) els.fwFileInfo.textContent = file.name + ": could not read the file (" + e.message + ").";
+      }
+    }
+    els.fwFile.addEventListener("change", describeSelectedFile);
+    function openFilePicker() { if (!busy) els.fwFile.click(); }
+    els.fwDrop.addEventListener("click", openFilePicker);
+    els.fwDrop.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openFilePicker(); }
+    });
+    const hasFiles = (e) => e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], "Files") >= 0;
+    // Stop a file dropped beside the zone from navigating the page away.
+    window.addEventListener("dragover", (e) => { if (hasFiles(e)) e.preventDefault(); });
+    window.addEventListener("drop", (e) => { if (hasFiles(e)) e.preventDefault(); });
+    const dropArea = els.fwDrop.closest("fieldset");
+    dropArea.addEventListener("dragover", (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = busy ? "none" : "copy";
+      els.fwDrop.classList.add("over");
+    });
+    dropArea.addEventListener("dragleave", (e) => {
+      if (!dropArea.contains(e.relatedTarget)) els.fwDrop.classList.remove("over");
+    });
+    dropArea.addEventListener("drop", (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      els.fwDrop.classList.remove("over");
+      if (busy) { els.fwFileInfo.textContent = "An update step is in progress. Drop the file again when it finishes."; return; }
+      const file = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (!file) return;
+      try {
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        els.fwFile.files = dt.files;
+      } catch (err) {
+        els.fwFileInfo.textContent = "This browser would not accept the dropped file. Use the file chooser instead.";
+        return;
+      }
+      logLine("sys", "Firmware file dropped: " + file.name);
+      describeSelectedFile();
     });
 
-    els.flashBtn.addEventListener("click", async () => {
+    // ---- Flash and revert ----
+    function bailOut(message) {
+      // Cancel or blocked before anything was sent.
+      stopStepTimer(); hideProgress();
+      showStatusBox();
+      els.updateStatus.className = "update-status warn";
+      els.updateSteps.textContent = "";
+      els.updateDetail.textContent = "";
+      els.updateError.textContent = "";
+      els.updateMessage.textContent = message;
+    }
+    function endBusy() {
+      busy = false; updateUI();
+      if (transport) setStatus("connected", "Connected");
+    }
+    function planLines(plan) {
+      return { errors: plan.errors.map((x) => x.message), warnings: plan.warnings.map((x) => x.message) };
+    }
+
+    els.flashBtn.addEventListener("click", () => {
       if (!transport || busy) return;
-      const file = els.fwFile.files && els.fwFile.files[0];
-      if (!file) { logLine("err", "Choose a .bin file first."); return; }
-      const img = new Uint8Array(await file.arrayBuffer());
-      if (img.length === 0 || img[0] !== 0xE9) {
-        logLine("err", "That doesn't look like an ESP app image (first byte should be 0xE9). Use the .bin, not the .elf.");
+      const file = selectedFile();
+      if (!file) {
+        bailOut("Choose a firmware file first. Drop a .bin file on the box above, or use the file chooser.");
+        els.fwDrop.focus();
         return;
       }
-      if (!window.confirm("Flash " + file.name + " (" + img.length + " bytes)? The device will reboot into it.")) return;
+      runFlash(file.name, async () => new Uint8Array(await file.arrayBuffer()));
+    });
 
-      busy = true; updateUI(); setStatus("busy", "Flashing...");
-      els.fwProgress.hidden = false; els.fwProgress.value = 0;
+    // The one flash path: a picked file and a downloaded release both come
+    // through here (inspect, plan, confirm panel, then write).
+    async function runFlash(fileName, loadBytes) {
+      if (!transport || busy) return;
+      busy = true; updateUI(); setStatus("busy", "Checking file...");
+      upd = null;
+      beginStatus("flash");
+      setStep("check", "Checking the firmware file...");
+      let img, plan;
+      try {
+        await refreshFwInfo();
+        img = await loadBytes();
+        const insp = inspectImage(img, { expectedProject: expectedProject() });
+        plan = buildFlashPlan(insp, runningForCompare(), { name: fileName, size: img.length });
+        for (const w of plan.warnings) logLine("warn", "Firmware check: " + w.message);
+        for (const x of plan.errors) logLine("err", "Firmware check: " + x.message);
+      } catch (e) {
+        failUpdate("Reading the file", e);
+        endBusy();
+        return;
+      }
+      const pl = planLines(plan);
+      const app = plan.blocked ? null : (inspectImage(img, { expectedProject: expectedProject() }).info.appDesc);
+      const confirmed = await askConfirm({
+        title: plan.blocked ? "This file cannot be flashed" : "Flash this firmware?",
+        headline: plan.headline,
+        kindLabel: plan.kindLabel,
+        lines: ["File: " + fileName + " (" + formatBytes(img.length) + ")"].concat(
+          app ? ["Built " + app.date + " " + app.time + ", ESP-IDF " + app.idf] : []),
+        errors: pl.errors, warnings: pl.warnings,
+        notes: plan.blocked ? [] : ["The device will restart into the new firmware, and this page will reconnect by itself. " +
+          "If the new firmware fails its self-test, the device goes back to the current one."],
+        confirmLabel: plan.kind === "downgrade" ? "Flash older version" : (plan.kind === "same-build" ? "Flash anyway" : "Flash"),
+        returnTo: els.flashBtn,
+      });
+      focusAfterConfirm(confirmed);
+      if (plan.blocked) {
+        bailOut("Not flashed. " + (plan.errors[0] ? plan.errors[0].message : ""));
+        endBusy();
+        return;
+      }
+      if (!confirmed) {
+        bailOut("Cancelled. Nothing was changed.");
+        logLine("sys", "Flash cancelled.");
+        endBusy();
+        return;
+      }
+      els.updateStatus.focus();
+      const before = { version: fwInfo ? fwInfo.version : "", sha: fwInfo ? fwInfo.sha : "" };
+      upd = { kind: "flash", before, phase: "running",
+              expected: { kind: "flash", version: app.version, sha: app.sha256, before } };
+      lastUpdate = upd;
+      setStatus("busy", "Flashing...");
+      beginStatus("flash");
       try {
         const begin = new Uint8Array(4);
         new DataView(begin.buffer).setUint32(0, img.length, true);
+        setStep("erase", "Erasing the update slot. This can take up to a minute. Do not unplug the device.", true);
         logLine("sys", "OTA: erasing target partition...");
         await transact(TYPE.OTA_BEGIN, begin, [TYPE.OK], OTA_BEGIN_TIMEOUT_MS, 0);
         uploading = true;
 
+        let nextMilestone = 25;
+        setStep("write", "Writing the new firmware. Do not unplug the device.");
         for (let off = 0; off < img.length; off += OTA_CHUNK) {
           const chunk = img.subarray(off, Math.min(off + OTA_CHUNK, img.length));
           const payload = new Uint8Array(4 + chunk.length);
           new DataView(payload.buffer).setUint32(0, off, true);
           payload.set(chunk, 4);
           await transact(TYPE.OTA_DATA, payload, [TYPE.OK], CMD_TIMEOUT_MS * 2, 0);
-          els.fwProgress.value = (off + chunk.length) / img.length;
+          const p = formatProgress(off + chunk.length, img.length);
+          setProgress((off + chunk.length) / img.length, p.text);
+          els.updateDetail.textContent = p.text;
+          if (p.percent >= nextMilestone && p.percent < 100) {
+            els.updateMessage.textContent = p.text; // announced to screen readers
+            nextMilestone += 25;
+          }
         }
 
+        setStep("verify", "Verifying the new firmware on the device...", true);
         logLine("sys", "OTA: validating and activating...");
         await transact(TYPE.OTA_FINISH, null, [TYPE.OK], OTA_FINISH_TIMEOUT_MS, 0);
         uploading = false;
-        logLine("sys", "Firmware accepted. The device is rebooting; reconnect in a few seconds.");
+        logLine("sys", "Firmware accepted. The device is restarting; the page will reconnect.");
       } catch (e) {
-        logLine("err", "Flash failed: " + e.message);
+        failUpdate("Flash", e);
         // disconnect() clears `uploading` after sending its own OTA_ABORT.
         if (uploading && transport) {
           uploading = false;
           try { await transact(TYPE.OTA_ABORT, null, [TYPE.OK], CMD_TIMEOUT_MS, 0); } catch (_) { }
         }
-      } finally {
         uploading = false;
-        busy = false; updateUI();
-        els.fwProgress.hidden = true;
-        if (transport) setStatus("connected", "Connected");
+        endBusy();
+        return;
+      }
+      uploading = false;
+      endBusy();
+      afterReboot();
+    }
+
+    // ---- Latest release: check the published feed, download, verify, then
+    // hand the bytes to runFlash (same inspect + confirm panel as a picked file).
+    const LATEST_PREF_KEY = "omega.checkOnConnect";
+    const FEED_TIMEOUT_MS = 15000;
+    let latestRelease = null;   // parsed release from the last good check
+    let autoCheckDone = false;  // the automatic check runs once per page session
+
+    function readAutoPref() {
+      try { return localStorage.getItem(LATEST_PREF_KEY) !== "0"; } catch (_) { return true; }
+    }
+    function saveAutoPref(on) {
+      try { localStorage.setItem(LATEST_PREF_KEY, on ? "1" : "0"); } catch (_) { /* private mode etc. */ }
+    }
+    els.latestAuto.checked = readAutoPref();
+    els.latestAuto.addEventListener("change", () => saveAutoPref(els.latestAuto.checked));
+
+    function setLatestNotes(url) {
+      els.latestNotes.href = url || RELEASES_URL;
+      els.latestNotes.textContent = url ? "Release notes" : "All releases on GitHub";
+    }
+    // Shows the comparison of the last good check with what the device runs now.
+    function renderLatest() {
+      if (!latestRelease) return;
+      const r = latestRelease;
+      let text, canInstall = false;
+      if (fwInfo && transport) {
+        const s = summarizeAvailability(runningForCompare(), r);
+        text = s.message; canInstall = s.canInstall;
+      } else {
+        text = "The latest release is " + r.version + ". Connect your device to see whether you need it.";
+      }
+      els.latestResult.className = "muted";
+      els.latestResult.textContent = text;
+      els.latestInstallBtn.hidden = !canInstall;
+      els.latestInstallBtn.textContent = "Download and install " + r.version;
+      setLatestNotes(r.notesUrl);
+    }
+    function latestFailure(kind, status) {
+      switch (kind) {
+        case "offline": return "Could not reach the release server. Check your internet connection and try again.";
+        case "missing": return "No release has been published yet.";
+        case "http": return "The release server returned an error (" + status + "). Try again later.";
+        default: return "The release information could not be read, so nothing was changed.";
+      }
+    }
+    async function fetchWithTimeout(url, ms) {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), ms);
+      try { return await fetch(url, { cache: "no-cache", signal: ctl.signal }); }
+      finally { clearTimeout(timer); }
+    }
+
+    async function checkLatest(auto) {
+      if (latestBusy) return;
+      latestBusy = true; updateUI();
+      if (!auto) {
+        els.latestResult.className = "muted";
+        els.latestResult.textContent = "Checking for the latest firmware...";
+      }
+      try {
+        const url = feedUrlFor(location.href);
+        let resp;
+        try { resp = await fetchWithTimeout(url, FEED_TIMEOUT_MS); }
+        catch (e) { throw { kind: "offline", detail: e && e.message }; }
+        if (resp.status === 404) throw { kind: "missing" };
+        if (!resp.ok) throw { kind: "http", status: resp.status };
+        let json;
+        try { json = await resp.json(); } catch (e) { throw { kind: "invalid", detail: "not JSON" }; }
+        const parsed = parseReleaseFeed(json, url);
+        if (!parsed.ok) throw { kind: "invalid", detail: parsed.error };
+        latestRelease = parsed.release;
+        logLine("sys", "Latest release: " + latestRelease.version + " (" + latestRelease.fileName + ")");
+        renderLatest();
+      } catch (e) {
+        const failure = e && e.kind ? e : { kind: "invalid", detail: String((e && e.message) || e) };
+        logLine(auto ? "sys" : "warn", "Release check failed (" + failure.kind + "): " + (failure.detail || failure.status || ""));
+        latestRelease = null;
+        els.latestInstallBtn.hidden = true;
+        setLatestNotes("");
+        els.latestResult.className = "muted";
+        els.latestResult.textContent = auto
+          ? "Could not check for new firmware just now. You can check by hand."
+          : latestFailure(failure.kind, failure.status);
+      } finally {
+        latestBusy = false; updateUI();
+      }
+    }
+    els.latestCheckBtn.addEventListener("click", () => checkLatest(false));
+    function maybeAutoCheck() {
+      renderLatest();
+      if (autoCheckDone || !els.latestAuto.checked) return;
+      autoCheckDone = true;
+      checkLatest(true);
+    }
+
+    function hex(buf) {
+      return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+    }
+    // Reads the response body up to `size` bytes, reporting progress. Returns a
+    // Uint8Array, or throws if the body is longer than the release declares.
+    async function readBody(resp, size, onProgress) {
+      if (!resp.body || !resp.body.getReader) {
+        const all = new Uint8Array(await resp.arrayBuffer());
+        if (all.length > size) throw { kind: "size" };
+        onProgress(all.length);
+        return all;
+      }
+      const reader = resp.body.getReader();
+      const out = new Uint8Array(size);
+      let got = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (got + value.length > size) { try { await reader.cancel(); } catch (_) { } throw { kind: "size" }; }
+        out.set(value, got); got += value.length;
+        onProgress(got);
+      }
+      return out.subarray(0, got);
+    }
+
+    els.latestInstallBtn.addEventListener("click", async () => {
+      const rel = latestRelease;
+      if (!rel || !transport || busy || latestBusy) return;
+      busy = true; latestBusy = true; updateUI(); setStatus("busy", "Downloading...");
+      upd = null;
+      beginStatus("download");
+      els.updateStatus.focus();
+      setStep("download", "Downloading firmware " + rel.version + "...");
+      setProgress(0, "Downloading");
+      let bytes = null;
+      try {
+        let resp;
+        try { resp = await fetch(rel.appUrl, { cache: "no-cache" }); }
+        catch (e) { throw { kind: "offline" }; }
+        if (!resp.ok) throw { kind: "http", status: resp.status };
+        bytes = await readBody(resp, rel.size, (n) => {
+          const t = "Downloading " + Math.floor((n * 100) / rel.size) + "% (" + formatBytes(n) + " of " + formatBytes(rel.size) + ")";
+          setProgress(n / rel.size, t);
+          els.updateDetail.textContent = t;
+        });
+        setStep("verify", "Checking the download...");
+        if (bytes.length !== rel.size) throw { kind: "size" };
+        if (!(globalThis.crypto && crypto.subtle)) throw { kind: "nohash" };
+        const digest = hex(await crypto.subtle.digest("SHA-256", bytes));
+        if (digest !== rel.sha256) throw { kind: "sha" };
+      } catch (e) {
+        const kind = e && e.kind;
+        logLine("err", "Download failed (" + (kind || "error") + "): " + ((e && (e.status || e.message)) || ""));
+        const msg = kind === "offline" ? "The download could not be reached. Check your internet connection and try again."
+          : kind === "http" ? "The release server could not provide the file (error " + e.status + "). Try again later."
+          : kind === "size" ? "The downloaded file is not the size the release says it should be, so it was not installed. Try again."
+          : kind === "sha" ? "The downloaded file did not match its checksum, so it was not installed. Try again, and if it keeps happening, download the release from GitHub instead."
+          : kind === "nohash" ? "This browser cannot check the download, so it was not installed. Download the release from GitHub and choose the file instead."
+          : "The download failed, so nothing was changed.";
+        finishStatus("err", msg);
+        latestBusy = false; endBusy();
+        return;
+      }
+      logLine("sys", "Downloaded " + rel.fileName + " and verified its checksum.");
+      hideProgress();
+      latestBusy = false; endBusy();
+      runFlash(rel.fileName, async () => bytes);
+    });
+
+    els.fwRevertBtn.addEventListener("click", async () => {
+      if (!transport || busy || !prevSlotUsable()) return;
+      const f = fwInfo;
+      const prev = { version: f.prevVersion, label: f.prevLabel, state: f.prevState };
+      const plan = buildRevertPlan({ version: f.version, sha: f.sha }, prev);
+      const pl = planLines(plan);
+      const build = (f.prevDate || f.prevTime) ? (f.prevDate + " " + f.prevTime).trim() : "unknown build";
+      busy = true; updateUI();
+      upd = null;
+      const confirmed = await askConfirm({
+        title: plan.blocked ? "Nothing to go back to" : "Go back to the previous firmware?",
+        headline: plan.headline,
+        kindLabel: plan.kindLabel,
+        lines: ["Slot " + (f.prevLabel || "?") + ", built " + build + ", state " + f.prevState],
+        errors: pl.errors, warnings: pl.warnings,
+        notes: ["The device will restart. The previous firmware starts in the pending verify state and has to pass the " +
+                "self-test, or the device goes back again."],
+        confirmLabel: "Revert",
+        returnTo: els.fwRevertBtn,
+      });
+      focusAfterConfirm(confirmed);
+      if (!confirmed || plan.blocked) {
+        if (!confirmed) { bailOut("Cancelled. Nothing was changed."); logLine("sys", "Revert cancelled."); }
+        endBusy();
+        return;
+      }
+      els.updateStatus.focus();
+      const before = { version: f.version, sha: f.sha };
+      upd = { kind: "revert", before, phase: "running",
+              expected: { kind: "revert", version: f.prevVersion, sha: "", before } };
+      lastUpdate = upd;
+      beginStatus("revert");
+      setStatus("busy", "Reverting...");
+      setStep("revert", "Switching to the previous firmware (" + f.prevVersion + ")...");
+      try {
+        await transact(TYPE.REVERT, null, [TYPE.OK], CMD_TIMEOUT_MS, 0);
+        logLine("sys", "Reverting to " + f.prevVersion + " (" + (f.prevLabel || "?") + "). The device is restarting; the page will reconnect.");
+      } catch (e) {
+        failUpdate("Revert", e);
+        endBusy();
+        return;
+      }
+      endBusy();
+      afterReboot();
+    });
+
+    // ---- Reboot, reconnect, outcome ----
+    let lastUpdate = null; // eslint-disable-line no-unused-vars
+    let reconnecting = false;
+
+    async function findGranted(link) {
+      if (link.kind === "usb") {
+        const list = await navigator.usb.getDevices();
+        return list.find((d) => d.vendorId === link.vid && d.productId === link.pid &&
+                                (!link.serial || d.serialNumber === link.serial) && !d.opened) || null;
+      }
+      const ports = await navigator.serial.getPorts();
+      const info = link.info || {};
+      const same = ports.find((p) => {
+        if (p.readable) return false;
+        const i = p.getInfo ? p.getInfo() : {};
+        return info.usbVendorId !== undefined && i.usbVendorId === info.usbVendorId && i.usbProductId === info.usbProductId;
+      });
+      return same || ports.find((p) => p === link.port && !p.readable) || null;
+    }
+    async function openGranted(link, cand) {
+      const t = link.kind === "usb" ? await connectUsb(cand) : await connectSerial(cand);
+      if (t) onConnected(t);
+      return !!t;
+    }
+    // Reopens the device that was granted earlier, without the picker.
+    async function autoReconnect(timeoutMs) {
+      const link = lastLink;
+      if (!link) return false;
+      const deadline = Date.now() + timeoutMs;
+      let failures = 0;
+      reconnecting = true;
+      try {
+        while (Date.now() < deadline) {
+          if (transport) return true;
+          let cand = null;
+          try { cand = await findGranted(link); } catch (_) { }
+          if (cand) {
+            try { if (await openGranted(link, cand)) return true; }
+            catch (e) { if (failures++ % 5 === 0) logLine("sys", "Reconnect attempt failed (" + e.message + "); retrying..."); }
+          }
+          els.updateDetail.textContent = "Waiting for the device to come back. " +
+            Math.max(0, Math.round((deadline - Date.now()) / 1000)) + " s left.";
+          await wakeOrSleep(700);
+        }
+        return !!transport;
+      } finally { reconnecting = false; }
+    }
+
+    async function afterReboot() {
+      if (!upd) return;
+      upd.phase = "rebooting";
+      setStep("restart", "The device is restarting. Do not unplug it.");
+      if (transport) {
+        const t0 = Date.now();
+        while (transport && Date.now() - t0 < DROP_WAIT_MS) await sleepMs(250);
+      }
+      if (transport) {
+        // Never dropped: read what it is running now.
+        logLine("sys", "The device did not drop the connection; reading its firmware info.");
+        const ok = await refreshFwInfo();
+        await onUpdateReconnected(ok);
+        return;
+      }
+      setStep("reconnect", "Reconnecting to the device...");
+      setProgress(null, "Reconnecting");
+      const ok = await autoReconnect(RECONNECT_TIMEOUT_MS);
+      if (!ok && upd && upd.phase === "rebooting") {
+        hideProgress();
+        els.updateStatus.className = "update-status warn";
+        els.updateDetail.textContent = "";
+        els.updateMessage.textContent = "";
+        els.updateError.textContent = "The device has restarted but this page could not reconnect to it by itself. " +
+          "Unplug it and plug it in again if it does not appear, then press Reconnect.";
+        els.fwReconnectBtn.hidden = false;
+        els.fwReconnectBtn.focus();
+        logLine("err", "Automatic reconnect timed out.");
+      }
+    }
+
+    els.fwReconnectBtn.addEventListener("click", async () => {
+      if (transport || reconnecting) return;
+      els.updateError.textContent = "";
+      els.updateMessage.textContent = "Reconnecting to the device...";
+      const link = lastLink;
+      let done = false;
+      if (link) {
+        try {
+          const cand = await findGranted(link);
+          if (cand) done = await openGranted(link, cand);
+        } catch (e) { logLine("sys", "Reconnect failed: " + e.message); }
+      }
+      if (!done && !transport) {
+        // Nothing already permitted is available: fall back to the browser's picker.
+        try {
+          const t = (link && link.kind === "serial") ? await connectSerial() : await connectUsb();
+          if (t) { onConnected(t); done = true; }
+        } catch (e) { logLine("err", "Reconnect failed: " + e.message); }
+      }
+      if (!done && !transport) {
+        els.updateMessage.textContent = "";
+        els.updateError.textContent = "Still not connected. Check the cable, then press Reconnect, or use the Connect buttons at the top.";
       }
     });
+
+    // Called after every successful connect once FW_INFO has been tried.
+    let reporting = false;
+    async function onUpdateReconnected(infoOk) {
+      if (!upd || upd.phase !== "rebooting" || reporting) return;
+      reporting = true;
+      try {
+        let ok = infoOk;
+        for (let i = 0; !ok && i < 3 && transport; i++) {
+          await sleepMs(1500);
+          ok = await refreshFwInfo();
+        }
+        els.fwReconnectBtn.hidden = true;
+        const after = ok ? { version: fwInfo.version, sha: fwInfo.sha, pending: fwInfo.pending } : null;
+        const o = decideOutcome(upd.expected, after);
+        logLine("sys", "Update outcome: " + o.state + ". " + o.message);
+        switch (o.state) {
+          case "confirming":
+            upd.phase = "confirming";
+            setStep("confirm", o.message);
+            setProgress(null, "Checking the new firmware");
+            watchPendingVerify();
+            break;
+          case "confirmed":
+            upd.phase = "done";
+            finishStatus("ok", o.message);
+            break;
+          case "rolled_back":
+            upd.phase = "done";
+            finishStatus("err", o.message);
+            break;
+          default:
+            upd.phase = "done";
+            finishStatus(o.state === "no_device" ? "err" : "warn", o.message);
+        }
+      } finally { reporting = false; }
+    }
+    function onUpdatePendingCleared() {
+      if (!upd || upd.phase !== "confirming") return;
+      upd.phase = "done";
+      finishStatus("ok", "Update confirmed. The device is running " + fwInfo.version + ".");
+    }
+    // The link dropped. During the self-test watch this usually means the
+    // device rolled back and rebooted; reconnect and decide again.
+    function onUpdateTransportGone() {
+      if (confirmResolve) closeConfirm(false);
+      if (upd && upd.phase === "confirming" && !reconnecting) {
+        upd.phase = "rebooting";
+        logLine("sys", "The device restarted while its new firmware was being checked; reconnecting.");
+        setStep("reconnect", "The device restarted. Reconnecting to find out which firmware it is running...");
+        setProgress(null, "Reconnecting");
+        autoReconnect(RECONNECT_TIMEOUT_MS).then((ok) => {
+          if (!ok && upd && upd.phase === "rebooting") {
+            hideProgress();
+            els.updateStatus.className = "update-status warn";
+            els.updateError.textContent = "The device restarted but this page could not reconnect to it by itself. Press Reconnect.";
+            els.fwReconnectBtn.hidden = false;
+          }
+        });
+      }
+    }
 
     els.restartBtn.addEventListener("click", async () => {
       if (!transport || busy) return;

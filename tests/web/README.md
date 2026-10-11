@@ -19,6 +19,15 @@ node --test "tests/web/*.test.js"
   `tests/protocol/golden_frames.json`, which the C++ host test
   `test_golden_frames.cpp` generates from the real service. Regenerate it
   from C++ with `OMEGA_WRITE_GOLDEN=1 build-host/omega_host_tests`, never by hand.
+- `update.test.js`: the pure firmware-update logic in `omega_protocol.js`
+  (`inspectImage`, `compareFirmware`, `buildFlashPlan`, `buildRevertPlan`,
+  `decideOutcome`, `describeUpdateError`, `formatProgress`). Test images are
+  built byte by byte following `esp_image_header_t` and `esp_app_desc_t`.
+- `latest.test.js`: the release-feed side of "Check for latest firmware"
+  (`feedUrlFor`, `parseReleaseFeed`, `summarizeAvailability`), including a
+  round trip through the feed that `scripts/release_feed.mjs` writes.
+- `release_feed.test.js`: `scripts/release_feed.mjs`, which builds
+  `latest.json`, `manifest.json` and `SHA256SUMS` for the Pages site.
 - `sync.test.js`: keeps the copy of the protocol code inside the HTML identical
   to `omega_protocol.js`, and checks the page only uses exported names.
 

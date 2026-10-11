@@ -240,7 +240,463 @@
     return new Uint8Array([mode]);
   }
 
+  // ---------------------------------------------------------------------
+  // Firmware image inspection and update planning (pure, no DOM).
+  // Offsets come from esp_image_header_t (bootloader_support/esp_app_format.h)
+  // and esp_app_desc_t (esp_app_format/esp_app_desc.h) in ESP-IDF.
+  // ---------------------------------------------------------------------
+  const OTA_SLOT_SIZE = 0x1E0000;       // ota_0 / ota_1 in partitions.csv (1920K)
+  const CHIP_ID_ESP32S3 = 9;            // ESP_CHIP_ID_ESP32S3
+  const DEFAULT_PROJECT = "omega_stick"; // project(omega_stick) in CMakeLists.txt
+  const IMAGE_MAGIC = 0xE9;             // ESP_IMAGE_HEADER_MAGIC
+  const APP_DESC_MAGIC = 0xABCD5432;    // ESP_APP_DESC_MAGIC_WORD
+  const IMAGE_HEADER_SIZE = 24, SEGMENT_HEADER_SIZE = 8;
+  const APP_DESC_OFFSET = IMAGE_HEADER_SIZE + SEGMENT_HEADER_SIZE; // 32
+  const APP_DESC_SIZE = 256;
+  const MAX_SEGMENTS = 16;              // ESP_IMAGE_MAX_SEGMENTS
+  const CHIP_NAMES = {
+    0: "ESP32", 2: "ESP32-S2", 5: "ESP32-C3", 9: "ESP32-S3", 12: "ESP32-C2", 13: "ESP32-C6",
+    16: "ESP32-H2", 18: "ESP32-P4", 20: "ESP32-C61", 23: "ESP32-C5", 25: "ESP32-H21", 28: "ESP32-H4",
+  };
+
+  function cString(bytes, start, len) {
+    let end = start;
+    const limit = Math.min(bytes.length, start + len);
+    while (end < limit && bytes[end] !== 0) end++;
+    let s = "";
+    for (let i = start; i < end; i++) s += String.fromCharCode(bytes[i]);
+    return s;
+  }
+  function hexOf(bytes, start, len) {
+    let s = "";
+    for (let i = start; i < start + len; i++) s += bytes[i].toString(16).padStart(2, "0");
+    return s;
+  }
+  function formatBytes(n) {
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",") + " B";
+  }
+
+  // Inspects a firmware file before it is sent. Returns
+  //   { ok, errors: [{code, message}], warnings: [{code, message}], info }
+  // where ok is true when there are no errors. info is null until the file is
+  // recognised as an ESP image, and has appDesc set only for an app image.
+  // options: expectedProject (default "omega_stick"), slotSize, chipId.
+  function inspectImage(bytes, options) {
+    const opt = options || {};
+    const slotSize = opt.slotSize || OTA_SLOT_SIZE;
+    const chipId = opt.chipId === undefined ? CHIP_ID_ESP32S3 : opt.chipId;
+    const project = opt.expectedProject || DEFAULT_PROJECT;
+    const errors = [], warnings = [];
+    const fail = (code, message) => { errors.push({ code, message }); };
+    const result = (info) => ({ ok: errors.length === 0, errors, warnings, info: info || null });
+
+    if (!bytes || bytes.length === 0) {
+      fail("empty", "The file is empty.");
+      return result();
+    }
+    if (bytes.length >= 4 && bytes[0] === 0x7F && bytes[1] === 0x45 && bytes[2] === 0x4C && bytes[3] === 0x46) {
+      fail("elf", "This is an .elf file, not a firmware image. Choose the .bin file from the build folder instead.");
+      return result();
+    }
+    if (bytes.length >= 2 && bytes[0] === 0xAA && bytes[1] === 0x50) {
+      fail("partition_table", "This is a partition table, not a firmware image. Choose the main application .bin file (omega_stick.bin).");
+      return result();
+    }
+    if (bytes[0] !== IMAGE_MAGIC) {
+      fail("not_esp_image", "This is not an ESP32 firmware image. Choose the application .bin file from the build folder (omega_stick.bin).");
+      return result();
+    }
+    if (bytes.length < IMAGE_HEADER_SIZE) {
+      fail("truncated", "The file is cut short (" + bytes.length + " bytes). Copy or build it again.");
+      return result();
+    }
+    const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const info = {
+      size: bytes.length,
+      segmentCount: bytes[1],
+      chipId: v.getUint16(12, true),
+      minChipRev: v.getUint16(15, true),
+      maxChipRev: v.getUint16(17, true),
+      hashAppended: bytes[23] === 1,
+      appDesc: null,
+    };
+    info.chipName = CHIP_NAMES[info.chipId] || ("chip id " + info.chipId);
+
+    if (info.segmentCount === 0 || info.segmentCount > MAX_SEGMENTS) {
+      fail("not_esp_image", "This does not look like a valid ESP32 firmware image (bad header). Choose the application .bin file.");
+      return result(info);
+    }
+    if (info.chipId !== chipId) {
+      fail("wrong_chip", "This firmware is built for the " + info.chipName + ", but this device is an " +
+           (CHIP_NAMES[chipId] || ("chip id " + chipId)) + ". Flashing it would not work.");
+    }
+
+    // Walk the segment list to learn how long a complete image must be.
+    let pos = IMAGE_HEADER_SIZE, walkOk = true;
+    for (let i = 0; i < info.segmentCount; i++) {
+      if (pos + SEGMENT_HEADER_SIZE > bytes.length) { walkOk = false; break; }
+      pos += SEGMENT_HEADER_SIZE + v.getUint32(pos + 4, true);
+      if (pos > bytes.length) { walkOk = false; break; }
+    }
+    if (walkOk) {
+      // The checksum byte ends the 16-byte block after the last segment, then comes the optional SHA-256.
+      info.expectedSize = (pos | 15) + 1 + (info.hashAppended ? 32 : 0);
+      if (bytes.length < info.expectedSize) walkOk = false;
+    }
+    if (!walkOk) {
+      fail("truncated", "The file is incomplete (it ends before the image does). Build it again or copy it again.");
+    }
+
+    // App descriptor: first bytes of the first segment's data.
+    const hasDesc = bytes.length >= APP_DESC_OFFSET + 4 && v.getUint32(APP_DESC_OFFSET, true) === APP_DESC_MAGIC;
+    if (!hasDesc) {
+      if (walkOk) {
+        fail("not_app_image", "This is an ESP32 image but not an application (it could be a bootloader). Choose the application .bin file (omega_stick.bin).");
+      }
+    } else if (bytes.length >= APP_DESC_OFFSET + APP_DESC_SIZE) {
+      const d = APP_DESC_OFFSET;
+      info.appDesc = {
+        secureVersion: v.getUint32(d + 4, true),
+        version: cString(bytes, d + 16, 32),
+        project: cString(bytes, d + 48, 32),
+        time: cString(bytes, d + 80, 16),
+        date: cString(bytes, d + 96, 16),
+        idf: cString(bytes, d + 112, 32),
+        sha256: hexOf(bytes, d + 144, 32),
+      };
+      info.appDesc.shaShort = info.appDesc.sha256.slice(0, 8);
+      if (info.appDesc.project !== project) {
+        fail("wrong_project", "This firmware is for a different product (\"" + (info.appDesc.project || "unnamed") +
+             "\" instead of \"" + project + "\"). Choose the " + project + " application .bin file.");
+      }
+      if (info.appDesc.secureVersion !== 0) {
+        warnings.push({ code: "secure_version", message: "This image sets a secure (anti-rollback) version of " + info.appDesc.secureVersion + "." });
+      }
+    }
+
+    if (bytes.length > slotSize) {
+      fail("too_big", "The file is " + formatBytes(bytes.length) + ", which is larger than the " + formatBytes(slotSize) +
+           " update slot on the device. It cannot be installed.");
+    }
+    return result(info);
+  }
+
+  // Parses X.Y.Z, X.Y.Z+sha, X.Y.Z+sha.dirty (see D19). Anything else is invalid.
+  function parseVersion(text) {
+    const raw = String(text === undefined || text === null ? "" : text).trim();
+    const m = /^v?(\d+)\.(\d+)\.(\d+)(?:\+([0-9A-Za-z]+))?(\.dirty)?$/.exec(raw);
+    if (!m) return { valid: false, raw, dev: false };
+    return {
+      valid: true, raw, major: +m[1], minor: +m[2], patch: +m[3],
+      sha: m[4] || "", dirty: !!m[5], dev: !!(m[4] || m[5]),
+    };
+  }
+
+  // running: { version, sha } from FW_INFO (sha = 8 hex chars of the ELF hash).
+  // candidate: { version, sha } (sha may be the full 64 hex or the short form).
+  // kind: upgrade | downgrade | same-version | same-build | dev | unknown.
+  function compareFirmware(running, candidate) {
+    const r = parseVersion(running && running.version), c = parseVersion(candidate && candidate.version);
+    const rs = String((running && running.sha) || "").toLowerCase();
+    const cs = String((candidate && candidate.sha) || "").toLowerCase();
+    const n = Math.min(rs.length, cs.length);
+    const sameBuild = n >= 8 && rs.slice(0, n) === cs.slice(0, n);
+    let kind;
+    if (sameBuild) kind = "same-build";
+    else if (!r.valid || !c.valid) kind = "unknown";
+    else {
+      const d = (c.major - r.major) || (c.minor - r.minor) || (c.patch - r.patch);
+      if (d > 0) kind = "upgrade";
+      else if (d < 0) kind = "downgrade";
+      else kind = (r.dev || c.dev) ? "dev" : "same-version";
+    }
+    return { kind, sameBuild, runningDev: r.dev, candidateDev: c.dev };
+  }
+
+  const KIND_LABEL = {
+    "upgrade": "Upgrade",
+    "downgrade": "Downgrade (older than the running version)",
+    "same-version": "Same version number, different build",
+    "same-build": "Same build as the running firmware",
+    "dev": "Development build (same base version)",
+    "unknown": "Version could not be compared",
+  };
+
+  function kindWarnings(cmp, running) {
+    const w = [];
+    const rv = (running && running.version) || "unknown";
+    if (cmp.kind === "downgrade") {
+      w.push({ code: "downgrade", message: "This is an older version than the one running (" + rv +
+               "). Going back is allowed, but the older firmware may lack recent fixes." });
+    } else if (cmp.kind === "same-build") {
+      w.push({ code: "same_build", message: "This exact build is already running. Flashing it again changes nothing." });
+    } else if (cmp.kind === "same-version") {
+      w.push({ code: "same_version", message: "This has the same version number as the running firmware, but it is a different build." });
+    } else if (cmp.kind === "unknown") {
+      w.push({ code: "version_unknown", message: "The versions could not be compared, so it is not clear whether this is newer." });
+    }
+    if (cmp.candidateDev && cmp.kind !== "same-build") {
+      w.push({ code: "dev_build", message: "This is a development build (its version has a commit suffix), not a tagged release." });
+    }
+    return w;
+  }
+
+  // Everything the confirm panel needs for a Flash. inspection is the result of
+  // inspectImage, running is FW_INFO ({ version, sha }) or null when it could
+  // not be read, fileInfo is { name, size }.
+  function buildFlashPlan(inspection, running, fileInfo) {
+    const errors = inspection.errors.slice();
+    const warnings = inspection.warnings.slice();
+    const app = inspection.info && inspection.info.appDesc;
+    const plan = {
+      blocked: errors.length > 0, errors, warnings,
+      fileName: (fileInfo && fileInfo.name) || "firmware.bin",
+      size: (fileInfo && fileInfo.size) || (inspection.info ? inspection.info.size : 0),
+      kind: "unknown", kindLabel: "", headline: "",
+      newVersion: app ? app.version : "", newSha: app ? app.shaShort : "",
+    };
+    if (!app) return plan;
+    const newLabel = app.version || "unknown";
+    if (!running || !running.version) {
+      warnings.push({ code: "running_unknown", message: "The running firmware version could not be read, so the new version cannot be compared with it." });
+      plan.headline = "New " + newLabel;
+      return plan;
+    }
+    const cmp = compareFirmware(running, { version: app.version, sha: app.shaShort });
+    plan.kind = cmp.kind;
+    plan.kindLabel = KIND_LABEL[cmp.kind];
+    plan.headline = "Running " + running.version + " -> New " + newLabel;
+    for (const w of kindWarnings(cmp, running)) warnings.push(w);
+    return plan;
+  }
+
+  // prev: { version, label, state } from FW_INFO. Used for the Revert panel.
+  function buildRevertPlan(running, prev) {
+    const warnings = [], errors = [];
+    const pv = (prev && prev.version) || "";
+    if (!pv) errors.push({ code: "no_previous", message: "The other slot has no firmware to go back to." });
+    const plan = { blocked: errors.length > 0, errors, warnings, kind: "unknown", kindLabel: "", headline: "" };
+    if (!pv) return plan;
+    const rv = (running && running.version) || "unknown";
+    plan.headline = "Running " + rv + " -> Previous " + pv;
+    const cmp = compareFirmware(running || {}, { version: pv, sha: "" });
+    plan.kind = cmp.kind;
+    plan.kindLabel = KIND_LABEL[cmp.kind];
+    if (plan.kind === "upgrade") {
+      warnings.push({ code: "revert_newer", message: "The previous slot holds a newer version than the one running." });
+    }
+    if (plan.kind === "same-version" || plan.kind === "dev") {
+      warnings.push({ code: "same_version", message: "The previous firmware has the same base version number as the running one." });
+    }
+    const st = (prev && prev.state) || "";
+    if (st && st !== "valid") {
+      warnings.push({ code: "prev_state", message: "The previous firmware is in state \"" + st +
+                      "\". It will have to pass the self-test again, or the device goes back." });
+    }
+    return plan;
+  }
+
+  // Compares the build the page expects after a reboot with what FW_INFO now
+  // reports. expected: { kind: "flash" | "revert", version, sha? (short or
+  // full), before: { version, sha } }. after: parsed FW_INFO
+  // ({ version, sha, pending }) or null when nothing could be read.
+  // state: confirming | confirmed | rolled_back | unexpected | same_build | no_device.
+  function decideOutcome(expected, after) {
+    const before = expected.before || {};
+    const noun = expected.kind === "revert" ? "Reverted to" : "Updated to";
+    if (!after || !after.version) {
+      return { state: "no_device", message: "The device did not come back, or its firmware version could not be read." };
+    }
+    const sameAs = (a, b) => {
+      if (!a || !b || !a.version || !b.version || a.version !== b.version) return false;
+      const x = String(a.sha || "").toLowerCase(), y = String(b.sha || "").toLowerCase();
+      const n = Math.min(x.length, y.length);
+      return n < 8 || x.slice(0, n) === y.slice(0, n); // sha unknown on either side: version alone
+    };
+    const isNew = sameAs(after, expected);
+    const isOld = sameAs(after, before);
+    if (isNew && isOld) {
+      // Reflashing the identical build: only the pending flag tells.
+      if (after.pending) {
+        return { state: "confirming", message: noun + " " + after.version + ". Checking it works..." };
+      }
+      return { state: "same_build", message: "The device is running " + after.version +
+               ", the same build as before, so it cannot be told whether the new copy started." };
+    }
+    if (isNew) {
+      if (after.pending) return { state: "confirming", message: noun + " " + after.version + ". Checking it works..." };
+      return { state: "confirmed", message: "Update confirmed. The device is running " + after.version + "." };
+    }
+    if (isOld) {
+      return { state: "rolled_back",
+               message: "The new firmware did not pass its self-test, so the device went back to " + after.version + "." };
+    }
+    return { state: "unexpected",
+             message: "The device is running " + after.version + ", which is not the version that was installed (" +
+                      (expected.version || "unknown") + ")." };
+  }
+
+  // Maps a raw failure (Error text from the page's transactions, device ERROR
+  // replies, espp OTA error strings) to plain language. Returns
+  // { category, title, advice }. Device ERROR replies read
+  // "device error (code N): <context>: <errc text>"; the text is used in
+  // preference to the number because std::errc numbers are not portable.
+  function describeUpdateError(raw) {
+    const t = String(raw === undefined || raw === null ? "" : (raw.message || raw));
+    const has = (re) => re.test(t);
+    const code = (/\(code (\d+)\)/.exec(t) || [])[1];
+    const out = (category, title, advice) => ({ category, title, advice });
+    if (has(/^not connected/i)) {
+      return out("disconnected", "The device is not connected.", "Connect the device and try again.");
+    }
+    if (has(/transport lost|disconnected|upload cancelled|NetworkError|device has been lost/i)) {
+      return out("lost", "The connection to the device was lost.",
+        "Unplug the device, plug it in again, reconnect, and check which firmware it runs before trying again. A half-written update never replaces the working firmware.");
+    }
+    if (has(/timed out/i)) {
+      return out("timeout", /OTA_BEGIN/.test(t) ? "The device took too long to get ready for the update."
+                                                 : "The device stopped answering during the update.",
+        "Wait a few seconds, reconnect, and try again. If it keeps happening, use a different USB cable or port.");
+    }
+    if (has(/Function not implemented|not wired on this build|function_not_supported/i) || code === "88") {
+      return out("unsupported", "This device's firmware cannot be updated from here.",
+        "Update it over the serial cable with the flashing tool instead.");
+    }
+    if (has(/other slot holds no app image|No such device/i)) {
+      return out("no_previous", "There is no previous firmware to go back to.",
+        "Nothing was changed. Flash a firmware file instead.");
+    }
+    if (has(/already in progress|upload is in progress|operation in progress/i)) {
+      return out("busy", "Another update is already running on the device.",
+        "Wait a minute or unplug and reconnect the device, then try again. Close other copies of this page first.");
+    }
+    if (has(/Device or resource busy|busy/i)) {
+      return out("busy", "The device is busy and refused the update.",
+        "Close other tabs or programs connected to the device (including the other connection type), wait about 30 seconds, and try again.");
+    }
+    if (has(/offset mismatch|no OTA session/i) || (/Operation not permitted/i.test(t) && /OTA/.test(t))) {
+      return out("session", "The update session was lost part way.",
+        "Nothing was installed. Reconnect and start the update again.");
+    }
+    if (has(/OTA_FINISH/)) {
+      return out("rejected", "The device checked the new firmware and rejected it.",
+        "The file may be damaged or built for something else. Nothing was installed. Build or copy the file again and retry.");
+    }
+    if (has(/Bad message|checksum|digest|invalid image|Invalid argument/i) && /OTA/.test(t)) {
+      return out("rejected", "The device rejected the firmware data.",
+        "The file may be damaged. Nothing was installed. Build or copy the file again and retry.");
+    }
+    if (has(/No space left|Not enough space|Cannot allocate memory/i)) {
+      return out("too_big", "The firmware does not fit in the device's update slot.",
+        "Check you chose the application .bin file for this device.");
+    }
+    if (has(/OTA_DATA|Input\/output error|write failed|stalled|USB write/i) || code === "5") {
+      return out("write", "Writing to the device failed.",
+        "Nothing was installed and the working firmware is untouched. Reconnect and try again, using a different USB port or cable if it repeats.");
+    }
+    if (has(/OTA_BEGIN/)) {
+      return out("begin", "The device would not start the update.",
+        "Reconnect the device and try again.");
+    }
+    if (has(/REVERT/)) {
+      return out("revert", "The device could not switch back to the previous firmware.",
+        "Nothing was changed. Reconnect and try again.");
+    }
+    return out("other", "The update did not complete.",
+      "Reconnect the device and try again. The log below has the technical detail.");
+  }
+
+  // Progress text for the write phase.
+  function formatProgress(written, total) {
+    const t = total > 0 ? total : 1;
+    const w = Math.max(0, Math.min(written, t));
+    const percent = Math.floor((w * 100) / t);
+    return { percent, text: "Writing " + percent + "% (" + formatBytes(w) + " of " + formatBytes(t) + ")" };
+  }
+
+  // ---------------------------------------------------------------------
+  // Latest-release feed (published by CI, see scripts/release_feed.mjs).
+  // ---------------------------------------------------------------------
+  const FEED_URL = "https://atdev-inc.github.io/omega-stick/firmware/latest.json";
+  const PAGES_ORIGIN = "https://atdev-inc.github.io";
+  const PAGES_BASE = "/omega-stick/";
+  const RELEASES_URL = "https://github.com/ATDev-Inc/omega-stick/releases";
+  const NOTES_PREFIX = RELEASES_URL + "/";
+
+  // Where to read the feed from. Served from the project's own Pages site the
+  // feed is a sibling path, so it stays same-origin; anywhere else (file://,
+  // a local server, a fork) the published feed is used. There is deliberately
+  // no way to override this from the page address.
+  function feedUrlFor(locationHref) {
+    try {
+      const u = new URL(String(locationHref));
+      if (u.origin === PAGES_ORIGIN && u.pathname.indexOf(PAGES_BASE) === 0) {
+        return new URL("../firmware/latest.json", u.origin + u.pathname).href;
+      }
+    } catch (_) { /* fall through */ }
+    return FEED_URL;
+  }
+
+  // Validates the parsed latest.json. Returns { ok, error, release } where
+  // release is { version, tag, publishedAt, notesUrl, appUrl, size, sha256 }.
+  function parseReleaseFeed(json, feedUrl) {
+    const bad = (error) => ({ ok: false, error, release: null });
+    if (!json || typeof json !== "object" || Array.isArray(json)) return bad("The release information is not in the expected format.");
+    if (json.schema !== 1) return bad("The release information uses a format this page does not understand (schema " + json.schema + ").");
+    if (json.project !== DEFAULT_PROJECT) return bad("The release information is for a different project.");
+    if (json.chip !== "esp32s3") return bad("The release information is for a different chip.");
+    if (typeof json.version !== "string" || !/^\d+\.\d+\.\d+$/.test(json.version)) return bad("The release version is not valid.");
+    if (json.tag !== "v" + json.version) return bad("The release tag does not match its version.");
+    const app = json.app;
+    if (!app || typeof app !== "object") return bad("The release information has no firmware file.");
+    if (!Number.isInteger(app.size) || app.size < 1 || app.size > OTA_SLOT_SIZE) return bad("The release firmware size is not valid.");
+    if (typeof app.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(app.sha256)) return bad("The release firmware checksum is not valid.");
+    if (typeof app.path !== "string" || !/^[A-Za-z0-9._-]+$/.test(app.path) || app.path.indexOf("..") >= 0) {
+      return bad("The release firmware file name is not valid.");
+    }
+    let appUrl;
+    try { appUrl = new URL(app.path, feedUrl).href; } catch (_) { return bad("The release address is not valid."); }
+    const notesUrl = (typeof json.notes_url === "string" && json.notes_url.indexOf(NOTES_PREFIX) === 0) ? json.notes_url : "";
+    const publishedAt = (typeof json.published_at === "string" && !Number.isNaN(Date.parse(json.published_at))) ? json.published_at : "";
+    return {
+      ok: true, error: "",
+      release: { version: json.version, tag: json.tag, publishedAt, notesUrl, appUrl, fileName: app.path, size: app.size, sha256: app.sha256 },
+    };
+  }
+
+  // Compares the running firmware ({ version, sha } from FW_INFO, or null)
+  // with a parsed release. Returns { state, message, canInstall }.
+  // state: update-available | up-to-date | running-newer | running-dev-build | unknown
+  function summarizeAvailability(running, release) {
+    const rv = running && running.version ? String(running.version) : "";
+    const latest = release.version;
+    if (!rv || !parseVersion(rv).valid) {
+      return { state: "unknown", canInstall: false,
+               message: "The latest release is " + latest + ". The version on your device could not be read, so it cannot be compared." };
+    }
+    const cmp = compareFirmware(running, { version: latest, sha: "" });
+    switch (cmp.kind) {
+      case "upgrade":
+        return { state: "update-available", canInstall: true, message: "Firmware " + latest + " is available. You have " + rv + "." };
+      case "same-version":
+        return { state: "up-to-date", canInstall: false, message: "You have the latest release (" + latest + ")." };
+      case "downgrade":
+        return { state: "running-newer", canInstall: false,
+                 message: "You have " + rv + ", which is newer than the latest release (" + latest + ")." };
+      case "dev":
+        return { state: "running-dev-build", canInstall: false,
+                 message: "You are running a development build (" + rv + "). The latest release is " + latest + "." };
+      default:
+        return { state: "unknown", canInstall: false,
+                 message: "The latest release is " + latest + ". Your version (" + rv + ") could not be compared." };
+    }
+  }
+
   const OmegaProtocol = {
+    FEED_URL, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
+    OTA_SLOT_SIZE, CHIP_ID_ESP32S3, DEFAULT_PROJECT, KIND_LABEL,
+    inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
+    decideOutcome, describeUpdateError, formatProgress, formatBytes,
     HEADER_SIZE, CRC_SIZE, MAX_PAYLOAD, MAX_FRAME,
     MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES,
     FLAGS_REQUEST, FLAGS_REPLY_BIT, FLAG_CORRELATION,
