@@ -130,6 +130,57 @@ inline esp_app_desc_t make_desc(const std::string &version, const std::string &p
   return d;
 }
 
+/// The descriptor's bytes as lowercase hex, for the saved-state file.
+inline std::string desc_to_hex(const esp_app_desc_t &d) {
+  static const char digits[] = "0123456789abcdef";
+  std::string out;
+  const auto *b = reinterpret_cast<const uint8_t *>(&d);
+  for (size_t i = 0; i < sizeof(d); i++) {
+    out += digits[b[i] >> 4];
+    out += digits[b[i] & 0x0F];
+  }
+  return out;
+}
+
+/// Inverse of desc_to_hex(); false (leaving `d` alone) unless the text is exactly one
+/// descriptor with the right magic.
+inline bool desc_from_hex(const std::string &hex, esp_app_desc_t &d) {
+  if (hex.size() != sizeof(d) * 2) {
+    return false;
+  }
+  auto nibble = [](char c) {
+    if (c >= '0' && c <= '9') {
+      return c - '0';
+    }
+    if (c >= 'a' && c <= 'f') {
+      return c - 'a' + 10;
+    }
+    if (c >= 'A' && c <= 'F') {
+      return c - 'A' + 10;
+    }
+    return -1;
+  };
+  esp_app_desc_t out{};
+  auto *b = reinterpret_cast<uint8_t *>(&out);
+  for (size_t i = 0; i < sizeof(out); i++) {
+    const int hi = nibble(hex[2 * i]), lo = nibble(hex[2 * i + 1]);
+    if (hi < 0 || lo < 0) {
+      return false;
+    }
+    b[i] = static_cast<uint8_t>(hi << 4 | lo);
+  }
+  if (out.magic_word != kAppDescMagic) {
+    return false;
+  }
+  out.version[sizeof(out.version) - 1] = '\0';
+  out.project_name[sizeof(out.project_name) - 1] = '\0';
+  out.time[sizeof(out.time) - 1] = '\0';
+  out.date[sizeof(out.date) - 1] = '\0';
+  out.idf_ver[sizeof(out.idf_ver) - 1] = '\0';
+  d = out;
+  return true;
+}
+
 /// Reads the app descriptor out of a firmware image (what esp_ota_end checks
 /// for): image magic 0xE9, then esp_app_desc_t right after the first segment
 /// header. Returns false for anything that is not an app image.
@@ -444,7 +495,8 @@ private:
           << p << "version=" << s.desc.version << "\n"
           << p << "project=" << s.desc.project_name << "\n"
           << p << "date=" << s.desc.date << "\n"
-          << p << "time=" << s.desc.time << "\n";
+          << p << "time=" << s.desc.time << "\n"
+          << p << "desc=" << desc_to_hex(s.desc) << "\n";
     }
   }
 
@@ -495,6 +547,12 @@ private:
       }
       if (kv.count(p + "time") != 0) {
         copy_str(s.desc.time, sizeof(s.desc.time), kv[p + "time"]);
+      }
+      // The whole descriptor (idf_ver, secure_version, app_elf_sha256, ...). Files from
+      // before it was saved lack it and keep the fields above.
+      esp_app_desc_t full{};
+      if (kv.count(p + "desc") != 0 && desc_from_hex(kv[p + "desc"], full)) {
+        s.desc = full;
       }
     }
     return true;

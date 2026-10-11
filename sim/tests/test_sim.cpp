@@ -2,6 +2,7 @@
 // driver, and the two-slot flash fake.
 
 #include <cmath>
+#include <filesystem>
 #include <string>
 
 #include "json.hpp"
@@ -306,4 +307,60 @@ TEST(flash_bootloader_rolls_back_an_image_that_reboots_unconfirmed) {
   esp_ota_img_states_t st{};
   CHECK(f.state_of(f.next_update_partition(), &st) == ESP_OK);
   CHECK(st == ESP_OTA_IMG_ABORTED);
+}
+
+TEST(flash_saved_state_keeps_the_uploaded_descriptor_whole) {
+  namespace fs = std::filesystem;
+  const fs::path dir = fs::temp_directory_path() / "omega_sim_flash_desc_test";
+  fs::remove_all(dir);
+  fs::create_directories(dir);
+  const fs::path file = dir / "flash.txt";
+
+  esp_app_desc_t desc{};
+  CHECK(parse_image_desc(make_image("9.9.9"), desc));
+  std::snprintf(desc.idf_ver, sizeof(desc.idf_ver), "v5.4.1-test");
+  desc.secure_version = 7;
+  for (size_t i = 0; i < sizeof(desc.app_elf_sha256); i++) {
+    desc.app_elf_sha256[i] = static_cast<uint8_t>(0xA0 + i);
+  }
+  {
+    Flash f;
+    f.load_or_format(file);
+    f.commit_image(desc);
+    CHECK(!f.boot());
+    f.mark_valid(); // confirmed
+  }
+
+  Flash g; // a fresh process reading the same file
+  g.load_or_format(file);
+  CHECK(!g.boot());
+  CHECK_EQ(g.running_label(), std::string("ota_1"));
+  CHECK(!g.pending_verify());
+  const esp_app_desc_t *got = g.running_desc();
+  CHECK(got != nullptr);
+  CHECK_EQ(std::string(got->version), std::string("9.9.9"));
+  CHECK_EQ(std::string(got->project_name), std::string("omega_stick"));
+  CHECK_EQ(std::string(got->idf_ver), std::string("v5.4.1-test"));
+  CHECK_EQ(got->secure_version, uint32_t{7});
+  CHECK(std::memcmp(got->app_elf_sha256, desc.app_elf_sha256, sizeof(desc.app_elf_sha256)) == 0);
+
+  // A file from before the whole descriptor was saved still loads, with the old fallbacks.
+  {
+    std::ifstream in(file);
+    std::string text, line;
+    while (std::getline(in, line)) {
+      if (line.find(".desc=") == std::string::npos) {
+        text += line + "\n";
+      }
+    }
+    in.close();
+    std::ofstream out(file, std::ios::trunc);
+    out << text;
+  }
+  Flash legacy;
+  legacy.load_or_format(file);
+  CHECK(!legacy.boot());
+  CHECK_EQ(std::string(legacy.running_desc()->version), std::string("9.9.9"));
+  CHECK_EQ(std::string(legacy.running_desc()->idf_ver), std::string("sim"));
+  fs::remove_all(dir);
 }
