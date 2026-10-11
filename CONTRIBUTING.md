@@ -181,7 +181,8 @@ over widening the global list.
 5. Open a pull request and fill in the template. Say which hardware and which
    host OS you tested on, or say explicitly that you could not test on hardware.
    That is fine, just tell us so a maintainer can.
-6. CI runs a build, static analysis, and the host tests on every PR. All three
+6. CI runs a build, static analysis, the host tests, the web tests, a fuzzing
+   pass and security scans on every PR. Build, static analysis and the tests
    should pass.
 
 Maintainers may ask for changes. Accessibility tradeoffs in particular tend to
@@ -211,6 +212,9 @@ append-only:
   [calibration_service.hpp](components/omega_calibration/include/calibration_service.hpp)
   are never renumbered or reused. Add new ones at the end.
 - Anything that reads `FW_INFO` must tolerate extra trailing fields.
+- The console finds the service by its dispatcher protocol id, `omega.calibration`
+  (`kProtocol` in `calibration_service.hpp`), not by module id. Change the id only
+  for an incompatible wire format; otherwise bump `kProtocolVersion`.
 
 ## Adding dependencies
 
@@ -236,8 +240,9 @@ every pull request:
   (`web_tests.yml`), including golden frames shared with the C++ side.
 - **Fuzzing** of the frame parser and calibration service in
   [tests/fuzz](tests/fuzz/README.md), a short libFuzzer run (`fuzz.yml`).
-- **Static analysis** with cppcheck (`static_analysis.yml`) and a binary size
-  delta comment (`size_delta.yml`).
+- **Static analysis** with cppcheck (`static_analysis.yml`), a secret scan and a
+  workflow lint (`security.yml`), and a binary size delta comment
+  (`size_delta.yml`).
 
 There is still no automated hardware test. Anything touching sensor reads, USB
 enumeration, or the calibration sweep's real-world behaviour needs manual
@@ -257,6 +262,15 @@ with `<format>` (GCC 13+, Clang 17+, MSVC 19.37+):
 cmake -S tests/host -B build-host
 cmake --build build-host
 ctest --test-dir build-host --output-on-failure
+```
+
+The console's protocol and firmware-update logic have their own Node tests
+(Node 24, no dependencies). If you edit `omega_protocol.js`, copy the file
+verbatim between the `BEGIN`/`END omega_protocol.js` markers in
+`calibration_console.html`; a test fails until the two match:
+
+```console
+node --test "tests/web/*.test.js"
 ```
 
 The control loops in `main/main.cpp` are thin adapters around
