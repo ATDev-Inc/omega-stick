@@ -406,6 +406,9 @@ struct OtaFixture {
   std::vector<uint8_t> sent;
   std::vector<uint8_t> sent2;
   std::atomic<bool> restart_ran{false};
+  // Config::output_hold edges, counted across both services as main.cpp does.
+  std::atomic<int> output_holds{0};
+  bool held() const { return output_holds.load() > 0; }
   CalibrationService service;
   CalibrationService service2; // second transport sharing the same Ota
 
@@ -438,6 +441,7 @@ struct OtaFixture {
     if (wire_restart) {
       cfg.restart = [this] { restart_ran = true; };
     }
+    cfg.output_hold = [this](bool hold) { output_holds += hold ? 1 : -1; };
     return cfg;
   }
 
@@ -792,4 +796,165 @@ TEST(service_restart_requires_callback_and_empty_payload) {
   CHECK(is(fx.request(Msg::Restart), Msg::Ok));
   std::this_thread::sleep_for(std::chrono::milliseconds(1200));
   CHECK(fx.restart_ran.load());
+}
+
+// ---- output hold (D22 rule 1) ---------------------------------------------------
+
+TEST(service_output_hold_follows_an_ota_session) {
+  OtaFixture fx("svc_hold_session");
+  CHECK(!fx.held());
+
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(64)), Msg::Ok));
+  CHECK(fx.held());
+
+  // Held through the data transfer.
+  CHECK(is(fx.request(Msg::OtaData, ota_data(0, {1, 2, 3})), Msg::Ok));
+  CHECK(fx.held());
+  CHECK(is(fx.request(Msg::OtaData, ota_data(3, {4, 5})), Msg::Ok));
+  CHECK(fx.held());
+
+  CHECK(is(fx.request(Msg::OtaAbort), Msg::Ok));
+  CHECK(!fx.held());
+}
+
+TEST(service_output_hold_is_released_when_the_session_is_torn_down) {
+  OtaFixture fx("svc_hold_teardown");
+
+  // Idle expiry.
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(64)), Msg::Ok));
+  CHECK(fx.held());
+  CHECK(fx.service.expire_stale_update(std::chrono::milliseconds(0)));
+  CHECK(!fx.held());
+
+  // A write failure.
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(64)), Msg::Ok));
+  fx.ota.fail_next_write = true;
+  CHECK(is(fx.request(Msg::OtaData, ota_data(0, {1, 2})), Msg::Error));
+  CHECK(!fx.held());
+
+  // The transport dropping.
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(64)), Msg::Ok));
+  CHECK(fx.held());
+  fx.service.abort_update();
+  CHECK(!fx.held());
+}
+
+TEST(service_output_hold_ignores_a_refused_ota_begin) {
+  OtaFixture fx("svc_hold_refused");
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(64)), Msg::Ok));
+  CHECK(fx.held());
+  // The other service's OTA_BEGIN is refused and must not release the hold
+  // the first service's session still needs.
+  CHECK(is(fx.request2(Msg::OtaBegin, u32le(64)), Msg::Error));
+  CHECK(fx.held());
+  // Nor does a non-owner's expiry or abort.
+  CHECK(!fx.service2.expire_stale_update(std::chrono::milliseconds(0)));
+  CHECK(is(fx.request2(Msg::OtaAbort), Msg::Ok));
+  CHECK(fx.held());
+}
+
+TEST(service_output_hold_is_counted_per_service) {
+  OtaFixture fx("svc_hold_counted");
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(4)), Msg::Ok));
+  CHECK(is(fx.request(Msg::OtaData, ota_data(0, {1, 2, 3, 4})), Msg::Ok));
+  CHECK(is(fx.request(Msg::OtaFinish), Msg::Ok));
+  // BEGIN and FINISH both ask for the hold; only the first edge is reported.
+  CHECK(fx.output_holds.load() == 1);
+  // While the first service waits to reboot, the second starts and abandons
+  // an upload of its own. That must not end the first service's hold.
+  CHECK(is(fx.request2(Msg::OtaBegin, u32le(64)), Msg::Ok));
+  CHECK(fx.output_holds.load() == 2);
+  CHECK(is(fx.request2(Msg::OtaAbort), Msg::Ok));
+  CHECK(fx.output_holds.load() == 1);
+  // Let the first service's deferred reboot run before the fixture goes.
+  std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+  CHECK(fx.ota.restart_called.load());
+}
+
+TEST(service_output_hold_stays_through_a_successful_finish) {
+  OtaFixture fx("svc_hold_finish_ok");
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(4)), Msg::Ok));
+  CHECK(is(fx.request(Msg::OtaData, ota_data(0, {1, 2, 3, 4})), Msg::Ok));
+  CHECK(is(fx.request(Msg::OtaFinish), Msg::Ok));
+  CHECK(!fx.ota.session_active());
+  // The session is over but the reboot is pending: still neutral.
+  CHECK(fx.held());
+  std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+  CHECK(fx.ota.restart_called.load());
+  CHECK(fx.held());
+}
+
+TEST(service_output_hold_is_released_when_finish_fails) {
+  OtaFixture fx("svc_hold_finish_fail");
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(4)), Msg::Ok));
+  CHECK(is(fx.request(Msg::OtaData, ota_data(0, {1, 2, 3, 4})), Msg::Ok));
+  CHECK(fx.held());
+  fx.ota.fail_next_finish = true;
+  CHECK(is(fx.request(Msg::OtaFinish), Msg::Error));
+  CHECK(!fx.ota.restart_called.load());
+  CHECK(!fx.held());
+}
+
+TEST(service_output_hold_is_raised_before_a_console_reboot) {
+  {
+    OtaFixture fx("svc_hold_restart", /*wire_ota=*/false, /*wire_restart=*/true);
+    CHECK(is(fx.request(Msg::Restart, {1}), Msg::Error)); // refused: no hold
+    CHECK(!fx.held());
+    CHECK(is(fx.request(Msg::Restart), Msg::Ok));
+    CHECK(fx.held());
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    CHECK(fx.restart_ran.load());
+  }
+  {
+    OtaFixture fx("svc_hold_revert");
+    CHECK(is(fx.request(Msg::Revert, {1}), Msg::Error));
+    CHECK(!fx.held());
+    CHECK(is(fx.request(Msg::Revert), Msg::Ok));
+    CHECK(fx.held());
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    CHECK(fx.ota.restart_called.load());
+  }
+  {
+    // REVERT over an abandoned upload that then cannot reboot: nothing stays held.
+    OtaFixture fx("svc_hold_revert_fail");
+    CHECK(is(fx.request(Msg::OtaBegin, u32le(64)), Msg::Ok));
+    CHECK(fx.held());
+    esp_ota_fake().other_has_image = false;
+    CHECK(is(fx.request(Msg::Revert), Msg::Error));
+    CHECK(!fx.held());
+  }
+}
+
+TEST(service_output_hold_is_raised_before_an_input_mode_switch) {
+  OtaFixture fx("svc_hold_mode", /*wire_ota=*/false);
+  // Already the active mode: no switch, no reboot, no hold.
+  CHECK(is(fx.request(Msg::SetInputMode, {0}), Msg::Ok));
+  CHECK(!fx.held());
+  CHECK(is(fx.request(Msg::SetInputMode, {1}), Msg::Ok));
+  CHECK(fx.held());
+}
+
+// A reply the transport refused never reaches the host, so the deferred
+// reboot is dropped and the output must not stay neutral for a reboot that
+// is not coming.
+TEST(service_output_hold_is_released_when_the_deferred_reboot_is_dropped) {
+  TempDir dir("svc_hold_dropped");
+  OmegaStore::Config cfg;
+  cfg.calibration_path = dir.file("omega_calibration.cfg");
+  cfg.settings_path = dir.file("omega_settings.cfg");
+  OmegaStore store(cfg);
+  bool held = false;
+  int raised = 0;
+  bool accept = false;
+  CalibrationService svc({.store = store,
+                          .send = [&](std::span<const uint8_t>) { return accept; },
+                          .restart = [] {},
+                          .output_hold =
+                              [&](bool hold) {
+                                held = hold;
+                                raised += hold ? 1 : 0;
+                              }});
+  CHECK(svc.handle_frame(static_cast<uint8_t>(Msg::Restart), {}));
+  CHECK_EQ(raised, 1); // raised for the reboot...
+  CHECK(!held);        // ...and lowered again once the reply was refused
 }

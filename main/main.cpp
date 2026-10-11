@@ -652,6 +652,15 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   // the one task that is allowed to touch the sensor.
   std::atomic<bool> recalibration_requested{false};
 
+  // D22 rule 1: raised by CalibrationService (Config::output_hold) from an
+  // accepted OTA_BEGIN, and before any console-initiated reboot; lowered when
+  // an upload ends without one. Written on the dispatcher tasks, read once per
+  // iteration by the polling loop, which then sends neutral reports. It counts
+  // holds rather than storing a flag because more than one service shares the
+  // OTA engine: each reports only its own edges, so one releasing never ends
+  // another's hold. No ordering needed, as with recalibration_requested.
+  std::atomic<int> output_holds{0};
+
   // ============================================================================
   // Final results
   // ============================================================================
@@ -774,6 +783,14 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
         .restart = []() { esp_restart(); },
         .ota = &ota,
         .diagnostics = make_diagnostics,
+        .output_hold =
+            [&output_holds](bool hold) {
+              if (hold) {
+                output_holds.fetch_add(1);
+              } else {
+                output_holds.fetch_sub(1);
+              }
+            },
         .log_level = espp::Logger::Verbosity::ERROR,
     };
     espp::CalibrationService calibration_vendor(calibration_cfg);
@@ -862,12 +879,15 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
       // The recalibration sweep itself runs inside mouse_tick (via
       // EspPorts::run_sweep), on this task, so it never races the sensor reads.
-      const bool recal = recalibration_requested.exchange(false);
+      const bool hold = output_holds.load() > 0;
+      // A recalibration requested during an update waits for the hold to end.
+      const bool recal = !hold && recalibration_requested.exchange(false);
       const auto sample = ports.read_stick();
       mouse_tick(state,
                  {.stick = sample,
                   .now = espp::omega_control::Clock::now(),
                   .recalibration_requested = recal,
+                  .output_hold = hold,
                   .settings = store.settings()},
                  ports);
       std::this_thread::sleep_for(10ms);
@@ -932,6 +952,14 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
         .restart = []() { esp_restart(); },
         .ota = &ota,
         .diagnostics = make_diagnostics,
+        .output_hold =
+            [&output_holds](bool hold) {
+              if (hold) {
+                output_holds.fetch_add(1);
+              } else {
+                output_holds.fetch_sub(1);
+              }
+            },
         .log_level = espp::Logger::Verbosity::ERROR,
     };
     espp::CalibrationService calibration_vendor(calibration_cfg);
@@ -1032,12 +1060,15 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
       // The recalibration sweep itself runs inside xac_tick (via
       // EspPorts::run_sweep), on this task, so it never races the sensor reads.
-      const bool recal = recalibration_requested.exchange(false);
+      const bool hold = output_holds.load() > 0;
+      // A recalibration requested during an update waits for the hold to end.
+      const bool recal = !hold && recalibration_requested.exchange(false);
       const auto sample = ports.read_stick();
       xac_tick(state,
                {.stick = sample,
                 .now = espp::omega_control::Clock::now(),
                 .recalibration_requested = recal,
+                .output_hold = hold,
                 .settings = store.settings()},
                ports);
       std::this_thread::sleep_for(5ms);

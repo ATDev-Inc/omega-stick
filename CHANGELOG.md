@@ -38,6 +38,37 @@ in `version.txt`.
 - **Readable firmware versions.** Every build reports `MAJOR.MINOR.PATCH`,
   plus the commit for development builds, at boot and in the console, with a
   one-line Copy button for bug reports. ([#19])
+- **Safer, clearer console updates.** Before flashing, the console reads the
+  image header and app descriptor and blocks `.elf` files, partition tables,
+  bootloaders, images for another chip or project, truncated files and files
+  over the 1920 KB slot. A confirm panel shows "Running X -> New Y" and
+  classifies it (upgrade, downgrade, same version, same build, development
+  build); downgrades and reflashing the same build stay allowed but are
+  warned. A status area walks through checking, erasing, writing, verifying,
+  restarting, reconnecting and the result, the page reconnects by itself
+  after Flash or Revert, errors are in plain language with the raw detail in
+  the log, and a `.bin` can be dragged onto the Firmware section.
+- **Neutral output during an update.** From an accepted `OTA_BEGIN` until the
+  reboot, and before every console-initiated reboot (finish, revert, restart,
+  input-mode switch), the device sends neutral reports; it resumes normal
+  output if the upload ends without a reboot. (D22 rule 1)
+- **Check for latest firmware.** The console reads the release feed, says
+  whether an update is available, links the release notes, and "Download and
+  install" verifies the image's size and SHA-256 against the feed before the
+  usual checks and confirm panel. An optional check runs once after
+  connecting, on by default.
+- **Pages site and release feed.** Publishing a full release builds a merged
+  full-flash image and publishes https://atdev-inc.github.io/omega-stick/: a
+  landing page, a copy of the console, the first-flash page, and
+  `omega_stick-X.Y.Z.bin`, `omega_stick-X.Y.Z-full.bin`, `manifest.json`,
+  `latest.json` and `SHA256SUMS`, also attached to the release. Pages is used
+  because release downloads send no CORS headers. Maintainers must set
+  Settings > Pages > Source to GitHub Actions and let the `github-pages`
+  environment deploy `v*` tags.
+- **First flash from the browser.** `flash.html` installs the full image with
+  ESP Web Tools 10.4.0. A first flash erases calibration and settings. The
+  download-mode steps are the standard ESP32-S3 procedure and are not yet
+  confirmed on the Omega Stick.
 - **Host, web and fuzz tests in CI.** Desktop unit tests that run the real
   espp code (calibration, store, console service, control loop, sensor
   driver, HID reports and descriptors, health check), Node tests for the
@@ -87,6 +118,13 @@ in `version.txt`.
   ([#16])
 - **Manual center offset kept.** A trim set from the console is no longer
   undone by idle drift correction or a recalibration. ([#16])
+
+### Documentation
+
+- **Hardware handling.** The README now warns never to plug or unplug Qwiic
+  or similar connectors while the board is powered.
+- **Update docs match the two-slot layout.** Removed the stale "factory app"
+  wording from the README.
 
 ### Known issues
 

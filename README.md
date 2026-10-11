@@ -126,16 +126,23 @@ Research documents are point-in-time snapshots and are not maintained.
 
 ## Firmware updates and versioning
 
-After a one-time serial flash (`idf.py -p PORT flash`) onto the two-slot OTA
-partition table, firmware is updated over USB from the calibration console:
-open it, connect, and upload `build/omega_stick.bin` in the "Firmware update"
-section. A new image must prove itself (USB enumerated, sensor answering, ten
+A new board is flashed once, from the browser at the
+[flash page](https://atdev-inc.github.io/omega-stick/flash.html) or with
+`idf.py -p PORT flash`. (The flash page and the hosted console go live with
+the first published release.) After that, firmware is updated over USB from the
+calibration console: open it (the copy at
+<https://atdev-inc.github.io/omega-stick/console/> works too), connect, and
+choose or drag in the app image (`build/omega_stick.bin`, or a release's
+`omega_stick-X.Y.Z.bin`) in the "Firmware update" section. The page checks the
+file, shows what is running and what will replace it, and reconnects by itself
+afterwards. A new image must prove itself (USB enumerated, sensor answering, ten
 seconds of running) before it is kept; otherwise the device reverts to the
 previous image, and the console's "Revert to previous firmware" button goes
-back on demand. Versions are `MAJOR.MINOR.PATCH` from `version.txt` (release
-builds report exactly that; other builds append `+<commit>`). Please paste the
-console's Copy line in bug reports. Moving to the OTA layout loses saved
-calibration once. Details are in
+back on demand. The device holds its output neutral while an update is in
+flight. Versions are `MAJOR.MINOR.PATCH` from `version.txt` (release builds
+report exactly that; other builds append `+<commit>`). Please paste the
+console's Copy line in bug reports. A first flash erases saved calibration and
+settings; console updates keep them. Details are in
 [docs/firmware-updates.md](docs/firmware-updates.md).
 
 ## Hardware
@@ -148,6 +155,11 @@ The firmware currently targets:
 | Sensor | TI TMAG5273 3-axis Hall-effect sensor, I2C address `0x35`, 400 kHz |
 | Bus | Qwiic / STEMMA QT I2C |
 | Host link | USB, via TinyUSB |
+
+**Never plug or unplug the Qwiic cable (or any similar connector) while the
+board is powered.** These connectors do not make power and ground first and
+break them last, which can damage the ESP32's I2C pins. Unplug USB, change the
+cable, then plug USB back in.
 
 STL files for the printed parts (joystick, magnet and sensor holders, sockets,
 topper) are in [models/](models/). The PCB, wiring, and editable CAD source are
@@ -229,8 +241,8 @@ starts USB (`Waiting for USB host...`, `HID ready: yes`). The calibration is
 saved to the `littlefs` partition and loaded on later boots
 (`Loaded existing calibration.`).
 
-If you see `ERROR: TMAG5273 initialization failed`, check the Qwiic cable and
-confirm the sensor's address strap (the firmware expects `0x35`).
+If you see `ERROR: TMAG5273 initialization failed`, check the Qwiic cable (with USB
+unplugged) and confirm the sensor's address strap (the firmware expects `0x35`).
 
 ### Calibration console and input modes
 
@@ -282,7 +294,7 @@ models/                   STL files for the printed parts (joystick, magnet and 
 docs/                     product, requirements, decisions, and research documents
 assets/logo/              brand assets
 .github/workflows/        build, packaging, size delta, static analysis, host, web and fuzz test CI
-partitions.csv            flash partition table (nvs, factory app, littlefs, coredump)
+partitions.csv            flash partition table (nvs, otadata, phy_init, two OTA app slots, littlefs, coredump)
 sdkconfig.defaults        project-wide ESP-IDF configuration defaults
 ```
 
