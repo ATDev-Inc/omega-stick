@@ -73,6 +73,7 @@ All default to OFF.
 
 | Option | Effect |
 |---|---|
+| `OMEGA_HOST_BUILD_SIM` | ON by default: also builds the desktop simulator ([sim/](../../sim/README.md)) and runs its unit tests and headless scenarios in the same ctest run. Set OFF to build only the unit tests. |
 | `OMEGA_HOST_WERROR` | `-Werror` (`/WX` on MSVC) for the tests and the espp sources. espp headers are `SYSTEM` includes, so only project code can fail the build. |
 | `OMEGA_HOST_SANITIZE` | `-fsanitize=address,undefined` on GCC and Clang (not MSVC). Run with `ASAN_OPTIONS=halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1`. Does not link with Windows clang (MSVC ABI): `stl_asan.lib` is missing; use Linux or MSVC `/fsanitize=address` separately. |
 | `OMEGA_HOST_COVERAGE` | `--coverage` on GCC and Clang. Summarise with `gcovr -r . --filter 'components/' --filter 'tests/host/' --exclude 'build.*'` after running ctest. |
