@@ -119,6 +119,9 @@ struct StepInput {
   StickSample stick;
   Clock::time_point now{};
   bool recalibration_requested{false};
+  /// D22 rule 1: a firmware update is in flight (or a reboot is pending), so
+  /// the output stays neutral. Takes priority over a recalibration request.
+  bool output_hold{false};
   DeviceSettings settings;
 };
 
@@ -390,6 +393,22 @@ inline FaultEdge sensor_fault_update(CommonState &common, const StepInput &in, P
 } // namespace detail
 
 inline void mouse_tick(MouseState &s, const StepInput &in, Ports &ports) {
+  if (in.output_hold) {
+    // Neutral report every tick while a firmware update runs, with the same
+    // bookkeeping reset as a sensor recovery so releasing the hold does not
+    // see a delta against a reading from before it. The sensor monitor keeps
+    // running; a pending recalibration waits (the caller only consumes it
+    // when not holding).
+    detail::sensor_fault_update(s.common, in, ports);
+    s.nudge = NudgeDirection::NONE;
+    s.scroll_poll_count = 0;
+    s.window_start = in.now;
+    s.prev_x = in.stick.x;
+    s.prev_y = in.stick.y;
+    s.initialised = true;
+    ports.send_mouse(MouseReport{});
+    return;
+  }
   // While the sensor is faulted the stick is reported centered: neutral
   // report, no nudge detection, no drift correction. A pending recalibration
   // still runs (it reads the sensor itself and reports its own failure).
@@ -433,6 +452,12 @@ inline void mouse_tick(MouseState &s, const StepInput &in, Ports &ports) {
 }
 
 inline void xac_tick(XacState &s, const StepInput &in, Ports &ports) {
+  if (in.output_hold) {
+    // See mouse_tick: neutral report every tick while a firmware update runs.
+    detail::sensor_fault_update(s.common, in, ports);
+    ports.send_xac(XacReport{});
+    return;
+  }
   // See mouse_tick: a faulted sensor reports a centered stick.
   const auto fault = detail::sensor_fault_update(s.common, in, ports);
   if (fault.faulted && !in.recalibration_requested) {

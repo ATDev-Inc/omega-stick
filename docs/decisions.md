@@ -384,6 +384,16 @@ sibling projects; see
    accepts a new image, the output must be neutral and must stay neutral until
    the reboot: the host is talking to the console, not playing. A user driving
    a pointer must never have the device vanish mid-motion.
+   *Implemented.* `CalibrationService` raises `Config::output_hold` from an
+   accepted `OTA_BEGIN`, and also before `OTA_FINISH`, `REVERT`, `RESTART` and
+   an input-mode switch defer their reboot. It lowers the hold when an upload
+   ends without one (`OTA_ABORT`, the 30 s idle expiry, a failed write or
+   finish, a lost transport) and when the reply that was to precede the reboot
+   was not queued. Each service reports only its own edges, and `main.cpp`
+   counts them in an atomic, so two services sharing the OTA engine never
+   release each other's hold. The polling loop passes "count above zero" to `mouse_tick` / `xac_tick` as `output_hold`, which
+   send a neutral report on every tick while it is set (stick centered, no
+   motion, buttons released) and pause recalibration.
 2. **A new image confirms itself only after a self-test.** It must enumerate on
    USB, the sensor must answer, and the loop must have run for a dwell time.
    Otherwise it rolls back. `feat/ota-rollback` implements this as

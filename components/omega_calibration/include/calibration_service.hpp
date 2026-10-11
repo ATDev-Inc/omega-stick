@@ -351,6 +351,18 @@ public:
     /// control loop (copy out atomics or a snapshot; see main.cpp). When
     /// left unset, GET_DIAGNOSTICS replies with ERROR (function_not_supported).
     diagnostics_fn diagnostics{nullptr};
+    /// Optional: asks the device to hold its HID output neutral (D22 rule 1).
+    /// Called with true from an accepted OTA_BEGIN, and when a reply defers a
+    /// reboot (OTA_FINISH, REVERT, RESTART, SET_INPUT_MODE), so the device
+    /// never vanishes mid-motion. Called with false when an upload ends
+    /// without a reboot (OTA_ABORT, idle expiry, a failed write or finish,
+    /// abort_update()) and when a deferred reboot is dropped because its
+    /// reply was not queued. Only changes are reported, once per edge, so
+    /// several services can share one counter. Runs under this service's
+    /// internal mutex, so it must return almost immediately: update an atomic
+    /// the control loop polls (see main.cpp's `output_holds`). When left unset
+    /// nothing is held.
+    std::function<void(bool hold)> output_hold{nullptr};
     espp::Logger::Verbosity log_level{espp::Logger::Verbosity::WARN}; ///< Logger verbosity.
   };
 
@@ -366,6 +378,7 @@ public:
       , module_(config.module)
       , start_calibration_(config.start_calibration)
       , diagnostics_(config.diagnostics)
+      , output_hold_(config.output_hold)
       , restart_(config.restart)
       , ota_(config.ota) {}
 
@@ -446,7 +459,8 @@ public:
   }
 
   /// True while a firmware upload (by any service sharing the engine) is in
-  /// flight (use it to pause joystick report generation if you want).
+  /// flight. The device holds its output neutral for the session through
+  /// Config::output_hold.
   bool update_in_progress() const { return ota_ && ota_->session_active(); }
 
   /// Abort an upload this service began (call on transport loss / RX overflow).
@@ -456,6 +470,7 @@ public:
       std::error_code ec;
       ota_->abort(ec);
       ota_owner_ = false;
+      hold_output(false);
     }
   }
 
@@ -480,6 +495,7 @@ public:
     }
     if (!ota_->session_active()) {
       ota_owner_ = false; // session already ended elsewhere
+      hold_output(false);
       return false;
     }
     if (std::chrono::steady_clock::now() - ota_last_activity_ < max_idle) {
@@ -489,6 +505,7 @@ public:
     std::error_code ec;
     ota_->abort(ec);
     ota_owner_ = false;
+    hold_output(false);
     return true;
   }
 
@@ -566,6 +583,7 @@ protected:
         reply = build_error(std::errc::invalid_argument, "OTA_BEGIN needs u32 image size");
         return true;
       }
+      bool took_over = false;
       if (ota_owner_ && ota_->session_active()) {
         // The host on this link restarted its upload (it can only have one
         // transaction at a time), so the earlier session is stale: take over.
@@ -573,13 +591,18 @@ protected:
         std::error_code abort_ec;
         ota_->abort(abort_ec);
         ota_owner_ = false;
+        took_over = true;
       }
       std::error_code ec;
       if (!ota_->begin(stream::get_u32(payload), ec)) {
+        if (took_over) {
+          hold_output(false); // the stale session is gone and no new one began
+        }
         reply = build_error(ec, "OTA_BEGIN failed");
         return true;
       }
       ota_owner_ = true;
+      hold_output(true);
       ota_last_activity_ = std::chrono::steady_clock::now();
       logger_.info("OTA_BEGIN {} bytes", stream::get_u32(payload));
       reply = build_ok();
@@ -601,6 +624,7 @@ protected:
       std::error_code ec;
       if (!ota_->write(payload.subspan(4), ec)) {
         ota_owner_ = false; // write() already aborted the session
+        hold_output(false);
         reply = build_error(ec, "OTA_DATA write failed");
         return true;
       }
@@ -617,10 +641,12 @@ protected:
       const bool ok = ota_->finish(ec);
       ota_owner_ = false;
       if (!ok) {
+        hold_output(false);
         reply = build_error(ec, "OTA_FINISH (validate/activate) failed");
         return true;
       }
       logger_.info("OTA_FINISH ok; rebooting shortly");
+      hold_output(true); // stays held until the reboot
       after_reply_ = [o = ota_] { reboot_after_flush([o] { o->restart(); }); };
       reply = build_ok();
       return true;
@@ -630,6 +656,7 @@ protected:
         std::error_code ec;
         ota_->abort(ec);
         ota_owner_ = false;
+        hold_output(false);
       }
       reply = build_ok();
       return true;
@@ -696,6 +723,7 @@ protected:
         std::error_code abort_ec;
         ota_->abort(abort_ec);
         ota_owner_ = false;
+        hold_output(false); // released unless REVERT goes on to reboot, below
       }
       if (ota_->session_active()) {
         reply = build_error(std::errc::operation_in_progress,
@@ -718,6 +746,7 @@ protected:
         return true;
       }
       logger_.info("REVERT to {} ({}); rebooting shortly", other->label, od.version);
+      hold_output(true);
       after_reply_ = [o = ota_] { reboot_after_flush([o] { o->restart(); }); };
       reply = build_ok();
       return true;
@@ -744,6 +773,7 @@ protected:
         reply = build_error(std::errc::function_not_supported, "RESTART not wired on this build");
         return true;
       }
+      hold_output(true);
       after_reply_ = [r = restart_] { reboot_after_flush(r); };
       reply = build_ok();
       return true;
@@ -830,6 +860,7 @@ protected:
       }
       // Applied by run_after_reply() once the OK has been queued:
       // on_mode_changed may restart the device, which would drop the reply.
+      hold_output(true);
       after_reply_ = [this, mode] { store_.set_input_mode(mode); };
       logger_.info("SET_INPUT_MODE {}", mode_name);
       reply = build_ok(1); // 1: switching, the device restarts after this reply
@@ -1010,6 +1041,19 @@ protected:
     return true;
   }
 
+  /// Forwards changes of this service's hold to Config::output_hold, when one
+  /// is wired. Only edges are forwarded, so services sharing one counter (see
+  /// main.cpp) can never release each other's hold.
+  void hold_output(bool hold) {
+    if (hold == holding_) {
+      return;
+    }
+    holding_ = hold;
+    if (output_hold_) {
+      output_hold_(hold);
+    }
+  }
+
   /// Reboots from a short-lived thread after REPLY_FLUSH_DELAY, so the reply
   /// that was just queued reaches the wire first. Only ever scheduled through
   /// after_reply_, so it never runs for a reply the transport refused.
@@ -1069,6 +1113,7 @@ private:
       return;
     if (!queued) {
       logger_.error("reply was not queued; the deferred action is dropped");
+      hold_output(false); // no reboot is coming after all
       return;
     }
     action();
@@ -1079,11 +1124,13 @@ private:
   const uint8_t module_; // Config::module: routing id for requests + replies
   std::function<bool(std::error_code &ec)> start_calibration_; // Config::start_calibration
   diagnostics_fn diagnostics_;                                 // Config::diagnostics
+  std::function<void(bool)> output_hold_;                      // Config::output_hold
   std::function<void()> restart_;                              // Config::restart
   espp::Ota *ota_;                                             // Config::ota (not owned)
   bool ota_owner_{
       false}; // true while an upload begun by this service is active (guarded by mutex_)
   std::chrono::steady_clock::time_point ota_last_activity_{}; // last OTA_BEGIN/OTA_DATA success
+  bool holding_{false}; // this service's output hold, as last forwarded (guarded by mutex_)
 
   /// The otadata state of an app slot as the FW_INFO "previous state" string.
   static const char *ota_state_name(esp_ota_img_states_t state) {

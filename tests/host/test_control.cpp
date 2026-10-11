@@ -658,3 +658,73 @@ TEST(control_recalibration_still_runs_while_the_sensor_is_faulted) {
   oc::mouse_tick(s, recal, ports);
   CHECK(ports.calls == RECAL_SEQUENCE_MOUSE);
 }
+
+// ---- output hold (D22 rule 1: neutral during a firmware update) --------------
+
+namespace {
+
+oc::StepInput held(oc::StepInput in) {
+  in.output_hold = true;
+  return in;
+}
+
+} // namespace
+
+TEST(control_mouse_output_hold_sends_neutral_and_releases_a_held_nudge) {
+  FakePorts ports;
+  oc::MouseState s = fresh_mouse();
+  oc::mouse_tick(s, input(0.9f, 0.0f, 100), ports);
+  CHECK(s.nudge == NudgeDirection::RIGHT);
+  CHECK_EQ(ports.mouse.back().buttons, 0x02);
+
+  // The very first held tick already reports neutral, and so does every later
+  // one, however far the stick is pushed.
+  for (int ms = 110; ms <= 200; ms += 10) {
+    oc::mouse_tick(s, held(input(0.9f, 0.0f, ms)), ports);
+    CHECK(s.nudge == NudgeDirection::NONE);
+    CHECK_EQ(ports.mouse.back().buttons, 0);
+    CHECK_EQ(ports.mouse.back().dx, 0);
+    CHECK_EQ(ports.mouse.back().dy, 0);
+    CHECK_EQ(ports.mouse.back().wheel, 0);
+  }
+  CHECK_EQ(ports.count("run_sweep"), 0);
+  CHECK_EQ(ports.count("apply_drift"), 0);
+}
+
+TEST(control_mouse_output_hold_pre_empts_a_recalibration_request) {
+  FakePorts ports;
+  oc::MouseState s = fresh_mouse();
+  oc::mouse_tick(s, held(input(0.0f, 0.0f, 10, /*recal=*/true)), ports);
+  CHECK_EQ(ports.count("run_sweep"), 0);
+  CHECK_EQ(ports.calls.size(), size_t{1});
+  CHECK_EQ(ports.mouse.back().buttons, 0);
+}
+
+TEST(control_mouse_output_hold_release_resumes_without_a_bogus_nudge) {
+  FakePorts ports;
+  oc::MouseState s = fresh_mouse();
+  // The stick is pushed over while held; the first free tick must move the
+  // cursor rather than see a jump from the pre-hold reading as a nudge.
+  oc::mouse_tick(s, held(input(0.4f, 0.0f, 50)), ports);
+  oc::mouse_tick(s, input(0.4f, 0.0f, 60), ports);
+  CHECK(s.nudge == NudgeDirection::NONE);
+  CHECK_EQ(ports.mouse.back().dx, expected_delta(0.4f));
+}
+
+TEST(control_xac_output_hold_centers_the_gamepad_until_released) {
+  FakePorts ports;
+  oc::XacState s;
+  oc::xac_tick(s, input(0.7f, -0.5f, 0), ports);
+  CHECK_EQ(ports.xac.back().x, 0.7f);
+
+  oc::xac_tick(s, held(input(0.7f, -0.5f, 5)), ports);
+  CHECK_EQ(ports.xac.back().x, 0.0f);
+  CHECK_EQ(ports.xac.back().y, 0.0f);
+  oc::xac_tick(s, held(input(0.7f, -0.5f, 10, /*recal=*/true)), ports);
+  CHECK_EQ(ports.xac.back().x, 0.0f);
+  CHECK_EQ(ports.count("run_sweep"), 0);
+
+  oc::xac_tick(s, input(0.7f, -0.5f, 15), ports);
+  CHECK_EQ(ports.xac.back().x, 0.7f);
+  CHECK_EQ(ports.xac.back().y, -0.5f);
+}
