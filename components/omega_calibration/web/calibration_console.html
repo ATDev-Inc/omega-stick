@@ -42,7 +42,10 @@
       0x53 SET_NUDGE_SETTINGS     f32 nudge_enter_threshold (delta),
                                    f32 nudge_exit_threshold (absolute),
                                    u32 nudge_time_ms (measurement window)
-      0x54 SET_INPUT_MODE         u8 mode (0 = mouse, 1 = XAC)
+      0x54 SET_INPUT_MODE         u8 mode (0 = mouse, 1 = XAC). The OK's u32 is
+                                   1 when the device is switching (it saves and
+                                   restarts right after the reply) and 0 when
+                                   that mode was already active.
       0x55 SAVE_TO_FLASH          (no payload) -- persists the CURRENT live
                                    center/range calibration (including
                                    manual offset and any drift-compensator
@@ -817,7 +820,7 @@
     const VENDOR_CLASS = 0xFF;
     const {
       MAX_FRAME, MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, TYPE, INPUT_MODE,
-      buildFrame, FrameParser, parseErrorReply, parseDiscovery, decodeState, decodeDiagnostics,
+      buildFrame, FrameParser, readU32, parseErrorReply, parseDiscovery, decodeState, decodeDiagnostics,
       encodeSetManualOffset, encodeSetDeadzoneOverride, encodeSetNudgeSettings, encodeSetInputMode,
     } = globalThis.OmegaProtocol;
     const DISCOVERY_TIMEOUT_MS = 800;
@@ -1111,6 +1114,7 @@
     function onTransportGone(t) {
       if (transport !== t) return;
       transport = null;
+      state = null; haveState = false;
       failPending(new Error("transport lost"));
       Promise.resolve(t.close()).catch(() => {});
       parser.reset();
@@ -1144,6 +1148,8 @@
       transport = t;
       parser.reset();
       consoleCarry = "";
+      // Whatever was known about the last device is stale now.
+      state = null; haveState = false;
       updateUI();
       setStatus("connected", "Connected");
       els.devInfo.textContent = "Connected: " + t.name;
@@ -1497,18 +1503,21 @@
     async function setInputMode(mode) {
       if (!transport || busy) return;
       const modeName = mode === INPUT_MODE.XAC ? "XAC gamepad" : "mouse";
-      if (haveState && state && state.inputMode === mode) {
-        logLine("sys", "Already in " + modeName + " mode; nothing to change.");
-        return;
-      }
       busy = true; updateUI(); setStatus("busy", "Switching mode...");
       let restarting = false;
       try {
-        await transact(TYPE.SET_INPUT_MODE, encodeSetInputMode(mode), [TYPE.OK], CMD_TIMEOUT_MS, 1);
-        // The device saves and restarts right after that OK, so there is no
-        // state to read back: the link is about to drop.
-        restarting = true;
-        logLine("sys", "Switched to " + modeName + " mode. The device is saving and restarting; reconnect in a few seconds.");
+        const reply = await transact(TYPE.SET_INPUT_MODE, encodeSetInputMode(mode), [TYPE.OK], CMD_TIMEOUT_MS, 1);
+        // The device, not this page's cached state, says what happened: the
+        // OK's u32 is 1 when it is switching (and about to save and restart,
+        // so there is no state to read back) and 0 when that mode was already
+        // active. Older firmware sends no value; treat that as a switch.
+        restarting = reply.payload.length < 4 || readU32(reply.payload, 0) === 1;
+        if (restarting) {
+          logLine("sys", "Switched to " + modeName + " mode. The device is saving and restarting; reconnect in a few seconds.");
+        } else {
+          logLine("sys", "Already in " + modeName + " mode; nothing changed.");
+          if (state) { state.inputMode = mode; renderState(state); }
+        }
       } catch (e) {
         logLine("err", "SET_INPUT_MODE failed: " + e.message);
       } finally {

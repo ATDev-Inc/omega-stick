@@ -20,7 +20,7 @@
     {"name": "SET_DEADZONE_OVERRIDE_BOTH", "module": 5, "type": 223, "frame_hex": "544f1105df0400000000000000b9631542", "fields": {"value": 0}},
     {"name": "SET_DEADZONE_OVERRIDE_RANGE_ONLY", "module": 5, "type": 223, "frame_hex": "544f1105df0400000000000000b9631542", "fields": {"value": 0}},
     {"name": "SET_NUDGE_SETTINGS", "module": 5, "type": 223, "frame_hex": "544f1105df0400000000000000b9631542", "fields": {"value": 0}},
-    {"name": "SET_INPUT_MODE_MOUSE", "module": 5, "type": 223, "frame_hex": "544f1105df0400000000000000b9631542", "fields": {"value": 0}},
+    {"name": "SET_INPUT_MODE_MOUSE", "module": 5, "type": 223, "frame_hex": "544f1105df0400000001000000dc04a9fa", "fields": {"value": 1}},
     {"name": "GET_STATE_AFTER", "module": 5, "type": 208, "frame_hex": "544f1105d04f00000000004841000050c00000403fcdcc4c3d0000403f0000a0bf000020c200001842000024c200001e420000144200001042ec51783f0ad7a33c0000000000018fc2753d3333b33e6666263f9600000000cc305636", "fields": {"centerX": 12.5, "centerY": -3.25, "centerNoise": 0.75, "centerDeadzoneAuto": 0.05, "manualOffsetX": 0.75, "manualOffsetY": -1.25, "rangeMinX": -40, "rangeMaxX": 38, "rangeMinY": -41, "rangeMaxY": 39.5, "usableRadius": 37, "reliableMaxRadius": 36, "normalizedMaxRadius": 0.97, "rangeDeadzoneAuto": 0.02, "manualCenterDeadzone": null, "manualRangeDeadzone": 0.06, "nudgeEnterThreshold": 0.35, "nudgeExitThreshold": 0.65, "nudgeTimeMs": 150, "inputMode": 0}},
     {"name": "SAVE_TO_FLASH", "module": 5, "type": 223, "frame_hex": "544f1105df0400000000000000b9631542", "fields": {"value": 0}},
     {"name": "START_CALIBRATION", "module": 5, "type": 223, "frame_hex": "544f1105df0400000000000000b9631542", "fields": {"value": 0}},

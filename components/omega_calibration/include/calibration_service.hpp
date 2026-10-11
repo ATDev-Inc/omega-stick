@@ -32,7 +32,10 @@
 //                                 f32 nudge_exit_threshold (absolute),
 //                                 u32 nudge_time_ms (measurement window).
 //                                 Reply: OK / ERROR.
-//   0x54 SET_INPUT_MODE         - payload: u8 mode (0 = mouse, 1 = XAC).
+//   0x54 SET_INPUT_MODE         - payload: u8 mode (0 = mouse, 1 = XAC). The OK's
+//                                 u32 is 1 when the device is switching (it
+//                                 saves and restarts right after the reply)
+//                                 and 0 when that mode was already active.
 //                                 Reply: OK / ERROR. The mode is applied
 //                                 only after the OK has been sent, since
 //                                 the application may restart to apply it.
@@ -272,6 +275,10 @@ public:
   /// Config::module to serve on a different id.
   static constexpr uint8_t kModule = 5;
 
+  /// How long a queued reply is given to reach the wire before a reboot the
+  /// same request asked for (RESTART, REVERT, OTA_FINISH).
+  static constexpr std::chrono::milliseconds REPLY_FLUSH_DELAY{750};
+
   /// Wire size of the STATE payload (see the header comment for the exact
   /// field layout).
   static constexpr size_t kStatePayloadSize = 79;
@@ -406,15 +413,7 @@ public:
     for (const auto &frame : frames) {
       if (frame.module != module_id() || frame.is_reply())
         continue;
-      std::vector<uint8_t> reply;
-      {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!handle_frame_locked(frame.type, frame.payload, reply))
-          continue;
-      }
-      // send outside the lock so a re-entrant transport cannot deadlock
-      const bool delivered = reply.empty() || send(reply);
-      run_after_reply(delivered);
+      handle_frame(frame.type, frame.payload);
     }
   }
 
@@ -433,8 +432,9 @@ public:
       std::lock_guard<std::mutex> lock(mutex_);
       handled = handle_frame_locked(type, payload, reply);
     }
-    const bool delivered = reply.empty() || send(reply);
-    run_after_reply(delivered);
+    // Send outside the lock so a re-entrant transport cannot deadlock. A
+    // handler's deferred action runs only once its reply is queued.
+    run_after_reply(send(reply));
     return handled;
   }
 
@@ -530,7 +530,7 @@ public:
       payload.insert(payload.end(), message.begin(), message.begin() + count);
     }
     logger_.info("notify_calibration_result success={}", success);
-    send(build(Msg::CalibrationResult, payload, module_id()));
+    send(build(Msg::CalibrationResult, payload, module_id()), /*unsolicited=*/true);
   }
 
 protected:
@@ -621,12 +621,7 @@ protected:
         return true;
       }
       logger_.info("OTA_FINISH ok; rebooting shortly");
-      // The reply is sent after this returns, so reboot from a short-lived
-      // thread to let it flush first.
-      std::thread([o = ota_] {
-        std::this_thread::sleep_for(std::chrono::milliseconds(750));
-        o->restart();
-      }).detach();
+      after_reply_ = [o = ota_] { reboot_after_flush([o] { o->restart(); }); };
       reply = build_ok();
       return true;
     }
@@ -723,10 +718,7 @@ protected:
         return true;
       }
       logger_.info("REVERT to {} ({}); rebooting shortly", other->label, od.version);
-      std::thread([o = ota_] {
-        std::this_thread::sleep_for(std::chrono::milliseconds(750));
-        o->restart();
-      }).detach();
+      after_reply_ = [o = ota_] { reboot_after_flush([o] { o->restart(); }); };
       reply = build_ok();
       return true;
     }
@@ -752,10 +744,7 @@ protected:
         reply = build_error(std::errc::function_not_supported, "RESTART not wired on this build");
         return true;
       }
-      std::thread([r = restart_] {
-        std::this_thread::sleep_for(std::chrono::milliseconds(750));
-        r();
-      }).detach();
+      after_reply_ = [r = restart_] { reboot_after_flush(r); };
       reply = build_ok();
       return true;
     }
@@ -832,17 +821,18 @@ protected:
       }
       const auto mode = static_cast<InputMode>(payload[0]);
       const char *mode_name = mode == InputMode::XAC ? "XAC" : "MOUSE";
-      if (store_.snapshot().settings.input_mode == mode) {
-        // Nothing to save and no restart; say so rather than log a switch.
+      if (store_.settings().input_mode == mode) {
+        // Nothing to save and no restart. The OK's value (0) tells the host
+        // so, since the host's own idea of the mode may be stale.
         logger_.info("SET_INPUT_MODE {}: already active", mode_name);
-        reply = build_ok();
+        reply = build_ok(0);
         return true;
       }
-      // Applied by run_after_reply() once the OK has actually gone out:
+      // Applied by run_after_reply() once the OK has been queued:
       // on_mode_changed may restart the device, which would drop the reply.
       after_reply_ = [this, mode] { store_.set_input_mode(mode); };
       logger_.info("SET_INPUT_MODE {}", mode_name);
-      reply = build_ok();
+      reply = build_ok(1); // 1: switching, the device restarts after this reply
       return true;
     }
     case Msg::SaveToFlash: {
@@ -994,21 +984,40 @@ protected:
     return build(Msg::Ok, payload, module_id());
   }
 
-  /// Transmit an encoded reply frame via the configured send function. Must
-  /// be called WITHOUT the internal mutex held. Returns false when the frame
-  /// was not queued (no send function, or the transport refused it).
-  bool send(const std::vector<uint8_t> &frame) {
+  /// Hand an encoded frame to the configured send function. Must be called
+  /// WITHOUT the internal mutex held. Returns true once the transport has
+  /// QUEUED the frame (no send function, or a refusal, gives false). Queued
+  /// is not received: REPLY_FLUSH_DELAY is what stands between the queue
+  /// and the wire before a reboot. `unsolicited` frames (notifications on
+  /// a link no host may have open) are logged at warn, not error.
+  bool send(const std::vector<uint8_t> &frame, bool unsolicited = false) {
     if (frame.empty())
       return true;
     if (!send_) {
-      logger_.warn("no send function configured; dropping a {}-byte reply", frame.size());
+      logger_.warn("no send function configured; dropping a {}-byte frame", frame.size());
       return false;
     }
     if (!send_(frame)) {
-      logger_.error("transport refused a {}-byte reply; the host will see a timeout", frame.size());
+      if (unsolicited) {
+        logger_.warn("transport refused a {}-byte notification (no host on this link?)",
+                     frame.size());
+      } else {
+        logger_.error("transport refused a {}-byte reply; the host will see a timeout",
+                      frame.size());
+      }
       return false;
     }
     return true;
+  }
+
+  /// Reboots from a short-lived thread after REPLY_FLUSH_DELAY, so the reply
+  /// that was just queued reaches the wire first. Only ever scheduled through
+  /// after_reply_, so it never runs for a reply the transport refused.
+  static void reboot_after_flush(std::function<void()> reboot) {
+    std::thread([reboot = std::move(reboot)] {
+      std::this_thread::sleep_for(REPLY_FLUSH_DELAY);
+      reboot();
+    }).detach();
   }
 
   /// Build an ERROR reply frame (u32 code + UTF-8 context message).
@@ -1044,12 +1053,13 @@ protected:
   }
 
 private:
-  /// Runs the action a handler deferred until after its reply (today only
-  /// SET_INPUT_MODE's store update, whose callback may restart the device).
-  /// Called outside mutex_. When the reply was not delivered the action is
-  /// dropped with a log line: the host never saw the OK, so the device must
-  /// not behave as if it had. The host times out and can retry.
-  void run_after_reply(bool delivered) {
+  /// Runs the action a handler deferred until after its reply: the mode
+  /// switch (whose callback restarts the device) and the RESTART, REVERT
+  /// and OTA_FINISH reboots. Called outside mutex_. When the reply was not
+  /// queued the action is dropped with a log line: the host will not see
+  /// the OK, so the device must not behave as if it had. The host times out
+  /// and can retry.
+  void run_after_reply(bool queued) {
     std::function<void()> action;
     {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -1057,8 +1067,8 @@ private:
     }
     if (!action)
       return;
-    if (!delivered) {
-      logger_.error("reply was not delivered; the deferred action is dropped");
+    if (!queued) {
+      logger_.error("reply was not queued; the deferred action is dropped");
       return;
     }
     action();
