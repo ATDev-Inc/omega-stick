@@ -650,7 +650,11 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   // concerned (the OK reply for START_CALIBRATION returns immediately,
   // before the sequence has even started), it just does the actual work on
   // the one task that is allowed to touch the sensor.
-  std::atomic<bool> recalibration_requested{false};
+  //
+  // The flag is an omega_control::RecalibrationGate: it stays busy until the
+  // loop calls finish() after the sweep, so a second RECALIBRATE that arrives
+  // mid-sweep is refused rather than queued.
+  espp::omega_control::RecalibrationGate recalibration_gate;
 
   // ============================================================================
   // Final results
@@ -763,13 +767,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
         .store = store,
         .send = send_vendor,
         .start_calibration =
-            [&recalibration_requested](std::error_code &start_ec) {
-              bool expected = false;
-              if (!recalibration_requested.compare_exchange_strong(expected, true)) {
-                start_ec = std::make_error_code(std::errc::device_or_resource_busy);
-                return false;
-              }
-              return true;
+            [&recalibration_gate](std::error_code &start_ec) {
+              return recalibration_gate.request(start_ec);
             },
         .restart = []() { esp_restart(); },
         .ota = &ota,
@@ -862,7 +861,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
       // The recalibration sweep itself runs inside mouse_tick (via
       // EspPorts::run_sweep), on this task, so it never races the sensor reads.
-      const bool recal = recalibration_requested.exchange(false);
+      const bool recal = recalibration_gate.take();
       const auto sample = ports.read_stick();
       mouse_tick(state,
                  {.stick = sample,
@@ -870,6 +869,9 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
                   .recalibration_requested = recal,
                   .settings = store.settings()},
                  ports);
+      if (recal) {
+        recalibration_gate.finish(); // the sweep ran inside the tick; accept new requests
+      }
       std::this_thread::sleep_for(10ms);
     }
   } else {
@@ -921,13 +923,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
         .store = store,
         .send = send_vendor,
         .start_calibration =
-            [&recalibration_requested](std::error_code &start_ec) {
-              bool expected = false;
-              if (!recalibration_requested.compare_exchange_strong(expected, true)) {
-                start_ec = std::make_error_code(std::errc::device_or_resource_busy);
-                return false;
-              }
-              return true;
+            [&recalibration_gate](std::error_code &start_ec) {
+              return recalibration_gate.request(start_ec);
             },
         .restart = []() { esp_restart(); },
         .ota = &ota,
@@ -1032,7 +1029,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
       // The recalibration sweep itself runs inside xac_tick (via
       // EspPorts::run_sweep), on this task, so it never races the sensor reads.
-      const bool recal = recalibration_requested.exchange(false);
+      const bool recal = recalibration_gate.take();
       const auto sample = ports.read_stick();
       xac_tick(state,
                {.stick = sample,
@@ -1040,6 +1037,9 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
                 .recalibration_requested = recal,
                 .settings = store.settings()},
                ports);
+      if (recal) {
+        recalibration_gate.finish(); // the sweep ran inside the tick; accept new requests
+      }
       std::this_thread::sleep_for(5ms);
     }
   }

@@ -9,10 +9,12 @@
 // Time is always injected (StepInput::now), so tests drive the nudge window
 // and drift dwell without sleeping.
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <optional>
+#include <system_error>
 
 #include "omega_calibration.hpp"
 
@@ -460,5 +462,44 @@ inline void xac_tick(XacState &s, const StepInput &in, Ports &ports) {
     ports.save_to_flash();
   }
 }
+
+// ============================================================================
+// Recalibration hand-off
+// ============================================================================
+
+/// Cross-task hand-off for "recalibrate now". The calibration service calls
+/// request() from the USB task; the polling loop calls take() once per
+/// iteration, runs the sweep inside the tick if it returned true, and calls
+/// finish() after the tick returns.
+///
+/// The gate stays busy from the moment a request is accepted until finish(),
+/// so a second request that arrives while the sweep is running is refused
+/// (device_or_resource_busy) instead of queueing another full sweep behind it.
+class RecalibrationGate {
+public:
+  /// Accepts a request if none is pending or running. Otherwise sets ec to
+  /// device_or_resource_busy and returns false.
+  bool request(std::error_code &ec) {
+    State expected = State::Idle;
+    if (!state_.compare_exchange_strong(expected, State::Requested)) {
+      ec = std::make_error_code(std::errc::device_or_resource_busy);
+      return false;
+    }
+    return true;
+  }
+
+  /// True exactly once per accepted request: moves it to running.
+  bool take() {
+    State expected = State::Requested;
+    return state_.compare_exchange_strong(expected, State::Running);
+  }
+
+  /// Marks the sweep done (or abandoned) so a new request is accepted.
+  void finish() { state_.store(State::Idle); }
+
+private:
+  enum class State : uint8_t { Idle, Requested, Running };
+  std::atomic<State> state_{State::Idle};
+};
 
 } // namespace espp::omega_control

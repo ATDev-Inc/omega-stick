@@ -658,3 +658,29 @@ TEST(control_recalibration_still_runs_while_the_sensor_is_faulted) {
   oc::mouse_tick(s, recal, ports);
   CHECK(ports.calls == RECAL_SEQUENCE_MOUSE);
 }
+
+TEST(recalibration_gate_refuses_a_second_request_until_the_sweep_finishes) {
+  oc::RecalibrationGate gate;
+  std::error_code ec;
+  CHECK(!gate.take()); // nothing requested yet
+  CHECK(gate.request(ec));
+  CHECK(!ec);
+
+  // Pending, not yet taken: refused.
+  CHECK(!gate.request(ec));
+  CHECK(ec == std::errc::device_or_resource_busy);
+
+  // The loop takes it once; the sweep is now running and still busy.
+  CHECK(gate.take());
+  CHECK(!gate.take());
+  ec.clear();
+  CHECK(!gate.request(ec));
+  CHECK(ec == std::errc::device_or_resource_busy);
+  CHECK(!gate.take()); // the refused request did not queue a second sweep
+
+  gate.finish();
+  ec.clear();
+  CHECK(gate.request(ec));
+  CHECK(!ec);
+  CHECK(gate.take());
+}

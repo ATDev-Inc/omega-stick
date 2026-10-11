@@ -1114,7 +1114,7 @@
     function onTransportGone(t) {
       if (transport !== t) return;
       transport = null;
-      state = null; haveState = false;
+      state = null; haveState = false; recalPending = false;
       failPending(new Error("transport lost"));
       Promise.resolve(t.close()).catch(() => {});
       parser.reset();
@@ -1149,7 +1149,7 @@
       parser.reset();
       consoleCarry = "";
       // Whatever was known about the last device is stale now.
-      state = null; haveState = false;
+      state = null; haveState = false; recalPending = false;
       updateUI();
       setStatus("connected", "Connected");
       els.devInfo.textContent = "Connected: " + t.name;
@@ -1184,7 +1184,7 @@
       els.applyNudgeBtn.disabled = !connected || busy || !haveState;
       els.modeMouseBtn.disabled = !connected || busy || !haveState;
       els.modeXacBtn.disabled = !connected || busy || !haveState;
-      els.recalibrateBtn.disabled = !connected || busy;
+      els.recalibrateBtn.disabled = !connected || busy || recalPending;
       els.diagRefreshBtn.disabled = !connected || busy;
       els.flashBtn.disabled = !connected || busy;
       els.restartBtn.disabled = !connected || busy;
@@ -1201,6 +1201,10 @@
     let pendingTxn = null;
     let txnChain = Promise.resolve();
     let busy = false;
+    // A recalibration the device accepted and has not reported on yet. The
+    // device refuses a second request while the sweep runs, so keep the
+    // button off until CALIBRATION_RESULT arrives (or the link drops).
+    let recalPending = false;
     let uploading = false; // an OTA session is open on the device (set after OTA_BEGIN OK)
 
     function failPending(err) {
@@ -1222,6 +1226,8 @@
       if (els.logFrames.checked)
         logLine("rx", (TYPE_NAME[frame.type] || ("0x" + frame.type.toString(16))) + " " + hex(frame.payload));
       if (frame.module === MODULE_CALIBRATION && frame.reply && frame.type === TYPE.CALIBRATION_RESULT) {
+        recalPending = false;
+        updateUI();
         const success = frame.payload.length >= 1 && frame.payload[0] === 1;
         if (success) {
           els.recalInfo.textContent = "Finished successfully.";
@@ -1571,6 +1577,7 @@
       }
     });
 
+        recalPending = true;
     let fwInfo = null;
 
     const REVERTIBLE_STATES = ["valid", "new", "pending_verify", "invalid", "aborted", "undefined"];
