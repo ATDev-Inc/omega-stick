@@ -14,6 +14,13 @@ not use a network stack today, so the relevant attack surface is primarily:
 * I2C input handling from the TMAG5273 hall-effect sensor
 * The calibration console protocol, parsed from frames received over the USB
   vendor (WebUSB) and CDC (serial) interfaces
+* The firmware update path: images uploaded through the console are validated
+  but not signed (secure boot and image signing are deferred, see D22 in
+  [docs/decisions.md](docs/decisions.md)), and the console's "Check for latest
+  firmware" button trusts a release feed served from the project's GitHub Pages
+  site, verifying only the size and SHA-256 listed in that feed
+* The GitHub Pages site and release workflow, which publish the console, the
+  first-flash page and the firmware files
 * Buffer handling and parsing elsewhere in the firmware
 
 Physical-access attacks against the device itself (someone with the device

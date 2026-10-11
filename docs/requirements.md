@@ -55,7 +55,9 @@ Evidence behind these requirements is in [docs/research/](research/).
 
 - **RSP-1 [M]** Configurable center deadzone, radial, default small but nonzero.
 - **RSP-2 [M]** Configurable outer (range) deadzone, so full output is reached
-  before mechanical end-stop.
+  before mechanical end-stop. Manual overrides of either deadzone are bounded
+  (center at most 0.5, range at most 0.1, normalized) so a mistyped value cannot
+  remove the stick's usable travel.
 - **RSP-3 [M]** Selectable response curve: linear (default) and exponential.
   `espp::FloatRangeMapper` is linear only; `bezier.hpp` is the building block for
   the curve.
@@ -164,6 +166,10 @@ Firmware updates (`UPD-`) sit here because they are what PER-1 has to survive.
 - **UPD-4 [M]** Every build identifies itself and is traceable to a commit; a
   release build carries only the `version.txt` number and a tag that CI checks
   against it.
+- **UPD-5 [M]** From the moment an update is accepted until the device reboots,
+  and before any reboot the console requests, the device reports a neutral
+  stick with no buttons held, so a user driving a pointer never has the device
+  vanish mid-motion (decision D22 rule 1).
 
 ## 8. Non-functional
 

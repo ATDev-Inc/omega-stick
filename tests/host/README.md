@@ -4,10 +4,18 @@ Unit tests that compile the calibration headers on a desktop toolchain, with
 no ESP-IDF and no hardware. They cover:
 
 - `OmegaCalibration::save/load` and `DeviceSettings::save/load` round-trips
-- `OmegaStore` load-on-construct, live setters, change callbacks, `save_to_flash`
+- `OmegaStore` load-on-construct, live setters, change callbacks, `save_to_flash`,
+  and ignoring a saved deadzone override above the allowed maximum when loading
 - `CalibrationService` request decoding, replies, and store side effects,
   including the framing path through the real espp `stream_frame` parser,
-  and the `GET_DIAGNOSTICS` reply layout and fit-to-frame rule
+  rejection of `SET_DEADZONE_OVERRIDE` values that are not finite or exceed
+  `MAX_CENTER_DEADZONE` / `MAX_RANGE_DEADZONE`, and the
+  `GET_DIAGNOSTICS` reply layout and fit-to-frame rule
+- Output hold (D22 rule 1, `service_output_hold_*` in `test_service.cpp`):
+  `Config::output_hold` is raised by an accepted `OTA_BEGIN` and before the
+  deferred reboots of `OTA_FINISH`, `REVERT`, `RESTART` and an input-mode
+  switch, released when an upload ends without a reboot or the reply was not
+  queued, and counted per service
 - Firmware info and OTA through `CalibrationService`: `FW_INFO` flags, strings and
   previous-slot states, the OTA begin/data/finish/abort flow (bad offsets,
   missing session, write failure), and "revert to previous" (error cases, boot
@@ -38,7 +46,10 @@ no ESP-IDF and no hardware. They cover:
   bookkeeping, recalibration hand-off). Tests drive `mouse_step`/`xac_step` and
   `mouse_tick`/`xac_tick` with injected time and a fake `Ports` that records
   every call in order, including that a neutral report brackets every
-  recalibration so a held nudge button is released
+  recalibration so a held nudge button is released. Also the `output_hold`
+  input (neutral report every tick, a held nudge released, a recalibration
+  request pre-empted, no bogus nudge on release) in both modes, and
+  `RecalibrationGate`, which refuses a second request until the sweep finishes
 
 ## Running
 
@@ -74,7 +85,8 @@ ctest --test-dir build-san --output-on-failure
 
 ## What is real and what is stubbed
 
-Nothing is stubbed. Every espp piece is the real, pinned component:
+Every espp piece is the real, pinned component. Only the ESP-only OTA headers
+are stand-ins (last two rows):
 
 | Header | Source |
 |---|---|
@@ -176,9 +188,10 @@ Fixed, now plain tests:
 
 ## Golden frames
 
-`test_golden_frames.cpp` drives every console request through the real
-dispatcher and `CalibrationService` from a fixed store state and compares the
-request/reply bytes with `tests/protocol/golden_frames.json`, which
+`test_golden_frames.cpp` drives every console request, and dispatcher
+discovery (whose reply carries the `omega.calibration` protocol id), through the
+real dispatcher and `CalibrationService` from a fixed store state and compares
+the request/reply bytes with `tests/protocol/golden_frames.json`, which
 `tests/web/golden.test.js` also reads. After an intentional protocol change
 regenerate it with `OMEGA_WRITE_GOLDEN=1 build-host/omega_host_tests` and review
 the diff. The ERROR message's platform-specific `std::errc` text is rewritten to

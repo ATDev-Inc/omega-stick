@@ -219,7 +219,9 @@ The calibration console is a single static HTML file served from
 `components/omega_calibration/web`, with no install step. It speaks one framed
 protocol over two transports: WebUSB (the vendor interface) and Web Serial (CDC).
 It needs a Chromium-based browser, which is the concrete form of the
-browser-support risk in D11.
+browser-support risk in D11. Release builds also publish a copy of the page on
+GitHub Pages (see [firmware-updates.md](firmware-updates.md#releases-and-the-pages-site)),
+which is the same file, not a fork.
 
 ## D15: The boot flash window is a developer-only Kconfig option, default 0
 
@@ -245,7 +247,9 @@ goes in the header with a test, not in `main.cpp`.
 
 One consequence is deliberate: a neutral HID report is sent before and after
 every recalibration, so a nudge-held button cannot stay down for the whole
-sweep.
+sweep. The hand-off is a `RecalibrationGate` in the same header: a request
+keeps it busy until the sweep finishes, so a second request is refused
+(`device_or_resource_busy`) instead of queueing another full sweep.
 
 ## D17: Host tests run the real espp code, and the console is checked against firmware-generated frames
 
@@ -391,14 +395,16 @@ sibling projects; see
    finish, a lost transport) and when the reply that was to precede the reboot
    was not queued. Each service reports only its own edges, and `main.cpp`
    counts them in an atomic, so two services sharing the OTA engine never
-   release each other's hold. The polling loop passes "count above zero" to `mouse_tick` / `xac_tick` as `output_hold`, which
-   send a neutral report on every tick while it is set (stick centered, no
-   motion, buttons released) and pause recalibration.
+   release each other's hold. The polling loop passes "count above zero" to
+   `mouse_tick` / `xac_tick` as `output_hold`, which send a neutral report on
+   every tick while it is set (stick centered, no motion, buttons released) and
+   hold back a pending recalibration.
 2. **A new image confirms itself only after a self-test.** It must enumerate on
    USB, the sensor must answer, and the loop must have run for a dwell time.
-   Otherwise it rolls back. `feat/ota-rollback` implements this as
-   `FirmwareHealthCheck`. The reset log (D23) is the next input for it: an
-   image whose first boots were abnormal resets has not shown it works.
+   Otherwise it rolls back. `FirmwareHealthCheck` implements this. The reset
+   log (D23) already feeds its crash-loop revert for confirmed images (D18);
+   using it to judge a pending image's first boots, where an image whose first
+   boots were abnormal resets has not shown it works, is still open.
 3. **Downgrades stay possible.** The update path does not reject an older or
    equal version. Recovery from a bad release must not depend on the bad
    release's own good behaviour.
@@ -416,7 +422,7 @@ make us revisit it, so a security review does not re-raise it from scratch.
 | Secure boot v2 | Off | Needs a signing key with a custody story; irreversible per device; makes community builds unflashable without the key, against the open-hardware goal | A production run ships to users who do not build their own firmware |
 | Flash encryption | Off | The flash holds only calibration, settings and the firmware itself, all of which are public or user-owned; nothing secret to protect | Credentials or a per-device identity land in flash |
 | Anti-rollback (`secure_version`) | Off | Rule 4 above | Releases are tagged and versioned by CI, and a release has shipped that must never run again |
-| Image signing without secure boot | Off | Images are served from the GitHub release page over TLS; the console only loads what the user picks | An update server or auto-update path exists |
+| Image signing without secure boot | Off | Images come from the GitHub release page or the Pages site over TLS. The console checks a downloaded image's size and SHA-256 against a feed on the same site, which catches corruption but not a compromised site, and nothing installs without the user's confirmation | An update installs without the user confirming it, or the images and the feed are served separately |
 
 ## D23: Reset reasons are logged across boots
 
@@ -437,6 +443,22 @@ reason is stored as the platform's integer plus a name, so a new reason code
 in a later ESP-IDF still logs. The calibration console shows the log under
 Diagnostics (`GET_DIAGNOSTICS`). Feeding the log into the OTA path is the
 crash-loop revert amendment under D18.
+
+## D24: Identify services by dispatcher protocol id, not module id
+
+The espp dispatcher was experimental through 1.3.x, and the espp maintainer
+says its protocol-id API is the planned long-term-support one, so the firmware
+uses it. `CalibrationService` advertises `kProtocol = "omega.calibration"` and
+`kProtocolVersion = 1` in its `ModuleInfo`, as espp's own services do, and the
+calibration console finds the service by that id (discovery version 2) instead
+of assuming module id 5, and then uses the module id discovery reports for all
+its traffic. Discovery runs before the first state and firmware-info requests,
+and a device that only speaks discovery version 1 (no protocol field) is
+assumed to be on module 5. The `omega.` namespace is ours because the wire
+format is ours; an earlier revision of D20 recorded `"espp.calibration"`, which
+is replaced. Module id 5 stays the routing default. espp 1.3.6 already ships
+this API, so no dependency version changed. Change the id only for an
+incompatible wire format; otherwise bump the version.
 
 ---
 
@@ -480,16 +502,3 @@ request.
 | **Head / eye / sip-and-puff / voice input** | Different product |
 | **Battery power** | HW-5. Triggers UN 38.3 and IEC 62133-2 for no v1 benefit |
 | **Any medical or therapeutic claim** | See [compliance.md](compliance.md). Changes what category the product is treated as |
-
-## D24: Identify services by dispatcher protocol id, not module id
-
-The espp dispatcher was experimental through 1.3.x, and the espp maintainer
-says its protocol-id API is the planned long-term-support one, so the firmware
-uses it. `CalibrationService` advertises `kProtocol = "omega.calibration"` and
-`kProtocolVersion = 1` in its `ModuleInfo`, as espp's own services do, and the
-calibration console finds the service by that id (discovery version 2) instead
-of assuming module id 5. The `omega.` namespace is ours because the wire format
-is ours; D20 first set `"espp.calibration"`, which is replaced. Module id 5
-stays the routing default. espp 1.3.6 already ships this API, so no dependency
-version changed. Change the id only for an incompatible wire format; otherwise
-bump the version.

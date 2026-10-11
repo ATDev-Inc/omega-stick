@@ -102,10 +102,14 @@ build are allowed, because recovery must not depend on the running release
 A status area walks through Checking file, Erasing (up to a minute), Writing
 NN%, Verifying, Restarting, Reconnecting, and finally "Update confirmed" or a
 note that the device rolled back. After Flash or Revert the page reconnects by
-itself to the previously granted device, waiting about 40 seconds before it
-offers a Reconnect button. It then reports whether the new build is running, is
-still being checked, was confirmed, or whether the device went back to the old
-build. Errors are in plain language; the raw detail stays in the log.
+itself, waiting about 40 seconds before it offers a Reconnect button. It
+takes the exact port it was using first, then a single granted device with the
+same USB id (matching the USB serial number when it has one). It never guesses
+between several sticks: if more than one could be the one it just flashed, it
+waits and offers the Reconnect button so you choose. It then reports whether
+the new build is running, is still being checked, was confirmed, or whether the
+device went back to the old build. Errors are in plain language; the raw detail
+stays in the log.
 
 ### Neutral output during an update
 
@@ -129,7 +133,9 @@ versus Web Serial) is refused as busy.
 ### Check for latest firmware
 
 The "Check for latest firmware" button reads
-`https://atdev-inc.github.io/omega-stick/firmware/latest.json`, says whether an
+`https://atdev-inc.github.io/omega-stick/firmware/latest.json` (the copy of the
+console on the Pages site reads its own sibling `firmware/latest.json`; there is
+no way to point it elsewhere from the page address), says whether an
 update is available, and links the release notes. "Download and install" fetches
 the app image, verifies its size and SHA-256 against the feed, then runs the same
 checks and confirm panel as a picked file. An optional check runs once after
@@ -202,8 +208,12 @@ Paths are relative to the file itself:
 `version` is `MAJOR.MINOR.PATCH` and `tag` is `v` plus that version. `size` is
 in bytes and `sha256` is hex.
 
-Maintainer setup, once: Settings > Pages > Source: GitHub Actions, and the
-`github-pages` environment must allow release tags (`v*`) to deploy.
+Pages is already set up for this repository (Settings > Pages > Source:
+GitHub Actions, and the `github-pages` environment allows `main` and `v*`
+tags). A fork needs the same two settings before its first release can
+deploy. The site goes live with the first full release whose tag contains the
+Pages workflow; until then the flash page, the hosted console and the feed
+are not there, and the console's latest-release check shows an error.
 
 ## First flash and recovery
 
@@ -385,3 +395,11 @@ update that needs a serial flash (a partition table change) at the top.
 - **Download mode is unverified on this hardware.** The flash page's BOOT/RESET
   steps are the standard ESP32-S3 procedure and still need confirming on the
   Omega Stick.
+- **Images are checked, not signed.** The console verifies the size and SHA-256
+  of a downloaded image against the feed, which catches a corrupt download but
+  not a compromised site, because the feed and the image come from the same
+  place. Secure boot and image signing are deferred (see D22 in
+  [decisions.md](decisions.md#d22-update-safety-rules-and-a-register-of-deferred-security-controls)).
+- **The update flow is not hardware-tested.** Neutral output, the image checks,
+  automatic reconnect and the latest-release check are covered by host and
+  Node tests only.

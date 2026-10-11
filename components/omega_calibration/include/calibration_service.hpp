@@ -12,6 +12,13 @@
 // simply ignored (route with espp::Dispatcher, or call handle_frame() after
 // routing by module).
 //
+// The service is found by its protocol id, not its module id: it advertises
+// kProtocol ("omega.calibration") and kProtocolVersion (1) through dispatcher
+// discovery, and the console talks to whichever module id discovery reports
+// for that protocol (a discovery v1 peer falls back to module 5). The module
+// id is only a routing key; change the protocol id only for an incompatible
+// wire format (bump kProtocolVersion otherwise). See decision D24.
+//
 // This is the device-side counterpart to the reference client
 // `web/calibration_console.html`; see that file's header comment for the
 // same spec written from the host's point of view (it is the definitive,
@@ -53,7 +60,10 @@
 //                                 return almost immediately (it only kicks
 //                                 the work off -- see that field's docs).
 //                                 Reply: OK (accepted/started) / ERROR
-//                                 (rejected, e.g. one is already running, or
+//                                 (rejected, e.g. one is already pending or
+//                                 running: the device stays busy until the
+//                                 sweep finishes, and a second request gets
+//                                 device_or_resource_busy; or
 //                                 Config::start_calibration is unset). The
 //                                 actual pass/fail arrives later as an
 //                                 unsolicited CalibrationResult frame (see
@@ -98,6 +108,12 @@
 //                                 as an update.
 //   The OTA messages (and GET_FW_INFO/MARK_VALID/REVERT) reply ERROR
 //   (function_not_supported) when Config::ota is null.
+//   Output stays neutral through an update (D22 rule 1): from an accepted
+//   OTA_BEGIN until the reboot, and before the reboot that OTA_FINISH,
+//   REVERT, RESTART and a SET_INPUT_MODE switch each defer, the service asks
+//   the device to hold its HID output neutral (Config::output_hold). The
+//   hold is released if the upload ends without a reboot (OTA_ABORT, the
+//   idle expiry, a failed write or finish) or the deferred reboot is dropped.
 //
 //   0x5F GET_DIAGNOSTICS        : no payload. Reply: DIAGNOSTICS, or ERROR
 //                                 (function_not_supported) when
@@ -328,9 +344,10 @@ public:
     /// its reply, since the host never saw that reply.
     send_fn send{nullptr};
     /// Dispatcher module id this instance answers on (and stamps on its
-    /// replies). The default (kModule, 5) is what
-    /// `calibration_console.html` looks for; change it only if your host
-    /// tooling is told the new id.
+    /// replies). Defaults to kModule (5). `calibration_console.html` finds
+    /// the service by its protocol id (kProtocol) through discovery and uses
+    /// whatever id it reports; only firmware without discovery v2 is
+    /// assumed to be on 5.
     uint8_t module{kModule};
     /// Optional: handles Msg::StartCalibration by kicking off an
     /// interactive recalibration. **Must return almost immediately** --
@@ -395,7 +412,7 @@ public:
       , ota_(config.ota) {}
 
   /// @brief The dispatcher module id this service answers on (Config::module;
-  ///        kModule by default, which the web console expects).
+  ///        kModule by default). The console discovers it by protocol id.
   uint8_t module_id() const { return module_; }
 
   /// @brief Discovery metadata for registering this service on a Dispatcher.

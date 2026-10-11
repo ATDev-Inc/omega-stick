@@ -49,7 +49,9 @@ node --test "tests/web/*.test.js"
 
 They check [omega_protocol.js](components/omega_calibration/web/omega_protocol.js)
 against the C++ side, including `tests/protocol/golden_frames.json`, which the
-host tests generate. After an intentional protocol change, regenerate it with
+host tests generate, and cover the console's firmware-update logic and the
+release feed written by [scripts/release_feed.mjs](scripts/release_feed.mjs)
+(see [tests/web/README.md](tests/web/README.md)). After an intentional protocol change, regenerate it with
 `OMEGA_WRITE_GOLDEN=1 build-host/omega_host_tests` and review the diff.
 
 Formatting is clang-format **14.0.6** via pre-commit
@@ -72,7 +74,15 @@ Every pull request runs:
 | [web_tests.yml](.github/workflows/web_tests.yml) | `web-tests` | the console's protocol tests above |
 | [fuzz.yml](.github/workflows/fuzz.yml) | `frame-fuzz` | libFuzzer on the frame parser, see [tests/fuzz](tests/fuzz/README.md) |
 | [static_analysis.yml](.github/workflows/static_analysis.yml) | `static_analysis` | cppcheck, `--std=c++17`, global suppressions in [suppressions.txt](suppressions.txt) |
+| [security.yml](.github/workflows/security.yml) | `gitleaks`, `zizmor` | secret scan of the history and a lint of the workflows; also runs daily |
 | [size_delta.yml](.github/workflows/size_delta.yml) | `size_delta` | reporting only, not a required check |
+
+[package_main.yml](.github/workflows/package_main.yml) does not gate pull
+requests. It builds `main` and every published release; for a full (non-pre)
+release it also builds the merged full-flash image and deploys the GitHub Pages
+site and release feed (see [docs/firmware-updates.md](docs/firmware-updates.md#releases-and-the-pages-site)).
+Pages is already enabled for this repository, with the `github-pages`
+environment allowing `main` and `v*` tags, so do not change those settings.
 
 Build, static analysis, and host tests should all pass. Prefer an inline
 `// cppcheck-suppress <id>` with a reason over adding to `suppressions.txt`.
@@ -92,7 +102,10 @@ components/hid-rp-mouse/      HID mouse report descriptor and input report
 components/xac/               XAC gamepad report (XacInputReport)
 components/omega_calibration/ calibration maths, sensor fault monitor, persisted settings, OmegaStore, the console protocol,
                               the firmware health check, and the browser console (web/, protocol code in omega_protocol.js)
-components/omega_control/     pure, host-tested control-loop logic (nudge clicks, drift, sensor faults) for both modes
+components/omega_control/     pure, host-tested control-loop logic (nudge clicks, drift, sensor faults, output hold, the
+                              recalibration gate) for both modes
+site/                         GitHub Pages landing page and first-flash page (ESP Web Tools), published by package_main.yml
+scripts/                      release_feed.mjs: builds latest.json, manifest.json and SHA256SUMS for the Pages site
 tests/host/                   desktop unit tests against the real espp code (stubs only for the OTA headers)
 tests/web/, tests/protocol/   Node tests for the console, and the golden frames shared with the host tests
 tests/fuzz/                   libFuzzer harness for the frame parser
@@ -124,25 +137,38 @@ espp.
 - **Firmware updates** go over the same console protocol into the inactive
   OTA slot. A new image boots pending verification and `FirmwareHealthCheck`
   confirms it after 10 s of USB plus sensor health, or rolls back (90 s
-  deadline, or at once on an init failure). Full rules in
-  [docs/firmware-updates.md](docs/firmware-updates.md).
-
+  deadline, or at once on an init failure). While an upload runs, and before
+  every console-initiated reboot, `CalibrationService` raises
+  `Config::output_hold` and the control loop sends neutral reports (decision
+  D22 rule 1); `main.cpp` counts the holds from the two services. The console
+  checks the image before flashing and reconnects by itself afterwards. Full
+  rules in [docs/firmware-updates.md](docs/firmware-updates.md).
+- **Recalibration** is requested through a `RecalibrationGate`
+  (`omega_control.hpp`) that stays busy until the sweep finishes, so a second
+  request is refused with `device_or_resource_busy`. Deadzone overrides are
+  bounded: `SET_DEADZONE_OVERRIDE` rejects a center value above
+  `OmegaCalibration::MAX_CENTER_DEADZONE` (0.5) or a range value above
+  `MAX_RANGE_DEADZONE` (0.1), `OmegaStore` ignores an out-of-range saved
+  override at load, and the console checks the same limits.
 - **Input mode** (mouse or XAC) is read from the persisted settings once at
   boot and picks the USB descriptor. Changing it at runtime saves settings to
   flash and calls `esp_restart()`.
 - **Persistence** is two `key=value` text files on littlefs, not NVS:
   `omega_calibration.cfg` (calibration) and `omega_settings.cfg` (deadzone
   overrides, nudge-click tuning, input mode). They are deliberately separate.
-- **Calibration console:** a framed request/reply protocol (dispatcher module
-  5) carried over the USB vendor interface (WebUSB) and CDC serial. The wire
+- **Calibration console:** a framed request/reply protocol carried over the USB vendor interface (WebUSB) and CDC serial. The wire
   format is documented at the top of
   [calibration_service.hpp](components/omega_calibration/include/calibration_service.hpp)
   and must stay in sync with
   [omega_protocol.js](components/omega_calibration/web/omega_protocol.js),
   which [calibration_console.html](components/omega_calibration/web/calibration_console.html)
-  inlines verbatim (a web test enforces the copy). Message IDs are
-  append-only: never renumber or reuse one, since released firmware and the
-  console must keep talking to each other.
+  inlines verbatim between its `BEGIN`/`END omega_protocol.js` markers (a web
+  test enforces the copy). Message IDs are append-only: never renumber or
+  reuse one, since released firmware and the console must keep talking to each
+  other. The service is found by its dispatcher protocol id `omega.calibration`
+  (`kProtocol`, version `kProtocolVersion` 1), not by module id; module 5 is
+  only the default. Change the id only for an incompatible wire format, and
+  bump the version otherwise (decision D24).
   See the [component README](components/omega_calibration/README.md).
 - **USB ids:** `OMEGA_USB_VID` / `OMEGA_USB_PID` in `main/main.cpp` must match
   `DEFAULT_VID` / `DEFAULT_PID` in the console page. The current pair is a

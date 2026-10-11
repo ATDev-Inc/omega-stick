@@ -33,25 +33,38 @@ The firmware exposes the console on two USB interfaces, and either one works:
   printed there.
 
 On connect the page asks the device which modules it has (discovery, module
-`0xFF`) and then reads the current state.
+`0xFF`), picks the one that advertises the protocol id `omega.calibration` and
+uses the module id discovery reports for all its traffic, then reads the
+current state and firmware info. A device that only speaks discovery v1 (no
+protocol field) is assumed to serve the calibration protocol on module 5. If the
+device advertises a different protocol version the page warns in its log.
 
 ### What you can change
 
 | Section | Message | Notes |
 | --- | --- | --- |
 | Manual center offset (trim) | `0x51 SET_MANUAL_OFFSET` | added to the calibrated center, in the same raw units as Center X / Y. Must be finite |
-| Manual deadzone overrides | `0x52 SET_DEADZONE_OVERRIDE` | an unchecked box clears the override back to the calibration-derived value. Values must be finite and >= 0 |
+| Manual deadzone overrides | `0x52 SET_DEADZONE_OVERRIDE` | an unchecked box clears the override back to the calibration-derived value. A set value must be finite and within 0 to 0.5 (center, `OmegaCalibration::MAX_CENTER_DEADZONE`) or 0 to 0.1 (range, `MAX_RANGE_DEADZONE`); the device replies ERROR otherwise, the page checks the same limits before sending, and `OmegaStore` ignores an out-of-range saved override when it loads (logged at boot) |
 | Nudge-click tuning | `0x53 SET_NUDGE_SETTINGS` | enter threshold in (0, 1], exit threshold in [0, 1], time window in ms |
 | Input mode | `0x54 SET_INPUT_MODE` | mouse or XAC gamepad. The device saves all live settings to flash and restarts to apply it. The OK reply is sent before the restart, so the page then loses the connection; reconnect after the stick re-enumerates |
 | Save current state to flash | `0x55 SAVE_TO_FLASH` | writes `omega_calibration.cfg` and `omega_settings.cfg` to the device's file system |
-| Re-run calibration | `0x56 START_CALIBRATION` | asynchronous. The result arrives later as an unsolicited `0xD1` frame |
+| Re-run calibration | `0x56 START_CALIBRATION` | asynchronous. The result arrives later as an unsolicited `0xD1` frame. The device stays busy until the sweep finishes and refuses a second request (`device_or_resource_busy`); the page keeps the button disabled until the result arrives |
 
 Changes apply live but are lost on reboot until you save them to flash (or
 switch input mode, which saves first). The page re-reads the device state
 after every change, so the form always shows what the device is actually
 using.
 
+Firmware update, revert, and diagnostics also go through this protocol; see
+[docs/firmware-updates.md](../../docs/firmware-updates.md).
+
 ### Protocol
+
+The service advertises the protocol id `omega.calibration`, version 1
+(`CalibrationService::kProtocol` / `kProtocolVersion`), which is what the
+console looks for; module 5 is the default routing id only (decision D24 in
+[docs/decisions.md](../../docs/decisions.md)). Change the id only for an
+incompatible wire format.
 
 The wire format (frame layout, every message and payload, and the 79-byte
 STATE reply) is documented at the top of
