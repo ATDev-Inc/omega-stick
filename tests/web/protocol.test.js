@@ -444,3 +444,37 @@ test("decodeState: honours byteOffset of a parsed frame payload", () => {
   const padded = concat(bytes(9, 9, 9), statePayload({ hasCenter: true, hasRange: true, mode: 1 }));
   assert.equal(P.decodeState(padded.subarray(3)).centerX, 0.5);
 });
+
+// ------------------------------------------------- selectCalibrationModule
+function v2Info(...mods) {
+  return { version: 2, device: "d", fw: "f", modules: mods.map((m) => ({ name: "n", app: "a", desc: "", ...m })) };
+}
+
+test("selectCalibrationModule: v2 service configured on module 7", () => {
+  const info = v2Info({ id: 4, protocol: "omega.ota", protocolVersion: 1 },
+                      { id: 7, protocol: P.PROTOCOL_ID, protocolVersion: 1 });
+  assert.deepEqual(P.selectCalibrationModule(info), { id: 7, how: "protocol", versionMismatch: false });
+});
+
+test("selectCalibrationModule: v2 service on the default module 5", () => {
+  const info = v2Info({ id: 5, protocol: P.PROTOCOL_ID, protocolVersion: 1 });
+  assert.deepEqual(P.selectCalibrationModule(info), { id: 5, how: "protocol", versionMismatch: false });
+});
+
+test("selectCalibrationModule: v1 falls back to the default id", () => {
+  const info = { version: 1, device: "d", fw: "f", modules: [{ id: 5, name: "cal", app: "a", desc: "" }] };
+  assert.deepEqual(P.selectCalibrationModule(info), { id: 5, how: "legacy-id", versionMismatch: false });
+  info.modules[0].id = 7; // v1 cannot identify a moved service
+  assert.deepEqual(P.selectCalibrationModule(info), { id: 5, how: "missing", versionMismatch: false });
+});
+
+test("selectCalibrationModule: v2 without the protocol is missing, even at id 5", () => {
+  const info = v2Info({ id: 5, protocol: "omega.other", protocolVersion: 1 });
+  assert.deepEqual(P.selectCalibrationModule(info), { id: 5, how: "missing", versionMismatch: false });
+  assert.deepEqual(P.selectCalibrationModule(v2Info()), { id: 5, how: "missing", versionMismatch: false });
+});
+
+test("selectCalibrationModule: protocol version mismatch is flagged", () => {
+  const info = v2Info({ id: 7, protocol: P.PROTOCOL_ID, protocolVersion: 2 });
+  assert.deepEqual(P.selectCalibrationModule(info), { id: 7, how: "protocol", versionMismatch: true });
+});

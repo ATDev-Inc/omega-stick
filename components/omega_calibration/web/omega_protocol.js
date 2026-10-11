@@ -169,6 +169,26 @@
     return { version, device, fw, modules };
   }
 
+  // Picks the dispatcher module id to talk to from a parseDiscovery() result.
+  // Discovery v2 identifies the service by protocol id, so a service configured
+  // on a non-default module id is still found. Discovery v1 has no protocol
+  // field, so the default id is checked instead. When nothing matches, id stays
+  // at the default (how === "missing").
+  function selectCalibrationModule(info) {
+    if (info.version >= 2) {
+      const m = info.modules.find((x) => x.protocol === PROTOCOL_ID);
+      if (m) {
+        return {
+          id: m.id, how: "protocol",
+          versionMismatch: !!m.protocolVersion && m.protocolVersion !== PROTOCOL_VERSION,
+        };
+      }
+    } else if (info.modules.some((x) => x.id === MODULE_CALIBRATION)) {
+      return { id: MODULE_CALIBRATION, how: "legacy-id", versionMismatch: false };
+    }
+    return { id: MODULE_CALIBRATION, how: "missing", versionMismatch: false };
+  }
+
   // Fixed 79-byte STATE struct; see calibration_service.hpp.
   function decodeState(payload) {
     if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79)");
@@ -252,7 +272,7 @@
     FLAGS_REQUEST, FLAGS_REPLY_BIT, FLAG_CORRELATION,
     TYPE, INPUT_MODE,
     crc32, buildFrame, FrameParser, readU32,
-    parseErrorReply, parseDiscovery, decodeState, decodeDiagnostics,
+    parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
     encodeSetManualOffset, encodeSetDeadzoneOverride,
     encodeSetNudgeSettings, encodeSetInputMode,
   };
