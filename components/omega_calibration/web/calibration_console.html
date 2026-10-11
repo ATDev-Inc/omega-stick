@@ -1533,11 +1533,11 @@
   const SIM_NEXT_IMAGE = ["ok", "fail_self_test", "crash_loop"];
   const SIM_SOURCE_KINDS = ["manual", "pattern", "script"];
   const SIM_REPLIES = ["ok", "busy", "invalid", "error"];
-  const SIM_ACTIONS = ["recalibrate", "save", "restart", "set_mode", "set_deadzone"];
+  const SIM_ACTIONS = ["recalibrate", "save", "restart", "set_mode", "set_deadzone", "flash", "revert", "mark_valid"];
   const SIM_SCRIPT_MAX_BYTES = 262144, SIM_SCRIPT_MAX_STEPS = 5000;
   const SIM_MAX_AT_MS = 86400000; // a day
   const SIM_STEP_KEYS = ["stick", "pattern", "fault", "drift", "noise", "next_image", "action", "expect"];
-  const SIM_EXPECT_KEYS = ["calibrated", "center_max", "mouse_moved", "clicked", "mode", "sensor_fault", "neutral", "fw_slot", "fw_pending"];
+  const SIM_EXPECT_KEYS = ["calibrated", "center_max", "mouse_moved", "clicked", "mode", "sensor_fault", "neutral", "fw_slot", "fw_pending", "fw_version", "xac_x", "xac_y"];
 
   const isNum = (v) => typeof v === "number" && Number.isFinite(v);
   const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -1647,7 +1647,8 @@
     const add = (s) => { if (errors.length < 20) errors.push(s); };
     if (!isObj(script)) return { ok: false, errors: ["The script must be a JSON object."] };
     let size = 0;
-    try { size = JSON.stringify(script).length; } catch (_) { return { ok: false, errors: ["The script cannot be read as JSON."] }; }
+    try { const text = JSON.stringify(script);
+      size = typeof TextEncoder === "function" ? new TextEncoder().encode(text).length : text.length; } catch (_) { return { ok: false, errors: ["The script cannot be read as JSON."] }; }
     if (size > SIM_SCRIPT_MAX_BYTES) return { ok: false, errors: ["The script is larger than " + (SIM_SCRIPT_MAX_BYTES / 1024) + " KB."] };
     if (script.version !== 1) add("The script needs \"version\": 1.");
     if (script.name !== undefined && (typeof script.name !== "string" || script.name.length > 200)) {
@@ -1685,7 +1686,10 @@
       const val = step[key];
       const allowed = ["at_ms", key];
       if (key === "pattern") allowed.push("duration_ms");
-      if (key === "action") allowed.push("value", "expect_reply");
+      if (key === "action") {
+        allowed.push("value", "expect_reply");
+        if (val === "flash") allowed.push("version");
+      }
       for (const k of Object.keys(step)) if (!allowed.includes(k)) add(at + "unexpected key \"" + k + "\".");
       switch (key) {
         case "stick":
@@ -1695,8 +1699,8 @@
           break;
         case "pattern":
           if (typeof val !== "string" || !SIM_PATTERNS.includes(val)) add(at + "unknown pattern. Known: " + SIM_PATTERNS.join(", ") + ".");
-          if (step.duration_ms !== undefined && (!isNum(step.duration_ms) || step.duration_ms <= 0 || step.duration_ms > SIM_MAX_AT_MS)) {
-            add(at + "\"duration_ms\" must be a positive number.");
+          if (step.duration_ms !== undefined && (!isNum(step.duration_ms) || step.duration_ms < 0 || step.duration_ms > SIM_MAX_AT_MS)) {
+            add(at + "\"duration_ms\" must be a number from 0 to " + SIM_MAX_AT_MS + ".");
           }
           break;
         case "fault":
@@ -1741,10 +1745,25 @@
       for (const k of keys) {
         if (k !== "center" && k !== "range") add(at + "set_deadzone \"value\" has unknown key \"" + k + "\".");
       }
-      if (v.center !== undefined && (!isNum(v.center) || v.center < 0 || v.center > 0.5)) add(at + "deadzone center must be 0 to 0.5.");
-      if (v.range !== undefined && (!isNum(v.range) || v.range < 0 || v.range > 0.1)) add(at + "deadzone range must be 0 to 0.1.");
+      // Out-of-range values are allowed only when the step expects the firmware
+      // to refuse them (expect_reply "invalid"), see docs/simulator.md.
+      const onPurpose = step.expect_reply === "invalid";
+      const dz = (k, hi) => {
+        if (v[k] === undefined) return;
+        if (!isNum(v[k])) add(at + "deadzone " + k + " must be a number.");
+        else if (!onPurpose && (v[k] < 0 || v[k] > hi)) add(at + "deadzone " + k + " must be 0 to " + hi + " (or use \"expect_reply\": \"invalid\" to test the refusal).");
+      };
+      dz("center", 0.5);
+      dz("range", 0.1);
     } else if (step.value !== undefined) {
       add(at + a + " does not take a \"value\".");
+    }
+    if (a === "flash") {
+      if (step.version !== undefined && (typeof step.version !== "string" || step.version.length < 1 || step.version.length > 31)) {
+        add(at + "flash \"version\" must be text of 1 to 31 characters.");
+      }
+    } else if (step.version !== undefined) {
+      add(at + a + " does not take a \"version\".");
     }
   }
 
@@ -1754,9 +1773,10 @@
     const oneOf = (k, list) => { if (!list.includes(e[k])) add(at + "expect." + k + " must be one of " + list.join(", ") + "."); };
     for (const k of Object.keys(e)) {
       switch (k) {
-        case "calibrated": case "sensor_fault": case "fw_pending": bool(k); break;
-        case "neutral": if (e[k] !== true) add(at + "expect.neutral must be true."); break;
-        case "center_max": if (!isNum(e[k]) || e[k] < 0) add(at + "expect.center_max must be a number of at least 0."); break;
+        case "calibrated": case "sensor_fault": case "fw_pending": case "neutral": bool(k); break;
+        case "center_max": if (!isNum(e[k]) || e[k] < 0 || e[k] > 10) add(at + "expect.center_max must be a number from 0 to 10."); break;
+        case "fw_version": if (typeof e[k] !== "string" || e[k].length === 0) add(at + "expect.fw_version must be text."); break;
+        case "xac_x": case "xac_y": if (!isNum(e[k]) || e[k] < -1 || e[k] > 1) add(at + "expect." + k + " must be a number from -1 to 1."); break;
         case "mouse_moved": oneOf(k, ["right", "left", "up", "down", "none"]); break;
         case "clicked": oneOf(k, ["left", "right", "none"]); break;
         case "mode": oneOf(k, ["mouse", "xac"]); break;
@@ -3651,7 +3671,8 @@
     const simFmt = (v) => (Math.round(v * 100) / 100).toFixed(2);
 
     // ---- Virtual stick ----
-    // Up on the pad is +y. docs/simulator.md does not say which direction +y is.
+    // Up on the pad is +y, as in docs/simulator.md (+x right, +y up). Mouse output
+    // uses screen coordinates, so a positive dy in a hid message moves the dot down.
     function simPadRadius() { return simEl.simPad.clientWidth / 2 - SIM_KNOB_R; }
     function simShowStick() {
       const r = simPadRadius();

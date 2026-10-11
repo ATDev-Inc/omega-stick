@@ -5,6 +5,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
+const fs = require("node:fs");
 
 const P = require(path.join(__dirname, "..", "..", "components", "omega_calibration", "web", "omega_protocol.js"));
 
@@ -23,6 +24,10 @@ const SPEC_EXAMPLE = {
 };
 
 const withSteps = (...steps) => ({ version: 1, steps });
+const ok = (script) => {
+  const r = P.validateSimScript(script);
+  assert.ok(r.ok, r.errors.join(" "));
+};
 const bad = (script, fragment) => {
   const r = P.validateSimScript(script);
   assert.equal(r.ok, false, "expected invalid: " + JSON.stringify(script));
@@ -173,7 +178,7 @@ test("validateSimScript checks names, values and ranges", () => {
   bad(withSteps({ at_ms: 0, stick: [0, NaN] }), "stick");
   bad(withSteps({ at_ms: 0, stick: "up" }), "stick");
   bad(withSteps({ at_ms: 0, pattern: "spin" }), "pattern");
-  bad(withSteps({ at_ms: 0, pattern: "rest", duration_ms: 0 }), "duration_ms");
+  bad(withSteps({ at_ms: 0, pattern: "rest", duration_ms: -1 }), "duration_ms");
   bad(withSteps({ at_ms: 0, fault: "melted" }), "fault");
   bad(withSteps({ at_ms: 0, drift: "fast" }), "drift");
   bad(withSteps({ at_ms: 0, drift: -1 }), "drift");
@@ -194,6 +199,53 @@ test("validateSimScript checks action steps", () => {
   bad(withSteps({ at_ms: 0, action: "save", expect_reply: "maybe" }), "expect_reply");
 });
 
+test("validateSimScript accepts flash, revert and mark_valid and rejects bad uses", () => {
+  ok(withSteps({ at_ms: 0, action: "flash" }, { at_ms: 1, action: "flash", version: "0.2.0", expect_reply: "ok" },
+    { at_ms: 2, action: "revert" }, { at_ms: 3, action: "mark_valid", expect_reply: "error" }));
+  bad(withSteps({ at_ms: 0, action: "flash", version: "" }), "version");
+  bad(withSteps({ at_ms: 0, action: "flash", version: "x".repeat(32) }), "version");
+  bad(withSteps({ at_ms: 0, action: "flash", version: 2 }), "version");
+  bad(withSteps({ at_ms: 0, action: "revert", version: "1.0.0" }), "version");
+  bad(withSteps({ at_ms: 0, action: "flash", value: 1 }), "value");
+});
+
+test("validateSimScript allows out-of-range deadzones only with expect_reply invalid", () => {
+  ok(withSteps({ at_ms: 0, action: "set_deadzone", value: { center: 0.9, range: 0.5 }, expect_reply: "invalid" }));
+  ok(withSteps({ at_ms: 0, action: "set_deadzone", value: { center: -1 }, expect_reply: "invalid" }));
+  bad(withSteps({ at_ms: 0, action: "set_deadzone", value: { center: 0.9 }, expect_reply: "ok" }), "center");
+  bad(withSteps({ at_ms: 0, action: "set_deadzone", value: { range: 0.5 }, expect_reply: "busy" }), "range");
+  bad(withSteps({ at_ms: 0, action: "set_deadzone", value: { range: "wide" }, expect_reply: "invalid" }), "range");
+  ok(withSteps({ at_ms: 0, action: "set_deadzone", value: { center: 0.5, range: 0.1 } }));
+});
+
+test("validateSimScript checks the firmware and gamepad expectations", () => {
+  ok(withSteps({ at_ms: 0, expect: { fw_version: "0.2.0", xac_x: 0.5, xac_y: -1 } }));
+  bad(withSteps({ at_ms: 0, expect: { fw_version: 2 } }), "fw_version");
+  bad(withSteps({ at_ms: 0, expect: { xac_x: 1.5 } }), "xac_x");
+  bad(withSteps({ at_ms: 0, expect: { xac_y: "up" } }), "xac_y");
+  bad(withSteps({ at_ms: 0, expect: { center_max: 11 } }), "center_max");
+});
+
+test("validateSimScript limits at_ms, drift, noise and byte size", () => {
+  ok(withSteps({ at_ms: 86400000, drift: 10 }));
+  bad(withSteps({ at_ms: 86400001, drift: 1 }), "at_ms");
+  bad(withSteps({ at_ms: 0, drift: 10.5 }), "drift");
+  bad(withSteps({ at_ms: 0, noise: 1.01 }), "noise");
+  // 256 KiB is counted in UTF-8 bytes, not characters.
+  const big = { version: 1, name: "n", steps: [{ at_ms: 0, expect: { fw_version: "é".repeat(140000) } }] };
+  assert.equal(P.validateSimScript(big).ok, false);
+});
+
+test("every scenario in sim/scenarios is accepted by validateSimScript", () => {
+  const dir = path.join(__dirname, "..", "..", "sim", "scenarios");
+  const files = fs.readdirSync(dir).filter((n) => n.endsWith(".json"));
+  assert.ok(files.length >= 9, "expected the shipped scenarios, found " + files.length);
+  for (const n of files) {
+    const v = P.validateSimScript(JSON.parse(fs.readFileSync(path.join(dir, n), "utf8")));
+    assert.ok(v.ok, n + ": " + v.errors.join(" "));
+  }
+});
+
 test("validateSimScript checks expect steps", () => {
   bad(withSteps({ at_ms: 0, expect: {} }), "expect");
   bad(withSteps({ at_ms: 0, expect: "yes" }), "expect");
@@ -204,7 +256,7 @@ test("validateSimScript checks expect steps", () => {
   bad(withSteps({ at_ms: 0, expect: { clicked: "middle" } }), "clicked");
   bad(withSteps({ at_ms: 0, expect: { mode: "keyboard" } }), "mode");
   bad(withSteps({ at_ms: 0, expect: { fw_slot: "ota_2" } }), "fw_slot");
-  bad(withSteps({ at_ms: 0, expect: { neutral: false } }), "neutral");
+  bad(withSteps({ at_ms: 0, expect: { neutral: "yes" } }), "neutral");
 });
 
 test("validateSimScript caps the number of steps and the size", () => {

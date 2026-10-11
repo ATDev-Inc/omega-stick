@@ -21,6 +21,7 @@ test("mock simulator speaks hello, stick, patterns and binary frames", async () 
   try {
     await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = () => reject(new Error("connect failed")); });
     ws.send(P.encodeSimMessage({ type: "hello" }));
+    ws.send(JSON.stringify({ type: "drift", rate: 11 }));
     ws.send(P.encodeSimMessage({ type: "stick", x: 0.5, y: -0.25 }));
     ws.send(P.encodeSimMessage({ type: "pattern", name: "nudge_right" }));
     ws.send(P.buildFrame(P.MODULE_CALIBRATION, P.TYPE.GET_STATE));
@@ -31,6 +32,8 @@ test("mock simulator speaks hello, stick, patterns and binary frames", async () 
     const types = texts.map((m) => m && m.type);
     assert.ok(types.includes("hello"));
     assert.ok(types.includes("sensor"));
+    assert.equal(types.filter((t) => t === "hello").length, 1, "hello is sent once, on connect");
+    assert.ok(texts.some((m) => m && m.type === "error"), "out-of-range drift is refused");
     const hid = texts.find((m) => m && m.type === "hid" && m.dx !== 0);
     assert.deepEqual([hid.dx, hid.dy], [4, 2]);
     assert.ok(texts.some((m) => m && m.type === "source" && m.kind === "pattern" && m.name === "nudge_right"));
