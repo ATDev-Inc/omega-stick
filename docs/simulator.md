@@ -227,3 +227,5 @@ Scenarios kept in [sim/scenarios/](../sim/scenarios/) run headless in CI.
 - Restarts triggered by RESTART, REVERT and OTA_FINISH happen 750 ms of real
   time after the reply, as on the device (`CalibrationService` waits in a real
   thread). Headless runs wait for that before simulated time moves on.
+
+A manual end-to-end check that drives the real simulator through the real console in headless Chrome is in [tests/e2e/](../tests/e2e/README.md).
