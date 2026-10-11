@@ -68,6 +68,16 @@ in `version.txt`.
 
 ### Fixed
 
+- **Console messages after a change tell the truth.** Switching input mode
+  no longer logs a failure for a switch that worked (the device restarts
+  after its OK, so there was never a state to read back), clicking the
+  active mode says so instead of claiming a switch, and a failed read-back
+  after an applied setting is reported as a refresh failure rather than as
+  the setting failing. The OK for a mode switch now says whether the device
+  is restarting, so the console reports what the device did rather than what
+  it guessed. On the device, a mode switch, restart, revert or update whose
+  OK could not be queued is dropped instead of acting on a change the host
+  never heard about. ([#27])
 - **A sensor fault no longer holds the stick deflected.** If the TMAG5273
   stops answering or freezes, the device reports a centered stick until it
   recovers, instead of repeating the last movement until it is unplugged.
@@ -99,3 +109,4 @@ in `version.txt`.
 [#19]: https://github.com/ATDev-Inc/omega-stick/pull/19
 [#20]: https://github.com/ATDev-Inc/omega-stick/pull/20
 [#21]: https://github.com/ATDev-Inc/omega-stick/pull/21
+[#27]: https://github.com/ATDev-Inc/omega-stick/issues/27

@@ -34,6 +34,7 @@ struct Fixture {
                  .send =
                      [this](std::span<const uint8_t> f) {
                        sent.insert(sent.end(), f.begin(), f.end());
+                       return true;
                      },
                  .diagnostics = std::move(diagnostics)}) {}
 

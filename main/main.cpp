@@ -750,13 +750,18 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     // answers the console's module-0xFF discovery request.
     // --------------------------------------------------------------------
     static espp::UsbDevice *usb_ptr = nullptr; // set once `usb` exists, below
+    // One sender per link, shared by the service and its worker. Both USB
+    // writes are fail-fast, and the bool tells the service whether a reply
+    // was queued.
+    auto send_vendor = [](std::span<const uint8_t> frame) {
+      return usb_ptr && usb_ptr->write_vendor(frame);
+    };
+    auto send_cdc = [](std::span<const uint8_t> frame) {
+      return usb_ptr && usb_ptr->write_cdc(frame);
+    };
     espp::CalibrationService::Config calibration_cfg{
         .store = store,
-        .send =
-            [](std::span<const uint8_t> frame) {
-              if (usb_ptr)
-                usb_ptr->write_vendor(frame);
-            },
+        .send = send_vendor,
         .start_calibration =
             [&recalibration_requested](std::error_code &start_ec) {
               bool expected = false;
@@ -772,27 +777,16 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
         .log_level = espp::Logger::Verbosity::ERROR,
     };
     espp::CalibrationService calibration_vendor(calibration_cfg);
-    calibration_cfg.send = [](std::span<const uint8_t> frame) {
-      if (usb_ptr)
-        usb_ptr->write_cdc(frame);
-    };
+    calibration_cfg.send = send_cdc;
     espp::CalibrationService calibration_cdc(calibration_cfg);
     espp::DispatcherWorker vendor_link({
-        .send =
-            [](std::span<const uint8_t> frame) {
-              if (usb_ptr)
-                usb_ptr->write_vendor(frame);
-            },
+        .send = send_vendor,
         .task_config = {.name = "cal_vendor_rx", .stack_size_bytes = 8192},
     });
     vendor_link.register_module(calibration_vendor);
     vendor_link.serve_discovery("omega-stick");
     espp::DispatcherWorker cdc_link({
-        .send =
-            [](std::span<const uint8_t> frame) {
-              if (usb_ptr)
-                usb_ptr->write_cdc(frame);
-            },
+        .send = send_cdc,
         .task_config = {.name = "cal_cdc_rx", .stack_size_bytes = 8192},
     });
     cdc_link.register_module(calibration_cdc);
@@ -914,13 +908,18 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     // comment there) -- kept here too so the console still works when the
     // stick boots in XAC mode.
     static espp::UsbDevice *usb_ptr = nullptr;
+    // One sender per link, shared by the service and its worker. Both USB
+    // writes are fail-fast, and the bool tells the service whether a reply
+    // was queued.
+    auto send_vendor = [](std::span<const uint8_t> frame) {
+      return usb_ptr && usb_ptr->write_vendor(frame);
+    };
+    auto send_cdc = [](std::span<const uint8_t> frame) {
+      return usb_ptr && usb_ptr->write_cdc(frame);
+    };
     espp::CalibrationService::Config calibration_cfg{
         .store = store,
-        .send =
-            [](std::span<const uint8_t> frame) {
-              if (usb_ptr)
-                usb_ptr->write_vendor(frame);
-            },
+        .send = send_vendor,
         .start_calibration =
             [&recalibration_requested](std::error_code &start_ec) {
               bool expected = false;
@@ -936,27 +935,16 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
         .log_level = espp::Logger::Verbosity::ERROR,
     };
     espp::CalibrationService calibration_vendor(calibration_cfg);
-    calibration_cfg.send = [](std::span<const uint8_t> frame) {
-      if (usb_ptr)
-        usb_ptr->write_cdc(frame);
-    };
+    calibration_cfg.send = send_cdc;
     espp::CalibrationService calibration_cdc(calibration_cfg);
     espp::DispatcherWorker vendor_link({
-        .send =
-            [](std::span<const uint8_t> frame) {
-              if (usb_ptr)
-                usb_ptr->write_vendor(frame);
-            },
+        .send = send_vendor,
         .task_config = {.name = "cal_vendor_rx", .stack_size_bytes = 8192},
     });
     vendor_link.register_module(calibration_vendor);
     vendor_link.serve_discovery("omega-stick");
     espp::DispatcherWorker cdc_link({
-        .send =
-            [](std::span<const uint8_t> frame) {
-              if (usb_ptr)
-                usb_ptr->write_cdc(frame);
-            },
+        .send = send_cdc,
         .task_config = {.name = "cal_cdc_rx", .stack_size_bytes = 8192},
     });
     cdc_link.register_module(calibration_cdc);

@@ -206,6 +206,7 @@ std::string build_golden_json() {
   std::vector<uint8_t> sent;
   auto transmit = [&sent](std::span<const uint8_t> f) {
     sent.insert(sent.end(), f.begin(), f.end());
+    return true;
   };
   CalibrationService service({.store = store,
                               .send = transmit,
