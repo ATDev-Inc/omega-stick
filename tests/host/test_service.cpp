@@ -167,6 +167,27 @@ TEST(service_rejects_invalid_deadzone_override_values) {
   }
   CHECK(!fx.store.settings().manual_center_deadzone.has_value());
 
+  // Above the calibration maximums (center 0.5, range 0.1) is refused too,
+  // and the stored override is left untouched.
+  {
+    std::vector<uint8_t> payload{0x01};
+    support::put_f32(payload, 2.0f);
+    support::put_f32(payload, 0.0f);
+    const auto reply = fx.request(Msg::SetDeadzoneOverride, payload);
+    CHECK(is(reply, Msg::Error));
+    CHECK(support::error_message(reply).find("center deadzone") != std::string::npos);
+  }
+  {
+    std::vector<uint8_t> payload{0x02};
+    support::put_f32(payload, 0.0f);
+    support::put_f32(payload, 0.11f);
+    const auto reply = fx.request(Msg::SetDeadzoneOverride, payload);
+    CHECK(is(reply, Msg::Error));
+    CHECK(support::error_message(reply).find("range deadzone") != std::string::npos);
+  }
+  CHECK(!fx.store.settings().manual_center_deadzone.has_value());
+  CHECK(!fx.store.settings().manual_range_deadzone.has_value());
+
   // A bad value under a CLEAR flag is ignored, as the protocol documents.
   std::vector<uint8_t> payload{0x02};
   support::put_f32(payload, std::numeric_limits<float>::quiet_NaN());

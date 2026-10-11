@@ -728,3 +728,29 @@ TEST(control_xac_output_hold_centers_the_gamepad_until_released) {
   CHECK_EQ(ports.xac.back().x, 0.7f);
   CHECK_EQ(ports.xac.back().y, -0.5f);
 }
+
+TEST(recalibration_gate_refuses_a_second_request_until_the_sweep_finishes) {
+  oc::RecalibrationGate gate;
+  std::error_code ec;
+  CHECK(!gate.take()); // nothing requested yet
+  CHECK(gate.request(ec));
+  CHECK(!ec);
+
+  // Pending, not yet taken: refused.
+  CHECK(!gate.request(ec));
+  CHECK(ec == std::errc::device_or_resource_busy);
+
+  // The loop takes it once; the sweep is now running and still busy.
+  CHECK(gate.take());
+  CHECK(!gate.take());
+  ec.clear();
+  CHECK(!gate.request(ec));
+  CHECK(ec == std::errc::device_or_resource_busy);
+  CHECK(!gate.take()); // the refused request did not queue a second sweep
+
+  gate.finish();
+  ec.clear();
+  CHECK(gate.request(ec));
+  CHECK(!ec);
+  CHECK(gate.take());
+}

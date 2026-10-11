@@ -435,12 +435,12 @@
         <legend>Manual deadzone overrides</legend>
         <div class="edit-row">
           <label><input type="checkbox" id="centerDzEnable"> override center deadzone</label>
-          <input type="number" id="centerDzValue" class="grow" step="0.001" min="0" max="0.5" disabled>
+          <input type="number" id="centerDzValue" aria-label="Center deadzone value" class="grow" step="0.001" min="0" max="0.5" disabled>
           <span class="muted">calibration-derived shown above; leave unchecked to use it as-is</span>
         </div>
         <div class="edit-row">
           <label><input type="checkbox" id="rangeDzEnable"> override range deadzone</label>
-          <input type="number" id="rangeDzValue" class="grow" step="0.001" min="0" max="0.1" disabled>
+          <input type="number" id="rangeDzValue" aria-label="Range deadzone value" class="grow" step="0.001" min="0" max="0.1" disabled>
         </div>
         <div class="edit-row">
           <button id="applyDeadzoneBtn" class="primary" disabled>Apply live</button>
@@ -1669,7 +1669,7 @@
     function onTransportGone(t) {
       if (transport !== t) return;
       transport = null;
-      state = null; haveState = false;
+      state = null; haveState = false; recalPending = false;
       failPending(new Error("transport lost"));
       Promise.resolve(t.close()).catch(() => {});
       parser.reset();
@@ -1708,7 +1708,7 @@
       parser.reset();
       consoleCarry = "";
       // Whatever was known about the last device is stale now.
-      state = null; haveState = false;
+      state = null; haveState = false; recalPending = false;
       updateUI();
       setStatus("connected", "Connected");
       els.devInfo.textContent = "Connected: " + t.name;
@@ -1747,7 +1747,7 @@
       els.applyNudgeBtn.disabled = !connected || busy || !haveState;
       els.modeMouseBtn.disabled = !connected || busy || !haveState;
       els.modeXacBtn.disabled = !connected || busy || !haveState;
-      els.recalibrateBtn.disabled = !connected || busy;
+      els.recalibrateBtn.disabled = !connected || busy || recalPending;
       els.diagRefreshBtn.disabled = !connected || busy;
       els.flashBtn.disabled = !connected || busy;
       els.latestCheckBtn.disabled = latestBusy || busy;
@@ -1767,6 +1767,10 @@
     let pendingTxn = null;
     let txnChain = Promise.resolve();
     let busy = false;
+    // A recalibration the device accepted and has not reported on yet. The
+    // device refuses a second request while the sweep runs, so keep the
+    // button off until CALIBRATION_RESULT arrives (or the link drops).
+    let recalPending = false;
     let uploading = false; // an OTA session is open on the device (set after OTA_BEGIN OK)
 
     function failPending(err) {
@@ -1788,6 +1792,8 @@
       if (els.logFrames.checked)
         logLine("rx", (TYPE_NAME[frame.type] || ("0x" + frame.type.toString(16))) + " " + hex(frame.payload));
       if (frame.module === MODULE_CALIBRATION && frame.reply && frame.type === TYPE.CALIBRATION_RESULT) {
+        recalPending = false;
+        updateUI();
         const success = frame.payload.length >= 1 && frame.payload[0] === 1;
         if (success) {
           els.recalInfo.textContent = "Finished successfully.";
@@ -2016,6 +2022,11 @@
       applyManualOffset(parseFloat(els.offsetX.value), parseFloat(els.offsetY.value)));
     els.zeroOffsetBtn.addEventListener("click", () => applyManualOffset(0, 0));
 
+    // Same limits the device enforces (OmegaCalibration::MAX_CENTER_DEADZONE /
+    // MAX_RANGE_DEADZONE); keep in step with the inputs' max attributes.
+    const MAX_CENTER_DEADZONE = 0.5;
+    const MAX_RANGE_DEADZONE = 0.1;
+
     els.applyDeadzoneBtn.addEventListener("click", async () => {
       if (!transport || busy) return;
       const centerOn = els.centerDzEnable.checked;
@@ -2024,6 +2035,12 @@
       const rangeVal = parseFloat(els.rangeDzValue.value);
       if (centerOn && !Number.isFinite(centerVal)) { logLine("err", "Center deadzone override: enter a number first."); return; }
       if (rangeOn && !Number.isFinite(rangeVal)) { logLine("err", "Range deadzone override: enter a number first."); return; }
+      if (centerOn && (centerVal < 0 || centerVal > MAX_CENTER_DEADZONE)) {
+        logLine("err", "Center deadzone override must be between 0 and " + MAX_CENTER_DEADZONE + "."); return;
+      }
+      if (rangeOn && (rangeVal < 0 || rangeVal > MAX_RANGE_DEADZONE)) {
+        logLine("err", "Range deadzone override must be between 0 and " + MAX_RANGE_DEADZONE + "."); return;
+      }
       const payload = encodeSetDeadzoneOverride(centerOn, centerVal, rangeOn, rangeVal);
       busy = true; updateUI(); setStatus("busy", "Applying deadzone...");
       try {
@@ -2126,6 +2143,7 @@
         // sequence; the actual pass/fail arrives later as an unsolicited
         // CALIBRATION_RESULT frame, handled in dispatchFrame() above.
         await transact(TYPE.START_CALIBRATION, null, [TYPE.OK], CMD_TIMEOUT_MS, 0);
+        recalPending = true;
         logLine("sys", "Recalibration accepted; follow the device's console prompts " +
                 "(Web Serial) \u2014 this page updates automatically when it's done.");
       } catch (e) {

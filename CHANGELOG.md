@@ -99,6 +99,16 @@ in `version.txt`.
 
 ### Fixed
 
+- **Out-of-range deadzone overrides are rejected.** Typing 2 in the console's
+  center deadzone box was stored and saved, and shrank the stick's usable
+  travel until it was cleared. The device now refuses values above 0.5
+  (center) or 0.1 (range), the console checks the same limits before
+  sending, and an out-of-range override already saved on a device is ignored
+  and logged at boot.
+- **A second recalibration request mid-sweep is refused.** The device used to
+  accept a RECALIBRATE while a sweep was running and then run another full
+  sweep right after it. It now stays busy until the sweep finishes, and the
+  console keeps its Re-run button disabled until the result arrives.
 - **Console messages after a change tell the truth.** Switching input mode
   no longer logs a failure for a switch that worked (the device restarts
   after its OK, so there was never a state to read back), clicking the
