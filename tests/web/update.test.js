@@ -339,3 +339,56 @@ test("formatProgress", () => {
   assert.equal(P.formatProgress(1234567, 2000000).text, "Writing 61% (1,234,567 B of 2,000,000 B)");
   assert.equal(P.formatBytes(1920 * 1024), "1,966,080 B");
 });
+
+// ---- Choosing which granted device to reopen after a reboot ----
+
+const serialLink = { kind: "serial", vid: 0x303a, pid: 0x4001 };
+const sp = (ref, o) => Object.assign({ ref, kind: "serial", opened: false, vid: 0x303a, pid: 0x4001, serial: "", isSaved: false }, o);
+
+test("reconnect: the saved port wins whether it is listed first or second", () => {
+  const orig = sp("orig", { isSaved: true }), other = sp("other");
+  assert.equal(P.pickReconnectCandidate(serialLink, [orig, other]).candidate, orig);
+  const r = P.pickReconnectCandidate(serialLink, [other, orig]);
+  assert.equal(r.candidate, orig);
+  assert.equal(r.reason, "exact");
+});
+
+test("reconnect: two same-VID/PID sticks and the original absent is ambiguous", () => {
+  const r = P.pickReconnectCandidate(serialLink, [sp("a"), sp("b")]);
+  assert.equal(r.candidate, null);
+  assert.equal(r.reason, "ambiguous");
+});
+
+test("reconnect: a single VID/PID match is used when the saved port is gone", () => {
+  const only = sp("new");
+  const r = P.pickReconnectCandidate(serialLink, [only, sp("x", { vid: 1, pid: 2 })]);
+  assert.equal(r.candidate, only);
+  assert.equal(r.reason, "only-match");
+  assert.equal(P.pickReconnectCandidate(serialLink, []).reason, "none");
+});
+
+test("reconnect: opened ports are skipped", () => {
+  const open = sp("open", { opened: true, isSaved: true });
+  assert.equal(P.pickReconnectCandidate(serialLink, [open]).reason, "none");
+  const free = sp("free");
+  const r = P.pickReconnectCandidate(serialLink, [open, free]);
+  assert.equal(r.candidate, free);
+  assert.equal(r.reason, "only-match");
+});
+
+test("reconnect: USB serial number picks one of several sticks", () => {
+  const link = { kind: "usb", vid: 0x303a, pid: 0x4001, serial: "AAA" };
+  const u = (ref, serial) => sp(ref, { kind: "usb", serial });
+  const want = u("a", "AAA");
+  const r = P.pickReconnectCandidate(link, [u("b", "BBB"), want, u("c", "CCC")]);
+  assert.equal(r.candidate, want);
+  assert.equal(r.reason, "exact");
+  assert.equal(P.pickReconnectCandidate(link, [u("b", "BBB"), u("c", "CCC")]).reason, "none");
+});
+
+test("reconnect: USB without a known serial and several matches is ambiguous", () => {
+  const link = { kind: "usb", vid: 0x303a, pid: 0x4001, serial: "" };
+  const u = (ref) => sp(ref, { kind: "usb" });
+  assert.equal(P.pickReconnectCandidate(link, [u("a"), u("b")]).reason, "ambiguous");
+  assert.equal(P.pickReconnectCandidate(link, [u("a")]).reason, "only-match");
+});

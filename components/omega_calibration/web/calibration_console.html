@@ -1315,7 +1315,28 @@
     }
   }
 
+  // Chooses which already-granted port or device to reopen after a reboot.
+  // link: { kind: "serial" | "usb", vid, pid, serial? } of the stick that was
+  // connected. candidates: plain descriptors { ref, kind, opened, vid, pid,
+  // serial?, isSaved } where isSaved is true for the exact port or device
+  // object that was connected before. Never guesses between several sticks.
+  // reason: exact | only-match | ambiguous | none.
+  function pickReconnectCandidate(link, candidates) {
+    const free = (candidates || []).filter((c) => c && !c.opened && c.kind === link.kind);
+    const saved = free.find((c) => c.isSaved);
+    if (saved) return { candidate: saved, reason: "exact" };
+    let same = free.filter((c) => c.vid === link.vid && c.pid === link.pid);
+    if (link.kind === "usb" && link.serial) {
+      const bySerial = same.filter((c) => c.serial === link.serial);
+      if (bySerial.length === 1) return { candidate: bySerial[0], reason: "exact" };
+      same = bySerial;
+    }
+    if (same.length === 1) return { candidate: same[0], reason: "only-match" };
+    return { candidate: null, reason: same.length > 1 ? "ambiguous" : "none" };
+  }
+
   const OmegaProtocol = {
+    pickReconnectCandidate,
     FEED_URL, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
     OTA_SLOT_SIZE, CHIP_ID_ESP32S3, DEFAULT_PROJECT, KIND_LABEL,
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
@@ -1682,7 +1703,7 @@
     function onConnected(t) {
       transport = t;
       lastLink = t.kind === "usb"
-        ? { kind: "usb", vid: t.device.vendorId, pid: t.device.productId, serial: t.device.serialNumber || "" }
+        ? { kind: "usb", vid: t.device.vendorId, pid: t.device.productId, serial: t.device.serialNumber || "", device: t.device }
         : { kind: "serial", port: t.port, info: (t.port.getInfo ? t.port.getInfo() : {}) };
       parser.reset();
       consoleCarry = "";
@@ -2772,21 +2793,35 @@
     // ---- Reboot, reconnect, outcome ----
     let lastUpdate = null; // eslint-disable-line no-unused-vars
     let reconnecting = false;
+    const AMBIGUOUS_MSG = "More than one Omega Stick is connected, so this page cannot tell which one to " +
+      "reconnect to. Press Reconnect and pick the updated stick.";
 
+    // Returns { candidate, reason } from OmegaProtocol.pickReconnectCandidate.
+    // The decision (exact saved object first, VID/PID only when unique) is
+    // made there so it is unit tested; this adapts real ports and devices.
+    let reconnectAmbiguous = false;
     async function findGranted(link) {
+      let cands;
+      let want;
       if (link.kind === "usb") {
         const list = await navigator.usb.getDevices();
-        return list.find((d) => d.vendorId === link.vid && d.productId === link.pid &&
-                                (!link.serial || d.serialNumber === link.serial) && !d.opened) || null;
+        want = { kind: "usb", vid: link.vid, pid: link.pid, serial: link.serial || "" };
+        cands = list.map((d) => ({
+          ref: d, kind: "usb", opened: !!d.opened, vid: d.vendorId, pid: d.productId,
+          serial: d.serialNumber || "", isSaved: d === link.device,
+        }));
+      } else {
+        const ports = await navigator.serial.getPorts();
+        const info = link.info || {};
+        want = { kind: "serial", vid: info.usbVendorId, pid: info.usbProductId };
+        cands = ports.map((p) => {
+          const i = p.getInfo ? p.getInfo() : {};
+          return { ref: p, kind: "serial", opened: !!p.readable, vid: i.usbVendorId, pid: i.usbProductId,
+                   serial: "", isSaved: p === link.port };
+        });
+        if (want.vid === undefined) cands = cands.filter((c) => c.isSaved);
       }
-      const ports = await navigator.serial.getPorts();
-      const info = link.info || {};
-      const same = ports.find((p) => {
-        if (p.readable) return false;
-        const i = p.getInfo ? p.getInfo() : {};
-        return info.usbVendorId !== undefined && i.usbVendorId === info.usbVendorId && i.usbProductId === info.usbProductId;
-      });
-      return same || ports.find((p) => p === link.port && !p.readable) || null;
+      return OmegaProtocol.pickReconnectCandidate(want, cands);
     }
     async function openGranted(link, cand) {
       const t = link.kind === "usb" ? await connectUsb(cand) : await connectSerial(cand);
@@ -2803,10 +2838,11 @@
       try {
         while (Date.now() < deadline) {
           if (transport) return true;
-          let cand = null;
-          try { cand = await findGranted(link); } catch (_) { }
-          if (cand) {
-            try { if (await openGranted(link, cand)) return true; }
+          let found = null;
+          try { found = await findGranted(link); } catch (_) { }
+          reconnectAmbiguous = !!found && found.reason === "ambiguous";
+          if (found && found.candidate) {
+            try { if (await openGranted(link, found.candidate)) return true; }
             catch (e) { if (failures++ % 5 === 0) logLine("sys", "Reconnect attempt failed (" + e.message + "); retrying..."); }
           }
           els.updateDetail.textContent = "Waiting for the device to come back. " +
@@ -2840,8 +2876,10 @@
         els.updateStatus.className = "update-status warn";
         els.updateDetail.textContent = "";
         els.updateMessage.textContent = "";
-        els.updateError.textContent = "The device has restarted but this page could not reconnect to it by itself. " +
-          "Unplug it and plug it in again if it does not appear, then press Reconnect.";
+        els.updateError.textContent = reconnectAmbiguous
+          ? AMBIGUOUS_MSG
+          : "The device has restarted but this page could not reconnect to it by itself. " +
+            "Unplug it and plug it in again if it does not appear, then press Reconnect.";
         els.fwReconnectBtn.hidden = false;
         els.fwReconnectBtn.focus();
         logLine("err", "Automatic reconnect timed out.");
@@ -2856,8 +2894,8 @@
       let done = false;
       if (link) {
         try {
-          const cand = await findGranted(link);
-          if (cand) done = await openGranted(link, cand);
+          const found = await findGranted(link);
+          if (found.candidate) done = await openGranted(link, found.candidate);
         } catch (e) { logLine("sys", "Reconnect failed: " + e.message); }
       }
       if (!done && !transport) {
@@ -2927,7 +2965,9 @@
           if (!ok && upd && upd.phase === "rebooting") {
             hideProgress();
             els.updateStatus.className = "update-status warn";
-            els.updateError.textContent = "The device restarted but this page could not reconnect to it by itself. Press Reconnect.";
+            els.updateError.textContent = reconnectAmbiguous
+              ? AMBIGUOUS_MSG
+              : "The device restarted but this page could not reconnect to it by itself. Press Reconnect.";
             els.fwReconnectBtn.hidden = false;
           }
         });

@@ -692,7 +692,28 @@
     }
   }
 
+  // Chooses which already-granted port or device to reopen after a reboot.
+  // link: { kind: "serial" | "usb", vid, pid, serial? } of the stick that was
+  // connected. candidates: plain descriptors { ref, kind, opened, vid, pid,
+  // serial?, isSaved } where isSaved is true for the exact port or device
+  // object that was connected before. Never guesses between several sticks.
+  // reason: exact | only-match | ambiguous | none.
+  function pickReconnectCandidate(link, candidates) {
+    const free = (candidates || []).filter((c) => c && !c.opened && c.kind === link.kind);
+    const saved = free.find((c) => c.isSaved);
+    if (saved) return { candidate: saved, reason: "exact" };
+    let same = free.filter((c) => c.vid === link.vid && c.pid === link.pid);
+    if (link.kind === "usb" && link.serial) {
+      const bySerial = same.filter((c) => c.serial === link.serial);
+      if (bySerial.length === 1) return { candidate: bySerial[0], reason: "exact" };
+      same = bySerial;
+    }
+    if (same.length === 1) return { candidate: same[0], reason: "only-match" };
+    return { candidate: null, reason: same.length > 1 ? "ambiguous" : "none" };
+  }
+
   const OmegaProtocol = {
+    pickReconnectCandidate,
     FEED_URL, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
     OTA_SLOT_SIZE, CHIP_ID_ESP32S3, DEFAULT_PROJECT, KIND_LABEL,
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
