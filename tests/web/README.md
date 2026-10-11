@@ -12,7 +12,10 @@ node --test "tests/web/*.test.js"
 - `protocol.test.js`: CRC-32 vectors, exact `buildFrame` byte layouts, the
   request payload encoders, the streaming `FrameParser` (split chunks, garbage,
   bad CRC, truncated frames, batched frames, correlation ids), `parseErrorReply`,
-  `parseDiscovery` and `decodeState`. Expected bytes are derived by hand from
+  `parseDiscovery` (including v2 records with the protocol id),
+  `selectCalibrationModule` (service found by protocol id on any module id,
+  discovery v1 falls back to module 5, version mismatch flagged) and
+  `decodeState`. Expected bytes are derived by hand from
   `stream_frame.hpp`, `dispatcher.hpp` and `calibration_service.hpp`, with CRCs
   cross-checked against Node's `zlib.crc32`.
 - `golden.test.js`: checks the JS encoders, `FrameParser` and decoders against
@@ -21,7 +24,10 @@ node --test "tests/web/*.test.js"
   from C++ with `OMEGA_WRITE_GOLDEN=1 build-host/omega_host_tests`, never by hand.
 - `update.test.js`: the pure firmware-update logic in `omega_protocol.js`
   (`inspectImage`, `compareFirmware`, `buildFlashPlan`, `buildRevertPlan`,
-  `decideOutcome`, `describeUpdateError`, `formatProgress`). Test images are
+  `decideOutcome`, `describeUpdateError`, `formatProgress`), and
+  `pickReconnectCandidate`, which chooses the stick to reopen after a reboot
+  (exact saved port first, then a unique VID/PID or USB serial match, and
+  never a guess between several sticks). Test images are
   built byte by byte following `esp_image_header_t` and `esp_app_desc_t`.
 - `latest.test.js`: the release-feed side of "Check for latest firmware"
   (`feedUrlFor`, `parseReleaseFeed`, `summarizeAvailability`), including a
