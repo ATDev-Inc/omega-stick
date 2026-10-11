@@ -47,3 +47,6 @@ __pycache__/
 
 # Host unit test build tree (tests/host/README.md)
 build-*/
+
+# Desktop simulator build tree is covered by build-*/ above; its default data directory:
+omega_sim_data/
