@@ -331,6 +331,20 @@ test("parseDiscovery: device info and a module list", () => {
   });
 });
 
+test("parseDiscovery: v2 records carry protocol id and version", () => {
+  const payload = concat(
+    bytes(2, 0), str("Omega Stick"), str("v1.2"),
+    bytes(1),
+    bytes(5), str("Calibration"), str("calibration_console.html"), str(""),
+    str(P.PROTOCOL_ID), bytes(1, 0));
+  const info = P.parseDiscovery(payload);
+  assert.equal(P.PROTOCOL_ID, "omega.calibration");
+  assert.deepEqual(info.modules, [
+    { id: 5, name: "Calibration", app: "calibration_console.html", desc: "",
+      protocol: "omega.calibration", protocolVersion: 1 },
+  ]);
+});
+
 test("parseDiscovery: empty device strings and zero modules", () => {
   assert.deepEqual(P.parseDiscovery(bytes(1, 0, 0, 0, 0)),
                    { version: 1, device: "", fw: "", modules: [] });

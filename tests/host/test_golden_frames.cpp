@@ -335,7 +335,9 @@ std::string build_golden_json() {
       mod.add("id", std::to_string(service.module_id()))
           .add("name", quote(std::string(info.name)))
           .add("app", quote(std::string(info.app)))
-          .add("desc", quote(std::string(info.description)));
+          .add("desc", quote(std::string(info.description)))
+          .add("protocol", quote(std::string(info.protocol)))
+          .add("protocolVersion", std::to_string(info.protocol_version));
       Obj o;
       o.add("version", std::to_string(espp::Dispatcher::kDiscoveryVersion))
           .add("device", quote("omega-stick"))

@@ -314,7 +314,7 @@ dependency, so the lock could not stay at the old mix of 1.3.3 to 1.3.5. A fresh
 solve picked espp 1.3.7 together with tinyusb 2.4.0; the `ota-implementation`
 branch's lock, with every espp component at 1.3.6 and tinyusb unchanged, was the
 smaller jump and had already run on hardware, so that is the one adopted. The
-1.3.6 dispatcher adds `ModuleInfo::protocol`, now set to `"espp.calibration"`.
+1.3.6 dispatcher adds `ModuleInfo::protocol` and `protocol_version`; see D24.
 The host tests pin the same release (see [tests/host](../tests/host/README.md));
 the XAC report-layout tests give identical results on hid-rp 1.3.3 and 1.3.6.
 
@@ -470,3 +470,16 @@ request.
 | **Head / eye / sip-and-puff / voice input** | Different product |
 | **Battery power** | HW-5. Triggers UN 38.3 and IEC 62133-2 for no v1 benefit |
 | **Any medical or therapeutic claim** | See [compliance.md](compliance.md). Changes what category the product is treated as |
+
+## D24: Identify services by dispatcher protocol id, not module id
+
+The espp dispatcher was experimental through 1.3.x, and the espp maintainer
+says its protocol-id API is the planned long-term-support one, so the firmware
+uses it. `CalibrationService` advertises `kProtocol = "omega.calibration"` and
+`kProtocolVersion = 1` in its `ModuleInfo`, as espp's own services do, and the
+calibration console finds the service by that id (discovery version 2) instead
+of assuming module id 5. The `omega.` namespace is ours because the wire format
+is ours; D20 first set `"espp.calibration"`, which is replaced. Module id 5
+stays the routing default. espp 1.3.6 already ships this API, so no dependency
+version changed. Change the id only for an incompatible wire format; otherwise
+bump the version.

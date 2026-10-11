@@ -568,6 +568,7 @@
   const MAX_FRAME = HEADER_SIZE + MAX_PAYLOAD + CRC_SIZE;
   const MODULE_CALIBRATION = 5;
   const MODULE_DISCOVERY = 0xFF, T_LIST_MODULES = 0x00;
+  const PROTOCOL_ID = "omega.calibration", PROTOCOL_VERSION = 1; // dispatcher discovery v2
   const FLAGS_VERSION = 1;
   const FLAGS_REQUEST = (FLAGS_VERSION << 4) | 0; // 0x10
   const FLAGS_REPLY_BIT = 0x01;
@@ -713,7 +714,12 @@
     const device = str(), fw = str();
     const count = u8();
     const modules = [];
-    for (let m = 0; m < count; m++) modules.push({ id: u8(), name: str(), app: str(), desc: str() });
+    for (let m = 0; m < count; m++) {
+      const rec = { id: u8(), name: str(), app: str(), desc: str() };
+      // Discovery v2 records also carry [protocol str][protocol_version u16 LE].
+      if (version >= 2) { rec.protocol = str(); need(2); rec.protocolVersion = payload[i] | (payload[i + 1] << 8); i += 2; }
+      modules.push(rec);
+    }
     return { version, device, fw, modules };
   }
 
@@ -796,7 +802,7 @@
 
   const OmegaProtocol = {
     HEADER_SIZE, CRC_SIZE, MAX_PAYLOAD, MAX_FRAME,
-    MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES,
+    MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, PROTOCOL_ID, PROTOCOL_VERSION,
     FLAGS_REQUEST, FLAGS_REPLY_BIT, FLAG_CORRELATION,
     TYPE, INPUT_MODE,
     crc32, buildFrame, FrameParser, readU32,
@@ -819,7 +825,7 @@
     const DEFAULT_VID = 0x1209, DEFAULT_PID = 0x0d32; // OMEGA_USB_VID / OMEGA_USB_PID in main/main.cpp
     const VENDOR_CLASS = 0xFF;
     const {
-      MAX_FRAME, MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, TYPE, INPUT_MODE,
+      MAX_FRAME, MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, PROTOCOL_ID, PROTOCOL_VERSION, TYPE, INPUT_MODE,
       buildFrame, FrameParser, readU32, parseErrorReply, parseDiscovery, decodeState, decodeDiagnostics,
       encodeSetManualOffset, encodeSetDeadzoneOverride, encodeSetNudgeSettings, encodeSetInputMode,
     } = globalThis.OmegaProtocol;
@@ -1298,8 +1304,15 @@
       if (!payload) return;
       let info;
       try { info = parseDiscovery(payload); } catch (_) { return; }
-      if (info.modules.some((m) => m.id === MODULE_CALIBRATION)) {
+      // Identify the service by its protocol id (discovery v2); the module id is
+      // only a routing key. Older firmware (discovery v1) falls back to the id.
+      const byProtocol = info.modules.find((m) => m.protocol === PROTOCOL_ID);
+      if (byProtocol || (info.version < 2 && info.modules.some((m) => m.id === MODULE_CALIBRATION))) {
         logLine("sys", "Device advertises " + info.modules.length + " module(s); calibration module present.");
+        if (byProtocol && byProtocol.protocolVersion && byProtocol.protocolVersion !== PROTOCOL_VERSION) {
+          logLine("warn", "Device speaks " + PROTOCOL_ID + " v" + byProtocol.protocolVersion +
+                  ", this console speaks v" + PROTOCOL_VERSION + ".");
+        }
         return;
       }
       const names = info.modules.map((m) => m.name + " (#" + m.id + ")").join(", ") || "none";
