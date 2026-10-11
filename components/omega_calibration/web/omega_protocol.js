@@ -14,6 +14,7 @@
   const MAX_FRAME = HEADER_SIZE + MAX_PAYLOAD + CRC_SIZE;
   const MODULE_CALIBRATION = 5;
   const MODULE_DISCOVERY = 0xFF, T_LIST_MODULES = 0x00;
+  const PROTOCOL_ID = "omega.calibration", PROTOCOL_VERSION = 1; // dispatcher discovery v2
   const FLAGS_VERSION = 1;
   const FLAGS_REQUEST = (FLAGS_VERSION << 4) | 0; // 0x10
   const FLAGS_REPLY_BIT = 0x01;
@@ -159,8 +160,33 @@
     const device = str(), fw = str();
     const count = u8();
     const modules = [];
-    for (let m = 0; m < count; m++) modules.push({ id: u8(), name: str(), app: str(), desc: str() });
+    for (let m = 0; m < count; m++) {
+      const rec = { id: u8(), name: str(), app: str(), desc: str() };
+      // Discovery v2 records also carry [protocol str][protocol_version u16 LE].
+      if (version >= 2) { rec.protocol = str(); need(2); rec.protocolVersion = payload[i] | (payload[i + 1] << 8); i += 2; }
+      modules.push(rec);
+    }
     return { version, device, fw, modules };
+  }
+
+  // Picks the dispatcher module id to talk to from a parseDiscovery() result.
+  // Discovery v2 identifies the service by protocol id, so a service configured
+  // on a non-default module id is still found. Discovery v1 has no protocol
+  // field, so the default id is checked instead. When nothing matches, id stays
+  // at the default (how === "missing").
+  function selectCalibrationModule(info) {
+    if (info.version >= 2) {
+      const m = info.modules.find((x) => x.protocol === PROTOCOL_ID);
+      if (m) {
+        return {
+          id: m.id, how: "protocol",
+          versionMismatch: !!m.protocolVersion && m.protocolVersion !== PROTOCOL_VERSION,
+        };
+      }
+    } else if (info.modules.some((x) => x.id === MODULE_CALIBRATION)) {
+      return { id: MODULE_CALIBRATION, how: "legacy-id", versionMismatch: false };
+    }
+    return { id: MODULE_CALIBRATION, how: "missing", versionMismatch: false };
   }
 
   // Fixed 79-byte STATE struct; see calibration_service.hpp.
@@ -719,11 +745,11 @@
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
     decideOutcome, describeUpdateError, formatProgress, formatBytes,
     HEADER_SIZE, CRC_SIZE, MAX_PAYLOAD, MAX_FRAME,
-    MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES,
+    MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, PROTOCOL_ID, PROTOCOL_VERSION,
     FLAGS_REQUEST, FLAGS_REPLY_BIT, FLAG_CORRELATION,
     TYPE, INPUT_MODE,
     crc32, buildFrame, FrameParser, readU32,
-    parseErrorReply, parseDiscovery, decodeState, decodeDiagnostics,
+    parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
     encodeSetManualOffset, encodeSetDeadzoneOverride,
     encodeSetNudgeSettings, encodeSetInputMode,
   };

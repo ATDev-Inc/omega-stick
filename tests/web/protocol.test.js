@@ -331,6 +331,20 @@ test("parseDiscovery: device info and a module list", () => {
   });
 });
 
+test("parseDiscovery: v2 records carry protocol id and version", () => {
+  const payload = concat(
+    bytes(2, 0), str("Omega Stick"), str("v1.2"),
+    bytes(1),
+    bytes(5), str("Calibration"), str("calibration_console.html"), str(""),
+    str(P.PROTOCOL_ID), bytes(1, 0));
+  const info = P.parseDiscovery(payload);
+  assert.equal(P.PROTOCOL_ID, "omega.calibration");
+  assert.deepEqual(info.modules, [
+    { id: 5, name: "Calibration", app: "calibration_console.html", desc: "",
+      protocol: "omega.calibration", protocolVersion: 1 },
+  ]);
+});
+
 test("parseDiscovery: empty device strings and zero modules", () => {
   assert.deepEqual(P.parseDiscovery(bytes(1, 0, 0, 0, 0)),
                    { version: 1, device: "", fw: "", modules: [] });
@@ -429,4 +443,38 @@ test("decodeState: honours byteOffset of a parsed frame payload", () => {
   // And a subarray view with a non-zero offset into a bigger buffer:
   const padded = concat(bytes(9, 9, 9), statePayload({ hasCenter: true, hasRange: true, mode: 1 }));
   assert.equal(P.decodeState(padded.subarray(3)).centerX, 0.5);
+});
+
+// ------------------------------------------------- selectCalibrationModule
+function v2Info(...mods) {
+  return { version: 2, device: "d", fw: "f", modules: mods.map((m) => ({ name: "n", app: "a", desc: "", ...m })) };
+}
+
+test("selectCalibrationModule: v2 service configured on module 7", () => {
+  const info = v2Info({ id: 4, protocol: "omega.ota", protocolVersion: 1 },
+                      { id: 7, protocol: P.PROTOCOL_ID, protocolVersion: 1 });
+  assert.deepEqual(P.selectCalibrationModule(info), { id: 7, how: "protocol", versionMismatch: false });
+});
+
+test("selectCalibrationModule: v2 service on the default module 5", () => {
+  const info = v2Info({ id: 5, protocol: P.PROTOCOL_ID, protocolVersion: 1 });
+  assert.deepEqual(P.selectCalibrationModule(info), { id: 5, how: "protocol", versionMismatch: false });
+});
+
+test("selectCalibrationModule: v1 falls back to the default id", () => {
+  const info = { version: 1, device: "d", fw: "f", modules: [{ id: 5, name: "cal", app: "a", desc: "" }] };
+  assert.deepEqual(P.selectCalibrationModule(info), { id: 5, how: "legacy-id", versionMismatch: false });
+  info.modules[0].id = 7; // v1 cannot identify a moved service
+  assert.deepEqual(P.selectCalibrationModule(info), { id: 5, how: "missing", versionMismatch: false });
+});
+
+test("selectCalibrationModule: v2 without the protocol is missing, even at id 5", () => {
+  const info = v2Info({ id: 5, protocol: "omega.other", protocolVersion: 1 });
+  assert.deepEqual(P.selectCalibrationModule(info), { id: 5, how: "missing", versionMismatch: false });
+  assert.deepEqual(P.selectCalibrationModule(v2Info()), { id: 5, how: "missing", versionMismatch: false });
+});
+
+test("selectCalibrationModule: protocol version mismatch is flagged", () => {
+  const info = v2Info({ id: 7, protocol: P.PROTOCOL_ID, protocolVersion: 2 });
+  assert.deepEqual(P.selectCalibrationModule(info), { id: 7, how: "protocol", versionMismatch: true });
 });

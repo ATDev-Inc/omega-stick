@@ -637,6 +637,7 @@
   const MAX_FRAME = HEADER_SIZE + MAX_PAYLOAD + CRC_SIZE;
   const MODULE_CALIBRATION = 5;
   const MODULE_DISCOVERY = 0xFF, T_LIST_MODULES = 0x00;
+  const PROTOCOL_ID = "omega.calibration", PROTOCOL_VERSION = 1; // dispatcher discovery v2
   const FLAGS_VERSION = 1;
   const FLAGS_REQUEST = (FLAGS_VERSION << 4) | 0; // 0x10
   const FLAGS_REPLY_BIT = 0x01;
@@ -782,8 +783,33 @@
     const device = str(), fw = str();
     const count = u8();
     const modules = [];
-    for (let m = 0; m < count; m++) modules.push({ id: u8(), name: str(), app: str(), desc: str() });
+    for (let m = 0; m < count; m++) {
+      const rec = { id: u8(), name: str(), app: str(), desc: str() };
+      // Discovery v2 records also carry [protocol str][protocol_version u16 LE].
+      if (version >= 2) { rec.protocol = str(); need(2); rec.protocolVersion = payload[i] | (payload[i + 1] << 8); i += 2; }
+      modules.push(rec);
+    }
     return { version, device, fw, modules };
+  }
+
+  // Picks the dispatcher module id to talk to from a parseDiscovery() result.
+  // Discovery v2 identifies the service by protocol id, so a service configured
+  // on a non-default module id is still found. Discovery v1 has no protocol
+  // field, so the default id is checked instead. When nothing matches, id stays
+  // at the default (how === "missing").
+  function selectCalibrationModule(info) {
+    if (info.version >= 2) {
+      const m = info.modules.find((x) => x.protocol === PROTOCOL_ID);
+      if (m) {
+        return {
+          id: m.id, how: "protocol",
+          versionMismatch: !!m.protocolVersion && m.protocolVersion !== PROTOCOL_VERSION,
+        };
+      }
+    } else if (info.modules.some((x) => x.id === MODULE_CALIBRATION)) {
+      return { id: MODULE_CALIBRATION, how: "legacy-id", versionMismatch: false };
+    }
+    return { id: MODULE_CALIBRATION, how: "missing", versionMismatch: false };
   }
 
   // Fixed 79-byte STATE struct; see calibration_service.hpp.
@@ -1342,11 +1368,11 @@
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
     decideOutcome, describeUpdateError, formatProgress, formatBytes,
     HEADER_SIZE, CRC_SIZE, MAX_PAYLOAD, MAX_FRAME,
-    MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES,
+    MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, PROTOCOL_ID, PROTOCOL_VERSION,
     FLAGS_REQUEST, FLAGS_REPLY_BIT, FLAG_CORRELATION,
     TYPE, INPUT_MODE,
     crc32, buildFrame, FrameParser, readU32,
-    parseErrorReply, parseDiscovery, decodeState, decodeDiagnostics,
+    parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
     encodeSetManualOffset, encodeSetDeadzoneOverride,
     encodeSetNudgeSettings, encodeSetInputMode,
   };
@@ -1365,8 +1391,8 @@
     const DEFAULT_VID = 0x1209, DEFAULT_PID = 0x0d32; // OMEGA_USB_VID / OMEGA_USB_PID in main/main.cpp
     const VENDOR_CLASS = 0xFF;
     const {
-      MAX_FRAME, MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, TYPE, INPUT_MODE,
-      buildFrame, FrameParser, readU32, parseErrorReply, parseDiscovery, decodeState, decodeDiagnostics,
+      MAX_FRAME, MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, PROTOCOL_ID, PROTOCOL_VERSION, TYPE, INPUT_MODE,
+      buildFrame, FrameParser, readU32, parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
       encodeSetManualOffset, encodeSetDeadzoneOverride, encodeSetNudgeSettings, encodeSetInputMode,
       inspectImage, buildFlashPlan, buildRevertPlan, decideOutcome, describeUpdateError, formatProgress, formatBytes,
       DEFAULT_PROJECT, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
@@ -1658,6 +1684,7 @@
         try { await transact(TYPE.OTA_ABORT, null, [TYPE.OK], 2000, 0); } catch (_) { }
       }
       if (transport === t) transport = null;
+      calibrationModule = MODULE_CALIBRATION;
       failPending(new Error("disconnected"));
       await t.close();
       parser.reset();
@@ -1669,6 +1696,7 @@
     function onTransportGone(t) {
       if (transport !== t) return;
       transport = null;
+      calibrationModule = MODULE_CALIBRATION;
       state = null; haveState = false; recalPending = false;
       failPending(new Error("transport lost"));
       Promise.resolve(t.close()).catch(() => {});
@@ -1713,15 +1741,20 @@
       setStatus("connected", "Connected");
       els.devInfo.textContent = "Connected: " + t.name;
       logLine("sys", "Connected (" + (t.kind === "usb" ? "WebUSB vendor interface" : "Web Serial / CDC") + ").");
-      checkModulePresent().catch(() => {});
-      refreshState();
-      return refreshFwInfo().then((ok) => {
-        if (ok) {
-          logLine("sys", fwSummary());
-          if (fwInfo.pending) watchPendingVerify();
-        }
-        maybeAutoCheck();
-        return onUpdateReconnected(ok).then(() => ok);
+      calibrationModule = MODULE_CALIBRATION;
+      // Discovery first, so the first calibration request already uses the
+      // module id the device reported (worst case adds DISCOVERY_TIMEOUT_MS).
+      return checkModulePresent().catch(() => {}).then(() => {
+        if (transport !== t) return false;
+        refreshState();
+        return refreshFwInfo().then((ok) => {
+          if (ok) {
+            logLine("sys", fwSummary());
+            if (fwInfo.pending) watchPendingVerify();
+          }
+          maybeAutoCheck();
+          return onUpdateReconnected(ok).then(() => ok);
+        });
       });
     }
 
@@ -1783,6 +1816,10 @@
     }
 
     let discoveryResolve = null;
+    // Dispatcher module id of the calibration service on this connection. The
+    // default is used until discovery v2 reports another id; reset on every
+    // connect and disconnect.
+    let calibrationModule = MODULE_CALIBRATION;
 
     function dispatchFrame(frame) {
       if (frame.module === MODULE_DISCOVERY && frame.reply && frame.type === T_LIST_MODULES) {
@@ -1791,7 +1828,7 @@
       }
       if (els.logFrames.checked)
         logLine("rx", (TYPE_NAME[frame.type] || ("0x" + frame.type.toString(16))) + " " + hex(frame.payload));
-      if (frame.module === MODULE_CALIBRATION && frame.reply && frame.type === TYPE.CALIBRATION_RESULT) {
+      if (frame.module === calibrationModule && frame.reply && frame.type === TYPE.CALIBRATION_RESULT) {
         recalPending = false;
         updateUI();
         const success = frame.payload.length >= 1 && frame.payload[0] === 1;
@@ -1807,7 +1844,7 @@
         }
         return;
       }
-      if (pendingTxn && frame.module === MODULE_CALIBRATION && frame.reply &&
+      if (pendingTxn && frame.module === calibrationModule && frame.reply &&
           (pendingTxn.expect.has(frame.type) || frame.type === TYPE.ERROR)) {
         clearTimeout(pendingTxn.timer);
         const p = pendingTxn;
@@ -1828,7 +1865,7 @@
     function transact(type, payload, expectTypes, timeoutMs, retries) {
       const attempt = () => new Promise((resolve, reject) => {
         if (!transport) { reject(new Error("not connected")); return; }
-        const frame = buildFrame(MODULE_CALIBRATION, type, payload);
+        const frame = buildFrame(calibrationModule, type, payload);
         if (els.logFrames.checked) logLine("tx", TYPE_NAME[type] + " " + hex(frame));
         pendingTxn = {
           expect: new Set(expectTypes),
@@ -1870,8 +1907,17 @@
       if (!payload) return;
       let info;
       try { info = parseDiscovery(payload); } catch (_) { return; }
-      if (info.modules.some((m) => m.id === MODULE_CALIBRATION)) {
-        logLine("sys", "Device advertises " + info.modules.length + " module(s); calibration module present.");
+      // Identify the service by its protocol id (discovery v2); the module id is
+      // only a routing key. Older firmware (discovery v1) falls back to the id.
+      const sel = selectCalibrationModule(info);
+      if (sel.how !== "missing") {
+        calibrationModule = sel.id;
+        logLine("sys", "Device advertises " + info.modules.length + " module(s); calibration module present (#" + sel.id + ").");
+        if (sel.versionMismatch) {
+          const m = info.modules.find((x) => x.id === sel.id);
+          logLine("warn", "Device speaks " + PROTOCOL_ID + " v" + m.protocolVersion +
+                  ", this console speaks v" + PROTOCOL_VERSION + ".");
+        }
         return;
       }
       const names = info.modules.map((m) => m.name + " (#" + m.id + ")").join(", ") || "none";

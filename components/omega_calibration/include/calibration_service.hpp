@@ -279,6 +279,14 @@ public:
   /// Config::module to serve on a different id.
   static constexpr uint8_t kModule = 5;
 
+  /// Stable, machine-matched protocol id advertised through dispatcher
+  /// discovery (DispatcherModuleInfo::protocol). The module id is only a
+  /// routing key; a peer finds this service by this id. Never reuse it for an
+  /// incompatible wire format: bump kProtocolVersion instead.
+  static constexpr const char *kProtocol = "omega.calibration";
+  /// Version of the calibration protocol this build speaks.
+  static constexpr uint16_t kProtocolVersion = 1;
+
   /// How long a queued reply is given to reach the wire before a reboot the
   /// same request asked for (RESTART, REVERT, OTA_FINISH).
   static constexpr std::chrono::milliseconds REPLY_FLUSH_DELAY{750};
@@ -396,7 +404,8 @@ public:
             .app = "calibration_console.html",
             .description = "Live-view and live-edit calibration, deadzones, "
                            "nudge-click tuning, mouse/XAC mode, and firmware update",
-            .protocol = "espp.calibration"};
+            .protocol = kProtocol,
+            .protocol_version = kProtocolVersion};
   }
 
   /**
