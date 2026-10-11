@@ -162,12 +162,13 @@ inline bool desc_from_hex(const std::string &hex, esp_app_desc_t &d) {
   };
   esp_app_desc_t out{};
   auto *b = reinterpret_cast<uint8_t *>(&out);
-  for (size_t i = 0; i < sizeof(out); i++) {
-    const int hi = nibble(hex[2 * i]), lo = nibble(hex[2 * i + 1]);
+  // The size check above makes hex exactly two digits per descriptor byte.
+  for (size_t j = 0; j + 1 < hex.size(); j += 2) {
+    const int hi = nibble(hex[j]), lo = nibble(hex[j + 1]);
     if (hi < 0 || lo < 0) {
       return false;
     }
-    b[i] = static_cast<uint8_t>(hi << 4 | lo);
+    b[j / 2] = static_cast<uint8_t>(hi << 4 | lo);
   }
   if (out.magic_word != kAppDescMagic) {
     return false;
