@@ -34,6 +34,13 @@ node --test "tests/web/*.test.js"
   round trip through the feed that `scripts/release_feed.mjs` writes.
 - `release_feed.test.js`: `scripts/release_feed.mjs`, which builds
   `latest.json`, `manifest.json` and `SHA256SUMS` for the Pages site.
+- `sim.test.js`: the simulator helpers in `omega_protocol.js`
+  (`encodeSimMessage`, `parseSimMessage`, `validateSimScript` against the rules
+  in `docs/simulator.md`, `createHidAccumulator`).
+- `mock_sim.mjs` and `mock_sim.test.js`: a small stand-in for `omega_sim` (WebSocket
+  server on 127.0.0.1, Node built-ins only) used to try the console's Simulator
+  connection in a browser without the real simulator. Run it with
+  `node tests/web/mock_sim.mjs [port]`; the test is a quick smoke test of it.
 - `sync.test.js`: keeps the copy of the protocol code inside the HTML identical
   to `omega_protocol.js`, and checks the page only uses exported names.
 

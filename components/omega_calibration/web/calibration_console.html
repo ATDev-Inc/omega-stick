@@ -370,6 +370,48 @@
       display: none; background: var(--panel-bg); border: 1px solid var(--danger);
       color: var(--danger); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px;
     }
+
+    /* Simulator panel */
+    #simUrl { min-width: 190px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .sim-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0 18px; }
+    .sim-pad {
+      position: relative; width: 168px; height: 168px; margin: 8px auto 4px; border-radius: 50%;
+      background: var(--chip-bg); border: 2px solid var(--input-border);
+      touch-action: none; cursor: grab; user-select: none;
+    }
+    .sim-pad::before, .sim-pad::after {
+      content: ""; position: absolute; background: var(--panel-border);
+    }
+    .sim-pad::before { left: 50%; top: 8px; bottom: 8px; width: 1px; }
+    .sim-pad::after { top: 50%; left: 8px; right: 8px; height: 1px; }
+    .sim-pad:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+    .sim-knob {
+      position: absolute; left: 50%; top: 50%; width: 36px; height: 36px; margin: -18px 0 0 -18px;
+      border-radius: 50%; background: var(--accent); border: 2px solid var(--accent-contrast);
+      box-shadow: var(--shadow); pointer-events: none;
+    }
+    .sim-readout { text-align: center; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+    .sim-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .sim-buttons button.active { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
+    .sim-field { display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--text-muted); }
+    .sim-field select, .sim-field input[type="number"] {
+      font: inherit; color: var(--text); background: var(--input-bg);
+      border: 1px solid var(--input-border); border-radius: 7px; padding: 6px 10px; min-width: 110px;
+    }
+    .sim-field select:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+    .sim-confirm { display: none; margin-top: 8px; padding: 8px 10px; border: 1px solid var(--danger); border-radius: 8px; }
+    .sim-confirm.open { display: block; }
+    #simScriptErrors { color: var(--danger); margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; }
+    #simScriptErrors:empty { display: none; }
+    .sim-out-wrap { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start; }
+    #simCanvas { border: 1px solid var(--panel-border); border-radius: 8px; background: var(--input-bg); max-width: 100%; }
+    .sim-clicks { display: flex; gap: 8px; margin: 0 0 8px; }
+    .sim-click {
+      min-width: 56px; text-align: center; padding: 4px 10px; border-radius: 7px; font-size: 12.5px;
+      border: 1px solid var(--input-border); background: var(--chip-bg); color: var(--text-muted);
+    }
+    .sim-click.flash { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); font-weight: 600; }
+    @media (prefers-reduced-motion: reduce) { .sim-pad, .sim-knob, .sim-click { transition: none; } }
   </style>
 </head>
 <body>
@@ -380,8 +422,10 @@
     </header>
 
     <div id="unsupported">
-      This browser supports neither WebUSB nor Web Serial. Use a Chromium-based
-      browser (Chrome / Edge / Opera) on a secure origin (https, localhost or file://).
+      This browser supports neither WebUSB nor Web Serial, so a real stick cannot be connected
+      from here. The Simulator connection below still works. To use a real stick, open this page
+      in a Chromium-based browser (Chrome / Edge / Opera) on a secure origin (https, localhost
+      or file://).
     </div>
 
     <div class="panel">
@@ -391,10 +435,126 @@
         <button id="serialBtn" class="primary">Connect Web Serial</button>
         <label><input type="checkbox" id="anyDevice"> show all USB devices (no VID/PID filter)</label>
       </div>
+      <div class="row" style="margin-top: 8px;">
+        <button id="simBtn" class="primary">Connect Simulator</button>
+        <label for="simUrl">Simulator address</label>
+        <input type="text" id="simUrl" value="ws://127.0.0.1:8765" spellcheck="false" autocomplete="off">
+      </div>
       <p id="devInfo" class="muted" style="margin: 8px 0 0;">
         Not connected. Needs a firmware build with the calibration module (5) registered on the
         same dispatcher as coredump/OTA (see the protocol spec in this page's source comment).
+        No stick? Run omega_sim and choose Connect Simulator (see docs/simulator.md).
       </p>
+    </div>
+
+    <div class="panel" id="simPanel" hidden>
+      <h2>Simulator</h2>
+      <p id="simInfo" class="muted" style="margin: 0 0 6px;">Not connected to the simulator.</p>
+      <div class="sim-grid">
+        <div>
+          <fieldset>
+            <legend>Stick</legend>
+            <div id="simPad" class="sim-pad" tabindex="0" role="group"
+                 aria-label="Virtual stick pad" aria-describedby="simPadHelp">
+              <div id="simKnob" class="sim-knob"></div>
+            </div>
+            <div id="simStickText" class="sim-readout" aria-hidden="true">Stick x 0.00, y 0.00</div>
+            <div id="simStickLive" class="sr-only" aria-live="polite"></div>
+            <p id="simPadHelp" class="muted" style="margin: 6px 0;">
+              Drag the knob, or focus the pad and use the arrow keys (0.05 a step, Shift for 0.01).
+              Home or Space centers it.
+            </p>
+            <label><input type="checkbox" id="simHold"> Hold position (do not spring back on release)</label>
+          </fieldset>
+          <fieldset>
+            <legend>Motion</legend>
+            <div class="sim-buttons" id="simPatterns"></div>
+            <div class="row" style="margin-top: 8px;">
+              <button id="simStopBtn">Stop</button>
+              <span class="muted">Source: <span id="simSource" aria-live="polite">manual</span> <span id="simSourceTime"></span></span>
+            </div>
+          </fieldset>
+        </div>
+        <div>
+          <fieldset>
+            <legend>Faults and conditions</legend>
+            <div class="row" style="align-items: flex-end;">
+              <label class="sim-field" for="simFault">Sensor fault
+                <select id="simFault">
+                  <option value="ok">ok</option>
+                  <option value="no_response">no_response</option>
+                  <option value="stuck_counter">stuck_counter</option>
+                  <option value="weak_magnet">weak_magnet</option>
+                </select>
+              </label>
+              <label class="sim-field" for="simDrift">Drift (units per minute)
+                <input type="number" id="simDrift" min="0" max="10" step="0.01" placeholder="0">
+              </label>
+              <label class="sim-field" for="simNoise">Noise (stick units)
+                <input type="number" id="simNoise" min="0" max="1" step="0.001" placeholder="0.002">
+              </label>
+              <label class="sim-field" for="simNextImage">Next firmware image
+                <select id="simNextImage">
+                  <option value="ok">ok</option>
+                  <option value="fail_self_test">fail_self_test (rolls back)</option>
+                  <option value="crash_loop">crash_loop (reverted)</option>
+                </select>
+              </label>
+            </div>
+            <div class="row" style="margin-top: 8px;">
+              <button id="simApplyBtn" class="primary">Apply</button>
+              <span id="simApplyInfo" class="muted">Only the settings you changed are sent.</span>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Power</legend>
+            <div class="row">
+              <button id="simResetBtn">Power-cycle</button>
+              <button id="simWipeBtn" class="danger">Wipe</button>
+              <span class="muted">Wipe erases the simulated flash and starts a new board.</span>
+            </div>
+            <div id="simWipeConfirm" class="sim-confirm" role="group" aria-label="Confirm wipe">
+              <div>Erase the simulated flash? Calibration and settings are lost and the board starts again as new.</div>
+              <div class="row" style="margin-top: 6px;">
+                <button id="simWipeYesBtn" class="danger">Yes, wipe</button>
+                <button id="simWipeNoBtn">Cancel</button>
+              </div>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Script</legend>
+            <div id="simDrop" class="fw-drop" tabindex="0" role="button"
+                 aria-label="Choose or drop a script file (.json)">
+              Drop a script (.json) here, or press to choose a file
+            </div>
+            <input type="file" id="simFile" accept=".json,application/json" hidden>
+            <div id="simScriptInfo" class="muted" aria-live="polite">The script format is in docs/simulator.md.</div>
+            <ul id="simScriptErrors" role="alert"></ul>
+          </fieldset>
+        </div>
+      </div>
+      <fieldset>
+        <legend>Output</legend>
+        <div class="sim-out-wrap">
+          <canvas id="simCanvas" width="240" height="160" aria-hidden="true"></canvas>
+          <div style="flex: 1; min-width: 220px;">
+            <div class="sim-clicks" id="simClickBox">
+              <span id="simClickL" class="sim-click">Left</span>
+              <span id="simClickR" class="sim-click">Right</span>
+              <span class="muted" style="align-self: center;">Wheel <span id="simWheel">0</span></span>
+            </div>
+            <p id="simOutText" class="muted" style="margin: 0 0 4px;">No output yet.</p>
+            <p id="simLastClick" class="muted" style="margin: 0 0 8px;" aria-live="polite">Last click: none</p>
+            <button id="simClearOutBtn">Clear output</button>
+          </div>
+        </div>
+        <dl class="kv" style="margin-top: 10px;" aria-label="Sensor readout">
+          <dt>x, y</dt><dd id="simSenXY">-</dd>
+          <dt>bx, by (mT)</dt><dd id="simSenB">-</dd>
+          <dt>ok</dt><dd id="simSenOk">-</dd>
+          <dt>fault</dt><dd id="simSenFault">-</dd>
+        </dl>
+      </fieldset>
     </div>
 
     <div class="panel">
@@ -1365,7 +1525,285 @@
     return { candidate: null, reason: same.length > 1 ? "ambiguous" : "none" };
   }
 
+  // ---- Simulator (omega_sim) WebSocket messages, see docs/simulator.md ----
+  // Pure helpers: build and check the JSON control messages, parse telemetry,
+  // validate uploaded scripts, and accumulate HID output for the output view.
+  const SIM_PATTERNS = ["rest", "circle", "calibrate", "nudge_right", "nudge_left", "nudge_up", "nudge_down", "wander"];
+  const SIM_FAULTS = ["ok", "no_response", "stuck_counter", "weak_magnet"];
+  const SIM_NEXT_IMAGE = ["ok", "fail_self_test", "crash_loop"];
+  const SIM_SOURCE_KINDS = ["manual", "pattern", "script"];
+  const SIM_REPLIES = ["ok", "busy", "invalid", "error"];
+  const SIM_ACTIONS = ["recalibrate", "save", "restart", "set_mode", "set_deadzone"];
+  const SIM_SCRIPT_MAX_BYTES = 262144, SIM_SCRIPT_MAX_STEPS = 5000;
+  const SIM_MAX_AT_MS = 86400000; // a day
+  const SIM_STEP_KEYS = ["stick", "pattern", "fault", "drift", "noise", "next_image", "action", "expect"];
+  const SIM_EXPECT_KEYS = ["calibrated", "center_max", "mouse_moved", "clicked", "mode", "sensor_fault", "neutral", "fw_slot", "fw_pending"];
+
+  const isNum = (v) => typeof v === "number" && Number.isFinite(v);
+  const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+  const clampUnit = (v) => Math.max(-1, Math.min(1, v));
+
+  function simNum(v, what) {
+    if (!isNum(v)) throw new Error(what + " must be a finite number");
+    return v;
+  }
+  function simOneOf(v, list, what) {
+    if (typeof v !== "string" || !list.includes(v)) throw new Error(what + " must be one of " + list.join(", "));
+    return v;
+  }
+
+  // Builds the JSON text for a page to simulator message. Throws an Error with
+  // a plain message when the shape is wrong or a number is NaN or infinite.
+  // Stick values are clamped to -1..1.
+  function encodeSimMessage(msg) {
+    if (!isObj(msg) || typeof msg.type !== "string") throw new Error("message needs a type");
+    let out;
+    switch (msg.type) {
+      case "hello":
+        out = { type: "hello", client: "console", version: 1 };
+        break;
+      case "stick":
+        out = { type: "stick", x: clampUnit(simNum(msg.x, "x")), y: clampUnit(simNum(msg.y, "y")) };
+        break;
+      case "pattern":
+        out = { type: "pattern", name: simOneOf(msg.name, SIM_PATTERNS, "pattern name") };
+        break;
+      case "script": {
+        const v = validateSimScript(msg.script);
+        if (!v.ok) throw new Error("script is not valid: " + v.errors[0]);
+        out = { type: "script", script: msg.script };
+        break;
+      }
+      case "stop": case "reset": case "wipe":
+        out = { type: msg.type };
+        break;
+      case "fault":
+        out = { type: "fault", sensor: simOneOf(msg.sensor, SIM_FAULTS, "sensor fault") };
+        break;
+      case "drift": {
+        const rate = simNum(msg.rate, "drift rate");
+        if (rate < 0 || rate > 10) throw new Error("drift rate must be 0 to 10");
+        out = { type: "drift", rate };
+        break;
+      }
+      case "noise": {
+        const sigma = simNum(msg.sigma, "noise");
+        if (sigma < 0 || sigma > 1) throw new Error("noise must be 0 to 1");
+        out = { type: "noise", sigma };
+        break;
+      }
+      case "next_image":
+        out = { type: "next_image", behavior: simOneOf(msg.behavior, SIM_NEXT_IMAGE, "next image behavior") };
+        break;
+      default:
+        throw new Error("unknown message type: " + msg.type);
+    }
+    return JSON.stringify(out);
+  }
+
+  // Parses a simulator to page text message. Returns a normalized object, or
+  // null for anything that is not valid JSON, has an unknown type (ignored on
+  // purpose so either side can add messages) or has a malformed body.
+  function parseSimMessage(text) {
+    let m;
+    try { m = JSON.parse(text); } catch (_) { return null; }
+    if (!isObj(m) || typeof m.type !== "string") return null;
+    const str = (v) => (typeof v === "string" ? v : "");
+    switch (m.type) {
+      case "hello":
+        return { type: "hello", sim: str(m.sim), version: isNum(m.version) ? m.version : 0,
+                 fw: str(m.fw), mode: str(m.mode), slot: str(m.slot) };
+      case "hid":
+        if (m.mode === "mouse") {
+          if (!isNum(m.dx) || !isNum(m.dy)) return null;
+          return { type: "hid", mode: "mouse", dx: m.dx, dy: m.dy,
+                   wheel: isNum(m.wheel) ? m.wheel : 0, buttons: isNum(m.buttons) ? (m.buttons | 0) : 0 };
+        }
+        if (m.mode === "xac") {
+          if (!isNum(m.x) || !isNum(m.y)) return null;
+          return { type: "hid", mode: "xac", x: clampUnit(m.x), y: clampUnit(m.y) };
+        }
+        return null;
+      case "sensor":
+        if (!isNum(m.x) || !isNum(m.y)) return null;
+        return { type: "sensor", x: m.x, y: m.y, bx: isNum(m.bx) ? m.bx : 0, by: isNum(m.by) ? m.by : 0,
+                 ok: m.ok === true, fault: str(m.fault) || "ok" };
+      case "source":
+        if (!SIM_SOURCE_KINDS.includes(m.kind)) return null;
+        return { type: "source", kind: m.kind, name: str(m.name), t_ms: isNum(m.t_ms) ? m.t_ms : 0, done: m.done === true };
+      case "rebooting":
+        return { type: "rebooting", reason: str(m.reason) };
+      case "error":
+        return { type: "error", message: str(m.message) };
+      default:
+        return null;
+    }
+  }
+
+  // Checks a script against the format in docs/simulator.md. Returns
+  // { ok, errors } where errors are plain sentences (at most 20).
+  function validateSimScript(script) {
+    const errors = [];
+    const add = (s) => { if (errors.length < 20) errors.push(s); };
+    if (!isObj(script)) return { ok: false, errors: ["The script must be a JSON object."] };
+    let size = 0;
+    try { size = JSON.stringify(script).length; } catch (_) { return { ok: false, errors: ["The script cannot be read as JSON."] }; }
+    if (size > SIM_SCRIPT_MAX_BYTES) return { ok: false, errors: ["The script is larger than " + (SIM_SCRIPT_MAX_BYTES / 1024) + " KB."] };
+    if (script.version !== 1) add("The script needs \"version\": 1.");
+    if (script.name !== undefined && (typeof script.name !== "string" || script.name.length > 200)) {
+      add("\"name\" must be text of at most 200 characters.");
+    }
+    for (const k of Object.keys(script)) {
+      if (k !== "version" && k !== "name" && k !== "steps") add("Unknown script key \"" + k + "\".");
+    }
+    if (!Array.isArray(script.steps)) {
+      add("The script needs a \"steps\" list.");
+      return { ok: false, errors };
+    }
+    if (script.steps.length > SIM_SCRIPT_MAX_STEPS) {
+      add("The script has " + script.steps.length + " steps; the limit is " + SIM_SCRIPT_MAX_STEPS + ".");
+      return { ok: false, errors };
+    }
+    let prev = -Infinity;
+    script.steps.forEach((step, i) => {
+      const at = "Step " + (i + 1) + ": ";
+      if (!isObj(step)) { add(at + "must be an object."); return; }
+      if (!isNum(step.at_ms) || step.at_ms < 0 || step.at_ms > SIM_MAX_AT_MS) {
+        add(at + "\"at_ms\" must be a number from 0 to " + SIM_MAX_AT_MS + ".");
+      } else {
+        if (step.at_ms < prev) add(at + "\"at_ms\" " + step.at_ms + " is earlier than the step before it; steps must be in time order.");
+        prev = step.at_ms;
+      }
+      const present = SIM_STEP_KEYS.filter((k) => step[k] !== undefined);
+      if (present.length !== 1) {
+        add(at + (present.length === 0
+          ? "needs one of " + SIM_STEP_KEYS.join(", ") + "."
+          : "has more than one action (" + present.join(", ") + "); use exactly one."));
+        return;
+      }
+      const key = present[0];
+      const val = step[key];
+      const allowed = ["at_ms", key];
+      if (key === "pattern") allowed.push("duration_ms");
+      if (key === "action") allowed.push("value", "expect_reply");
+      for (const k of Object.keys(step)) if (!allowed.includes(k)) add(at + "unexpected key \"" + k + "\".");
+      switch (key) {
+        case "stick":
+          if (!Array.isArray(val) || val.length !== 2 || !val.every((n) => isNum(n) && n >= -1 && n <= 1)) {
+            add(at + "\"stick\" must be [x, y] with each value from -1 to 1.");
+          }
+          break;
+        case "pattern":
+          if (typeof val !== "string" || !SIM_PATTERNS.includes(val)) add(at + "unknown pattern. Known: " + SIM_PATTERNS.join(", ") + ".");
+          if (step.duration_ms !== undefined && (!isNum(step.duration_ms) || step.duration_ms <= 0 || step.duration_ms > SIM_MAX_AT_MS)) {
+            add(at + "\"duration_ms\" must be a positive number.");
+          }
+          break;
+        case "fault":
+          if (typeof val !== "string" || !SIM_FAULTS.includes(val)) add(at + "unknown fault. Known: " + SIM_FAULTS.join(", ") + ".");
+          break;
+        case "drift":
+          if (!isNum(val) || val < 0 || val > 10) add(at + "\"drift\" must be a number from 0 to 10.");
+          break;
+        case "noise":
+          if (!isNum(val) || val < 0 || val > 1) add(at + "\"noise\" must be a number from 0 to 1.");
+          break;
+        case "next_image":
+          if (typeof val !== "string" || !SIM_NEXT_IMAGE.includes(val)) add(at + "unknown next_image. Known: " + SIM_NEXT_IMAGE.join(", ") + ".");
+          break;
+        case "action":
+          validateSimAction(step, at, add);
+          break;
+        case "expect":
+          validateSimExpect(val, at, add);
+          break;
+      }
+    });
+    return { ok: errors.length === 0, errors };
+  }
+
+  function validateSimAction(step, at, add) {
+    const a = step.action;
+    if (typeof a !== "string" || !SIM_ACTIONS.includes(a)) {
+      add(at + "unknown action. Known: " + SIM_ACTIONS.join(", ") + ".");
+      return;
+    }
+    if (step.expect_reply !== undefined && !SIM_REPLIES.includes(step.expect_reply)) {
+      add(at + "\"expect_reply\" must be one of " + SIM_REPLIES.join(", ") + ".");
+    }
+    if (a === "set_mode") {
+      if (step.value !== "mouse" && step.value !== "xac") add(at + "set_mode needs \"value\": \"mouse\" or \"xac\".");
+    } else if (a === "set_deadzone") {
+      const v = step.value;
+      if (!isObj(v)) { add(at + "set_deadzone needs a \"value\" object with \"center\" and/or \"range\"."); return; }
+      const keys = Object.keys(v);
+      if (keys.length === 0) add(at + "set_deadzone \"value\" needs \"center\" and/or \"range\".");
+      for (const k of keys) {
+        if (k !== "center" && k !== "range") add(at + "set_deadzone \"value\" has unknown key \"" + k + "\".");
+      }
+      if (v.center !== undefined && (!isNum(v.center) || v.center < 0 || v.center > 0.5)) add(at + "deadzone center must be 0 to 0.5.");
+      if (v.range !== undefined && (!isNum(v.range) || v.range < 0 || v.range > 0.1)) add(at + "deadzone range must be 0 to 0.1.");
+    } else if (step.value !== undefined) {
+      add(at + a + " does not take a \"value\".");
+    }
+  }
+
+  function validateSimExpect(e, at, add) {
+    if (!isObj(e) || Object.keys(e).length === 0) { add(at + "\"expect\" needs at least one assertion."); return; }
+    const bool = (k) => { if (typeof e[k] !== "boolean") add(at + "expect." + k + " must be true or false."); };
+    const oneOf = (k, list) => { if (!list.includes(e[k])) add(at + "expect." + k + " must be one of " + list.join(", ") + "."); };
+    for (const k of Object.keys(e)) {
+      switch (k) {
+        case "calibrated": case "sensor_fault": case "fw_pending": bool(k); break;
+        case "neutral": if (e[k] !== true) add(at + "expect.neutral must be true."); break;
+        case "center_max": if (!isNum(e[k]) || e[k] < 0) add(at + "expect.center_max must be a number of at least 0."); break;
+        case "mouse_moved": oneOf(k, ["right", "left", "up", "down", "none"]); break;
+        case "clicked": oneOf(k, ["left", "right", "none"]); break;
+        case "mode": oneOf(k, ["mouse", "xac"]); break;
+        case "fw_slot": oneOf(k, ["ota_0", "ota_1"]); break;
+        default: add(at + "unknown expect key \"" + k + "\". Known: " + SIM_EXPECT_KEYS.join(", ") + ".");
+      }
+    }
+  }
+
+  // Accumulates hid telemetry for the output view. Mouse mode sums dx, dy and
+  // the wheel, keeps a position that wraps inside width x height, and counts
+  // button presses (rising edges of bit 0 left, bit 1 right). XAC mode keeps
+  // the latest x and y. apply() returns { clicked: ["left", ...] } for the
+  // presses in that message, or null when the message is not hid telemetry.
+  function createHidAccumulator(opts) {
+    const width = (opts && opts.width) || 200, height = (opts && opts.height) || 200;
+    const wrap = (v, n) => ((v % n) + n) % n;
+    const acc = {
+      mode: "", totalDx: 0, totalDy: 0, wheel: 0, buttons: 0,
+      leftClicks: 0, rightClicks: 0, lastClick: "", x: 0, y: 0,
+      posX: width / 2, posY: height / 2,
+      reset() {
+        acc.totalDx = 0; acc.totalDy = 0; acc.wheel = 0; acc.buttons = 0;
+        acc.leftClicks = 0; acc.rightClicks = 0; acc.lastClick = "";
+        acc.x = 0; acc.y = 0; acc.posX = width / 2; acc.posY = height / 2;
+      },
+      apply(msg) {
+        if (!msg || msg.type !== "hid") return null;
+        acc.mode = msg.mode;
+        const clicked = [];
+        if (msg.mode === "xac") { acc.x = msg.x; acc.y = msg.y; return { clicked }; }
+        acc.totalDx += msg.dx; acc.totalDy += msg.dy; acc.wheel += msg.wheel;
+        acc.posX = wrap(acc.posX + msg.dx, width);
+        acc.posY = wrap(acc.posY + msg.dy, height);
+        const rose = msg.buttons & ~acc.buttons;
+        if (rose & 1) { acc.leftClicks++; clicked.push("left"); acc.lastClick = "left"; }
+        if (rose & 2) { acc.rightClicks++; clicked.push("right"); acc.lastClick = "right"; }
+        acc.buttons = msg.buttons;
+        return { clicked };
+      },
+    };
+    return acc;
+  }
+
   const OmegaProtocol = {
+    SIM_PATTERNS, SIM_FAULTS, SIM_NEXT_IMAGE,
+    encodeSimMessage, parseSimMessage, validateSimScript, createHidAccumulator,
     pickReconnectCandidate,
     FEED_URL, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
     OTA_SLOT_SIZE, CHIP_ID_ESP32S3, DEFAULT_PROJECT, KIND_LABEL,
@@ -1400,6 +1838,7 @@
       encodeSetManualOffset, encodeSetDeadzoneOverride, encodeSetNudgeSettings, encodeSetInputMode,
       inspectImage, buildFlashPlan, buildRevertPlan, decideOutcome, describeUpdateError, formatProgress, formatBytes,
       DEFAULT_PROJECT, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
+      SIM_PATTERNS, encodeSimMessage, parseSimMessage, validateSimScript, createHidAccumulator,
     } = globalThis.OmegaProtocol;
     const DISCOVERY_TIMEOUT_MS = 800;
     const TYPE_NAME = {
@@ -1421,7 +1860,7 @@
     // Elements & logging
     // ===================================================================
     const els = {};
-    for (const id of ["status", "usbBtn", "serialBtn", "anyDevice", "devInfo",
+    for (const id of ["status", "usbBtn", "serialBtn", "simBtn", "simUrl", "simPanel", "anyDevice", "devInfo",
                       "refreshBtn", "saveFlashBtn", "stateInfo",
                       "offsetX", "offsetY", "applyOffsetBtn", "zeroOffsetBtn",
                       "centerDzEnable", "centerDzValue", "rangeDzEnable", "rangeDzValue", "applyDeadzoneBtn",
@@ -1674,7 +2113,7 @@
 
     if (!navigator.usb) els.usbBtn.disabled = true;
     if (!navigator.serial) els.serialBtn.disabled = true;
-    if (!navigator.usb && !navigator.serial) els.unsupported.style.display = "block";
+    if (!navigator.usb && !navigator.serial) els.unsupported.style.display = "block"; // the Simulator still works
 
     async function disconnect() {
       if (!transport) return;
@@ -1709,6 +2148,7 @@
       updateUI();
       setStatus("", "Disconnected");
       onUpdateTransportGone();
+      if (t.kind === "sim") onSimGone(t);
     }
 
     els.usbBtn.addEventListener("click", async () => {
@@ -1732,19 +2172,46 @@
       }
     });
 
+    els.simBtn.addEventListener("click", async () => {
+      if (transport) { await disconnect(); return; }
+      if (simConnecting) return;
+      const url = normalizeSimUrl(els.simUrl.value);
+      if (!url) {
+        logLine("err", "Enter the simulator address as ws://host:port, for example ws://127.0.0.1:8765.");
+        setStatus("error", "Connect failed");
+        return;
+      }
+      els.simUrl.value = url;
+      try { localStorage.setItem(SIM_URL_KEY, url); } catch (_) { }
+      simConnecting = true; updateUI(); setStatus("busy", "Connecting...");
+      try {
+        const t = await connectSim(url);
+        simConnecting = false;
+        onConnected(t);
+      } catch (e) {
+        simConnecting = false; updateUI();
+        logLine("err", "Simulator connect failed: " + e.message + " Is omega_sim running?");
+        setStatus("error", "Connect failed");
+      }
+    });
+
     function onConnected(t) {
       transport = t;
       lastLink = t.kind === "usb"
         ? { kind: "usb", vid: t.device.vendorId, pid: t.device.productId, serial: t.device.serialNumber || "", device: t.device }
-        : { kind: "serial", port: t.port, info: (t.port.getInfo ? t.port.getInfo() : {}) };
+        : t.kind === "sim"
+          ? { kind: "sim", url: t.url }
+          : { kind: "serial", port: t.port, info: (t.port.getInfo ? t.port.getInfo() : {}) };
       parser.reset();
       consoleCarry = "";
       // Whatever was known about the last device is stale now.
       state = null; haveState = false; recalPending = false;
       updateUI();
+      if (t.kind === "sim") simOnConnected(t);
       setStatus("connected", "Connected");
       els.devInfo.textContent = "Connected: " + t.name;
-      logLine("sys", "Connected (" + (t.kind === "usb" ? "WebUSB vendor interface" : "Web Serial / CDC") + ").");
+      logLine("sys", "Connected (" + (t.kind === "usb" ? "WebUSB vendor interface"
+        : t.kind === "sim" ? "simulator over WebSocket" : "Web Serial / CDC") + ").");
       calibrationModule = MODULE_CALIBRATION;
       // Discovery first, so the first calibration request already uses the
       // module id the device reported (worst case adds DISCOVERY_TIMEOUT_MS).
@@ -1773,8 +2240,14 @@
       els.usbBtn.classList.toggle("primary", !(connected && transport.kind === "usb"));
       els.serialBtn.classList.toggle("danger", connected && transport.kind === "serial");
       els.serialBtn.classList.toggle("primary", !(connected && transport.kind === "serial"));
-      if (navigator.usb) els.usbBtn.disabled = connected && transport.kind !== "usb";
-      if (navigator.serial) els.serialBtn.disabled = connected && transport.kind !== "serial";
+      if (navigator.usb) els.usbBtn.disabled = (connected && transport.kind !== "usb") || simConnecting;
+      if (navigator.serial) els.serialBtn.disabled = (connected && transport.kind !== "serial") || simConnecting;
+      els.simBtn.textContent = connected && transport.kind === "sim" ? "Disconnect" : "Connect Simulator";
+      els.simBtn.classList.toggle("danger", connected && transport.kind === "sim");
+      els.simBtn.classList.toggle("primary", !(connected && transport.kind === "sim"));
+      els.simBtn.disabled = (connected && transport.kind !== "sim") || simConnecting;
+      els.simUrl.disabled = connected || simConnecting;
+      els.simPanel.hidden = !(connected && transport.kind === "sim");
       els.anyDevice.disabled = connected;
       els.refreshBtn.disabled = !connected || busy;
       els.saveFlashBtn.disabled = !connected || busy || !haveState;
@@ -2871,6 +3344,9 @@
     async function findGranted(link) {
       let cands;
       let want;
+      // The simulator needs no permission: the address is all there is, so the
+      // only way to find out whether it is back is to try (openGranted).
+      if (link.kind === "sim") return { candidate: { url: link.url }, reason: "exact" };
       if (link.kind === "usb") {
         const list = await navigator.usb.getDevices();
         want = { kind: "usb", vid: link.vid, pid: link.pid, serial: link.serial || "" };
@@ -2892,7 +3368,8 @@
       return OmegaProtocol.pickReconnectCandidate(want, cands);
     }
     async function openGranted(link, cand) {
-      const t = link.kind === "usb" ? await connectUsb(cand) : await connectSerial(cand);
+      const t = link.kind === "sim" ? await connectSim(cand.url)
+        : link.kind === "usb" ? await connectUsb(cand) : await connectSerial(cand);
       if (t) onConnected(t);
       return !!t;
     }
@@ -2966,7 +3443,7 @@
           if (found.candidate) done = await openGranted(link, found.candidate);
         } catch (e) { logLine("sys", "Reconnect failed: " + e.message); }
       }
-      if (!done && !transport) {
+      if (!done && !transport && !(link && link.kind === "sim")) {
         // Nothing already permitted is available: fall back to the browser's picker.
         try {
           const t = (link && link.kind === "serial") ? await connectSerial() : await connectUsb();
@@ -3058,6 +3535,426 @@
         if (transport) setStatus("connected", "Connected");
       }
     });
+
+    // ===================================================================
+    // Simulator (omega_sim): WebSocket transport and the Simulator panel.
+    // Binary messages are the device byte stream; text messages are the JSON
+    // control and telemetry messages described in docs/simulator.md.
+    // ===================================================================
+    const SIM_URL_KEY = "omegaConsoleSimUrl";
+    const SIM_SEND_MIN_MS = 33;      // at most ~30 stick messages per second
+    const SIM_LIVE_MS = 600;         // screen reader text is updated at most this often
+    const SIM_KNOB_R = 18;           // knob radius in px (matches the CSS)
+    const SIM_TRAIL_MAX = 24;
+    let simConnecting = false;
+    let simReviving = false;
+    try { const saved = localStorage.getItem(SIM_URL_KEY); if (saved) els.simUrl.value = saved; } catch (_) { }
+
+    function normalizeSimUrl(text) {
+      const s = String(text || "").trim();
+      if (!/^wss?:\/\//i.test(s)) return "";
+      try { const u = new URL(s); return (u.protocol === "ws:" || u.protocol === "wss:") && u.hostname ? s : ""; }
+      catch (_) { return ""; }
+    }
+
+    function connectSim(url) {
+      return new Promise((resolve, reject) => {
+        let ws;
+        try { ws = new WebSocket(url); } catch (e) { reject(new Error("The address " + url + " cannot be used.")); return; }
+        ws.binaryType = "arraybuffer";
+        let opened = false;
+        const t = {
+          kind: "sim", name: "Simulator (" + url + ")", url, ws, closing: false, rebooting: false,
+          async send(bytes) {
+            if (ws.readyState !== WebSocket.OPEN) throw new Error("the simulator connection is closed");
+            ws.send(bytes);
+          },
+          async close() { t.closing = true; try { ws.close(); } catch (_) { } },
+        };
+        ws.onopen = () => {
+          opened = true;
+          try { ws.send(encodeSimMessage({ type: "hello" })); } catch (_) { }
+          resolve(t);
+        };
+        ws.onmessage = (ev) => {
+          if (transport !== t) return;
+          if (typeof ev.data === "string") simHandleText(t, ev.data);
+          else handleRxBytes(new Uint8Array(ev.data));
+        };
+        ws.onerror = () => { if (!opened) reject(new Error("Could not open " + url + ".")); };
+        ws.onclose = () => {
+          if (!opened) { reject(new Error("Could not open " + url + ".")); return; }
+          if (!t.closing && transport === t) {
+            if (!t.rebooting) logLine("err", "The simulator connection closed.");
+            onTransportGone(t);
+          }
+        };
+      });
+    }
+
+    // After a restart the simulator closes the socket and accepts the next
+    // connection. The update flow reconnects by itself (autoReconnect); this
+    // covers every other restart (mode switch, Restart device, Power-cycle).
+    function onSimGone(t) {
+      if (!t.rebooting) return;
+      if (upd && upd.phase !== "done") return;
+      simQuickReconnect(t.url);
+    }
+    async function simQuickReconnect(url) {
+      if (simReviving) return;
+      simReviving = true;
+      setStatus("busy", "Restarting...");
+      const deadline = Date.now() + RECONNECT_TIMEOUT_MS;
+      try {
+        while (Date.now() < deadline) {
+          await sleepMs(500);
+          if (transport) return;
+          if (simConnecting) continue;
+          try {
+            const t = await connectSim(url);
+            if (transport) { t.close(); return; }
+            onConnected(t);
+            return;
+          } catch (_) { }
+        }
+        if (!transport) {
+          setStatus("", "Disconnected");
+          logLine("err", "The simulator did not come back. Press Connect Simulator.");
+        }
+      } finally { simReviving = false; }
+    }
+
+    // ---- Sending ----
+    function simSend(msg) {
+      if (!transport || transport.kind !== "sim") return false;
+      try { transport.ws.send(encodeSimMessage(msg)); return true; }
+      catch (e) { logLine("err", "Simulator: " + e.message); return false; }
+    }
+
+    // ---- Panel elements ----
+    const simEl = {};
+    for (const id of ["simInfo", "simPad", "simKnob", "simStickText", "simStickLive", "simHold", "simPatterns",
+                      "simStopBtn", "simSource", "simSourceTime", "simFault", "simDrift", "simNoise", "simNextImage",
+                      "simApplyBtn", "simApplyInfo", "simResetBtn", "simWipeBtn", "simWipeConfirm", "simWipeYesBtn",
+                      "simWipeNoBtn", "simDrop", "simFile", "simScriptInfo", "simScriptErrors", "simCanvas",
+                      "simClickL", "simClickR", "simWheel", "simOutText", "simLastClick", "simClearOutBtn",
+                      "simSenXY", "simSenB", "simSenOk", "simSenFault"]) {
+      simEl[id] = document.getElementById(id);
+    }
+    const sim = {
+      x: 0, y: 0, dragging: false, lastSent: 0, sendTimer: null, liveTimer: null,
+      acc: createHidAccumulator({ width: 240, height: 160 }),
+      trail: [], viewMode: "mouse", drawQueued: false, sourceLabel: "", dirty: new Set(),
+      flashTimers: {},
+    };
+    const simReducedMotion = () => !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    const simFmt = (v) => (Math.round(v * 100) / 100).toFixed(2);
+
+    // ---- Virtual stick ----
+    // Up on the pad is +y. docs/simulator.md does not say which direction +y is.
+    function simPadRadius() { return simEl.simPad.clientWidth / 2 - SIM_KNOB_R; }
+    function simShowStick() {
+      const r = simPadRadius();
+      simEl.simKnob.style.transform = "translate(" + (sim.x * r) + "px, " + (-sim.y * r) + "px)";
+      const text = "Stick x " + simFmt(sim.x) + ", y " + simFmt(sim.y);
+      simEl.simStickText.textContent = text;
+      if (!sim.liveTimer) {
+        sim.liveTimer = setTimeout(() => {
+          sim.liveTimer = null;
+          simEl.simStickLive.textContent = "Stick x " + simFmt(sim.x) + ", y " + simFmt(sim.y);
+        }, SIM_LIVE_MS);
+      }
+    }
+    function simFlushStick() {
+      sim.sendTimer = null;
+      sim.lastSent = performance.now();
+      simSend({ type: "stick", x: sim.x, y: sim.y });
+    }
+    function simSetStick(x, y) {
+      const mag = Math.hypot(x, y);
+      if (mag > 1) { x /= mag; y /= mag; }
+      sim.x = x; sim.y = y;
+      simShowStick();
+      const wait = SIM_SEND_MIN_MS - (performance.now() - sim.lastSent);
+      if (wait <= 0) simFlushStick();
+      else if (!sim.sendTimer) sim.sendTimer = setTimeout(simFlushStick, wait);
+    }
+    function simPointerTo(e) {
+      const rect = simEl.simPad.getBoundingClientRect();
+      const r = simPadRadius();
+      simSetStick((e.clientX - (rect.left + rect.width / 2)) / r, -(e.clientY - (rect.top + rect.height / 2)) / r);
+    }
+    simEl.simPad.addEventListener("pointerdown", (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      e.preventDefault();
+      try { simEl.simPad.setPointerCapture(e.pointerId); } catch (_) { }
+      simEl.simPad.focus({ preventScroll: true });
+      sim.dragging = true;
+      simPointerTo(e);
+    });
+    simEl.simPad.addEventListener("pointermove", (e) => { if (sim.dragging) simPointerTo(e); });
+    const simPadRelease = (e) => {
+      if (!sim.dragging) return;
+      sim.dragging = false;
+      try { simEl.simPad.releasePointerCapture(e.pointerId); } catch (_) { }
+      if (!simEl.simHold.checked) simSetStick(0, 0);
+    };
+    simEl.simPad.addEventListener("pointerup", simPadRelease);
+    simEl.simPad.addEventListener("pointercancel", simPadRelease);
+    simEl.simPad.addEventListener("keydown", (e) => {
+      const step = e.shiftKey ? 0.01 : 0.05;
+      let x = sim.x, y = sim.y;
+      switch (e.key) {
+        case "ArrowLeft": x -= step; break;
+        case "ArrowRight": x += step; break;
+        case "ArrowUp": y += step; break;
+        case "ArrowDown": y -= step; break;
+        case "Home": case " ": x = 0; y = 0; break;
+        default: return;
+      }
+      e.preventDefault();
+      simSetStick(Math.round(x * 100) / 100, Math.round(y * 100) / 100);
+    });
+
+    // ---- Patterns, stop, faults, power ----
+    for (const name of SIM_PATTERNS) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = name.replace(/_/g, " ");
+      b.dataset.pattern = name;
+      b.addEventListener("click", () => simSend({ type: "pattern", name }));
+      simEl.simPatterns.appendChild(b);
+    }
+    simEl.simStopBtn.addEventListener("click", () => {
+      simSend({ type: "stop" });
+      // Stop returns to manual with the stick at rest; show that on the pad.
+      sim.x = 0; sim.y = 0;
+      simShowStick();
+    });
+    function simShowSource(m) {
+      const label = m.kind === "manual" ? "manual"
+        : m.kind + (m.name ? " " + m.name : "") + (m.done ? " (finished)" : "");
+      if (label !== sim.sourceLabel) {
+        sim.sourceLabel = label;
+        simEl.simSource.textContent = label;
+      }
+      simEl.simSourceTime.textContent = m.kind === "manual" ? "" : (m.t_ms / 1000).toFixed(1) + " s";
+      for (const b of simEl.simPatterns.children) {
+        b.classList.toggle("active", m.kind === "pattern" && !m.done && b.dataset.pattern === m.name);
+      }
+    }
+    for (const [id, key] of [["simFault", "fault"], ["simDrift", "drift"], ["simNoise", "noise"], ["simNextImage", "next_image"]]) {
+      const mark = () => sim.dirty.add(key);
+      simEl[id].addEventListener("input", mark);
+      simEl[id].addEventListener("change", mark);
+    }
+    simEl.simApplyBtn.addEventListener("click", () => {
+      const sent = [];
+      const num = (el) => (el.value.trim() === "" ? 0 : Number(el.value));
+      if (sim.dirty.has("fault") && simSend({ type: "fault", sensor: simEl.simFault.value })) sent.push("sensor fault");
+      if (sim.dirty.has("drift") && simSend({ type: "drift", rate: num(simEl.simDrift) })) sent.push("drift");
+      if (sim.dirty.has("noise") && simSend({ type: "noise", sigma: num(simEl.simNoise) })) sent.push("noise");
+      if (sim.dirty.has("next_image") && simSend({ type: "next_image", behavior: simEl.simNextImage.value })) sent.push("next image");
+      sim.dirty.clear();
+      simEl.simApplyInfo.textContent = sent.length ? "Sent: " + sent.join(", ") + "." : "Nothing changed, or a value was not accepted (see the log).";
+    });
+    simEl.simResetBtn.addEventListener("click", () => {
+      simCloseWipe(false);
+      if (simSend({ type: "reset" })) logLine("sys", "Power-cycle requested.");
+    });
+    function simCloseWipe(refocus) {
+      simEl.simWipeConfirm.classList.remove("open");
+      simEl.simWipeBtn.setAttribute("aria-expanded", "false");
+      if (refocus) simEl.simWipeBtn.focus();
+    }
+    simEl.simWipeBtn.setAttribute("aria-expanded", "false");
+    simEl.simWipeBtn.addEventListener("click", () => {
+      simEl.simWipeConfirm.classList.add("open");
+      simEl.simWipeBtn.setAttribute("aria-expanded", "true");
+      simEl.simWipeNoBtn.focus();
+    });
+    simEl.simWipeNoBtn.addEventListener("click", () => simCloseWipe(true));
+    simEl.simWipeConfirm.addEventListener("keydown", (e) => { if (e.key === "Escape") simCloseWipe(true); });
+    simEl.simWipeYesBtn.addEventListener("click", () => {
+      simCloseWipe(false);
+      if (simSend({ type: "wipe" })) logLine("sys", "Wipe requested: the simulated flash is being erased.");
+    });
+
+    // ---- Script upload ----
+    function simShowScriptErrors(list) {
+      simEl.simScriptErrors.textContent = "";
+      for (const e of list) {
+        const li = document.createElement("li");
+        li.textContent = e;
+        simEl.simScriptErrors.appendChild(li);
+      }
+    }
+    async function simLoadScript(file) {
+      simShowScriptErrors([]);
+      if (!file) return;
+      simEl.simScriptInfo.textContent = "Checking " + file.name + "...";
+      if (file.size > 262144) {
+        simEl.simScriptInfo.textContent = "Not sent.";
+        simShowScriptErrors(["The file is larger than 256 KB, which is more than a script can be."]);
+        return;
+      }
+      let script;
+      try { script = JSON.parse(await file.text()); }
+      catch (e) {
+        simEl.simScriptInfo.textContent = "Not sent.";
+        simShowScriptErrors(["The file is not valid JSON (" + e.message + ")."]);
+        return;
+      }
+      const v = validateSimScript(script);
+      if (!v.ok) {
+        simEl.simScriptInfo.textContent = "Not sent: the script has " + v.errors.length + " problem" + (v.errors.length === 1 ? "" : "s") + ".";
+        simShowScriptErrors(v.errors);
+        return;
+      }
+      if (simSend({ type: "script", script })) {
+        simEl.simScriptInfo.textContent = "Sent " + (script.name || file.name) + " (" + script.steps.length +
+          " steps). Progress shows in Source above and in the log.";
+        logLine("sys", "Script sent: " + (script.name || file.name) + ".");
+      } else {
+        simEl.simScriptInfo.textContent = "Not sent: the simulator is not connected.";
+      }
+    }
+    simEl.simDrop.addEventListener("click", () => simEl.simFile.click());
+    simEl.simDrop.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); simEl.simFile.click(); }
+    });
+    simEl.simFile.addEventListener("change", () => {
+      const f = simEl.simFile.files && simEl.simFile.files[0];
+      simEl.simFile.value = "";
+      simLoadScript(f);
+    });
+    simEl.simDrop.addEventListener("dragover", (e) => { e.preventDefault(); simEl.simDrop.classList.add("over"); });
+    simEl.simDrop.addEventListener("dragleave", () => simEl.simDrop.classList.remove("over"));
+    simEl.simDrop.addEventListener("drop", (e) => {
+      e.preventDefault();
+      simEl.simDrop.classList.remove("over");
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) simLoadScript(f);
+    });
+
+    // ---- Output view ----
+    function simQueueDraw() {
+      if (sim.drawQueued) return;
+      sim.drawQueued = true;
+      requestAnimationFrame(simDraw);
+    }
+    function simDraw() {
+      sim.drawQueued = false;
+      const cv = simEl.simCanvas, ctx = cv.getContext("2d");
+      if (!ctx) return;
+      const cs = getComputedStyle(document.documentElement);
+      const css = (n, d) => cs.getPropertyValue(n).trim() || d;
+      const accent = css("--accent", "#2563eb"), grid = css("--panel-border", "#cccccc"), danger = css("--danger", "#dc2626");
+      const W = cv.width, H = cv.height;
+      ctx.clearRect(0, 0, W, H);
+      ctx.strokeStyle = grid; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(W / 2 + 0.5, 0); ctx.lineTo(W / 2 + 0.5, H); ctx.moveTo(0, H / 2 + 0.5); ctx.lineTo(W, H / 2 + 0.5); ctx.stroke();
+      if (sim.viewMode === "xac") {
+        const r = Math.min(W, H) / 2 - 8;
+        ctx.beginPath(); ctx.arc(W / 2, H / 2, r, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = accent;
+        ctx.beginPath(); ctx.arc(W / 2 + sim.acc.x * r, H / 2 - sim.acc.y * r, 6, 0, Math.PI * 2); ctx.fill();
+        return;
+      }
+      if (!simReducedMotion()) {
+        sim.trail.forEach((p, i) => {
+          ctx.globalAlpha = 0.12 + 0.5 * (i / sim.trail.length);
+          ctx.fillStyle = accent;
+          ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2); ctx.fill();
+        });
+        ctx.globalAlpha = 1;
+      }
+      ctx.fillStyle = (sim.acc.buttons & 3) ? danger : accent;
+      ctx.beginPath(); ctx.arc(sim.acc.posX, sim.acc.posY, 6, 0, Math.PI * 2); ctx.fill();
+    }
+    function simFlash(which) {
+      const el = which === "left" ? simEl.simClickL : simEl.simClickR;
+      el.classList.add("flash");
+      clearTimeout(sim.flashTimers[which]);
+      sim.flashTimers[which] = setTimeout(() => el.classList.remove("flash"), 300);
+    }
+    function simShowOutText() {
+      const a = sim.acc;
+      if (sim.viewMode === "xac") {
+        simEl.simOutText.textContent = "Gamepad output: x " + simFmt(a.x) + ", y " + simFmt(a.y) + ".";
+        simEl.simWheel.textContent = "-";
+      } else {
+        simEl.simOutText.textContent = "Mouse output so far: moved " + a.totalDx + " across and " + a.totalDy +
+          " down in total. Left clicks " + a.leftClicks + ", right clicks " + a.rightClicks + ".";
+        simEl.simWheel.textContent = String(a.wheel);
+      }
+    }
+    function simOnHid(m) {
+      const r = sim.acc.apply(m);
+      if (!r) return;
+      sim.viewMode = m.mode;
+      if (m.mode === "mouse") {
+        if (m.dx !== 0 || m.dy !== 0) {
+          sim.trail.push({ x: sim.acc.posX, y: sim.acc.posY });
+          if (sim.trail.length > SIM_TRAIL_MAX) sim.trail.shift();
+        }
+        for (const c of r.clicked) simFlash(c);
+        if (r.clicked.length) simEl.simLastClick.textContent = "Last click: " + sim.acc.lastClick;
+      }
+      simShowOutText();
+      simQueueDraw();
+    }
+    function simOnSensor(m) {
+      simEl.simSenXY.textContent = simFmt(m.x) + ", " + simFmt(m.y);
+      simEl.simSenB.textContent = m.bx.toFixed(1) + ", " + m.by.toFixed(1);
+      simEl.simSenOk.textContent = m.ok ? "yes" : "no";
+      simEl.simSenFault.textContent = m.fault;
+    }
+    function simClearOutput() {
+      sim.acc.reset();
+      sim.trail = [];
+      simEl.simLastClick.textContent = "Last click: none";
+      simEl.simOutText.textContent = "No output yet.";
+      simEl.simWheel.textContent = "0";
+      simQueueDraw();
+    }
+    simEl.simClearOutBtn.addEventListener("click", simClearOutput);
+
+    // ---- Incoming text messages ----
+    function simHandleText(t, text) {
+      const m = parseSimMessage(text);
+      if (!m) return;
+      switch (m.type) {
+        case "hello":
+          sim.viewMode = m.mode === "xac" ? "xac" : "mouse";
+          simEl.simInfo.textContent = "Connected to " + (m.sim || "the simulator") + (m.fw ? ", firmware " + m.fw : "") +
+            (m.mode ? ", input mode " + m.mode : "") + (m.slot ? ", running from " + m.slot : "") + ".";
+          simQueueDraw();
+          break;
+        case "hid": simOnHid(m); break;
+        case "sensor": simOnSensor(m); break;
+        case "source": simShowSource(m); break;
+        case "rebooting":
+          t.rebooting = true;
+          logLine("sys", "The simulated stick is restarting" + (m.reason ? " (" + m.reason + ")" : "") + ".");
+          break;
+        case "error":
+          logLine("err", "Simulator: " + m.message);
+          break;
+      }
+    }
+
+    function simOnConnected(t) {
+      sim.x = 0; sim.y = 0; sim.dragging = false;
+      clearTimeout(sim.sendTimer); sim.sendTimer = null;
+      simCloseWipe(false);
+      simShowStick();
+      simClearOutput();
+      simShowSource({ kind: "manual", name: "", t_ms: 0, done: false });
+      simEl.simInfo.textContent = "Connected to the simulator at " + t.url + ".";
+      simEl.simApplyInfo.textContent = "Only the settings you changed are sent.";
+      sim.dirty.clear();
+    }
 
     updateUI();
     logLine("sys", "Omega Calibration Console ready. Connect a device running the calibration module " +
