@@ -23,14 +23,15 @@
     reuses that exact transport/framing code verbatim).
 
     ------------------------------------------------------------------
-    CALIBRATION PROTOCOL (MODULE 5) -- this is the contract a firmware-side
+    CALIBRATION PROTOCOL ("omega.calibration" v1, module 5 by default; the
+    page finds the module by protocol id) -- this is the contract a firmware-side
     handler needs to implement (implemented by calibration_service.hpp
     alongside the existing coredump_service.hpp / ota_service.hpp, registered
     with the same espp::Dispatcher those use). This page is the reference
     client for that contract; nothing here is firmware code.
     ------------------------------------------------------------------
 
-    host -> device (module 5):
+    host -> device (calibration module):
       0x50 GET_STATE              (no payload)
       0x51 SET_MANUAL_OFFSET      f32 offset_x, f32 offset_y
       0x52 SET_DEADZONE_OVERRIDE  u8 flags (bit0=center present, bit1=range
@@ -38,7 +39,10 @@
                                    override back to auto"), f32 center_value,
                                    f32 range_value (value ignored when its
                                    flag bit is clear, but always present so
-                                   the payload has a fixed 9-byte length)
+                                   the payload has a fixed 9-byte length).
+                                   center_value must be 0..0.5 and
+                                   range_value 0..0.1 (the calibration
+                                   maximums), or the reply is ERROR
       0x53 SET_NUDGE_SETTINGS     f32 nudge_enter_threshold (delta),
                                    f32 nudge_exit_threshold (absolute),
                                    u32 nudge_time_ms (measurement window)
@@ -72,7 +76,7 @@
                                    below). Manual deadzone overrides, nudge
                                    tuning, and input mode are untouched.
 
-    device -> host (module 5):
+    device -> host (calibration module):
       0xD0 STATE   (reply to GET_STATE) -- fixed 79-byte little-endian
                     struct, in this exact order:
                       f32 center_x
@@ -3057,7 +3061,7 @@
 
     updateUI();
     logLine("sys", "Omega Calibration Console ready. Connect a device running the calibration module " +
-            "(module 5) alongside coredump/OTA.");
+            "(omega.calibration) alongside coredump/OTA.");
   </script>
 </body>
 </html>

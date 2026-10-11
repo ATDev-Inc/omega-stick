@@ -344,9 +344,10 @@ public:
     /// its reply, since the host never saw that reply.
     send_fn send{nullptr};
     /// Dispatcher module id this instance answers on (and stamps on its
-    /// replies). The default (kModule, 5) is what
-    /// `calibration_console.html` looks for; change it only if your host
-    /// tooling is told the new id.
+    /// replies). Defaults to kModule (5). `calibration_console.html` finds
+    /// the service by its protocol id (kProtocol) through discovery and uses
+    /// whatever id it reports; only firmware without discovery v2 is
+    /// assumed to be on 5.
     uint8_t module{kModule};
     /// Optional: handles Msg::StartCalibration by kicking off an
     /// interactive recalibration. **Must return almost immediately** --
@@ -411,7 +412,7 @@ public:
       , ota_(config.ota) {}
 
   /// @brief The dispatcher module id this service answers on (Config::module;
-  ///        kModule by default, which the web console expects).
+  ///        kModule by default). The console discovers it by protocol id.
   uint8_t module_id() const { return module_; }
 
   /// @brief Discovery metadata for registering this service on a Dispatcher.
