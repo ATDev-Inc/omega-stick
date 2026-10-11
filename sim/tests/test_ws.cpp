@@ -1,12 +1,33 @@
 // WebSocket protocol pieces: SHA-1, base64, the accept key, the handshake and Origin
 // policy, and the frame codec.
 
+#include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <string>
+#include <thread>
 #include <vector>
+
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 
 #include "test_harness.hpp"
 #include "ws_protocol.hpp"
+#include "ws_server.hpp"
 
 using namespace sim::ws;
 
@@ -239,4 +260,101 @@ TEST(encode_masked_roundtrips_through_the_decoder) {
     CHECK_EQ(out.size(), size_t{1});
     CHECK_EQ(out[0].data.size(), n);
   }
+}
+
+// ---- the server over a real loopback socket -----------------------------------------
+
+namespace {
+
+#if defined(_WIN32)
+using Sock = SOCKET;
+constexpr Sock kBadSock = INVALID_SOCKET;
+void close_sock(Sock s) { closesocket(s); }
+#else
+using Sock = int;
+constexpr Sock kBadSock = -1;
+void close_sock(Sock s) { close(s); }
+#endif
+
+/// Connects to 127.0.0.1:port, sends the upgrade request and reads the reply head.
+/// Returns the open socket, or kBadSock when the server did not answer 101.
+Sock ws_connect(uint16_t port) {
+  const Sock s = socket(AF_INET, SOCK_STREAM, 0);
+  if (s == kBadSock) {
+    return kBadSock;
+  }
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(port);
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  if (connect(s, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0) {
+    close_sock(s);
+    return kBadSock;
+  }
+  const std::string req = request("");
+  if (send(s, req.data(), static_cast<int>(req.size()), 0) != static_cast<int>(req.size())) {
+    close_sock(s);
+    return kBadSock;
+  }
+  std::string head;
+  char buf[256];
+  while (head.find("\r\n\r\n") == std::string::npos) {
+    const int n = static_cast<int>(recv(s, buf, sizeof(buf), 0));
+    if (n <= 0) {
+      close_sock(s);
+      return kBadSock;
+    }
+    head.append(buf, static_cast<size_t>(n));
+  }
+  if (head.rfind("HTTP/1.1 101", 0) != 0) {
+    close_sock(s);
+    return kBadSock;
+  }
+  return s;
+}
+
+template <typename Pred> bool wait_for(Pred pred) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!pred()) {
+    if (std::chrono::steady_clock::now() > deadline) {
+      return false;
+    }
+    std::this_thread::yield();
+  }
+  return true;
+}
+
+} // namespace
+
+TEST(server_reaps_finished_readers_across_reconnects) {
+  std::atomic<int> connects{0}, disconnects{0};
+  sim::ws::Handlers h;
+  h.on_connect = [&] { connects++; };
+  h.on_disconnect = [&] { disconnects++; };
+  sim::ws::Server server(h);
+  std::string err;
+  CHECK(server.start(0, err));
+  CHECK(server.port() != 0);
+
+  constexpr int kCycles = 100;
+  size_t most = 0;
+  for (int i = 0; i < kCycles; i++) {
+    const Sock s = ws_connect(server.port());
+    CHECK(s != kBadSock);
+    if (s == kBadSock) {
+      break;
+    }
+    CHECK(wait_for([&] { return connects.load() == i + 1; }));
+    close_sock(s);
+    CHECK(wait_for([&] { return disconnects.load() == i + 1; }));
+    most = std::max(most, server.reader_count());
+  }
+  CHECK_EQ(connects.load(), kCycles);
+  CHECK_EQ(disconnects.load(), kCycles);
+  // Finished readers are joined as new clients arrive, so a handful at most are held
+  // (the previous cycles' readers), never one per connection.
+  CHECK(most <= size_t{8});
+  CHECK(server.reader_count() <= size_t{8});
+  server.stop();
+  CHECK_EQ(server.reader_count(), size_t{0});
 }

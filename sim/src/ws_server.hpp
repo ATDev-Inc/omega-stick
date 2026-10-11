@@ -5,6 +5,7 @@
 // codec) is in ws_protocol.hpp; this file is the sockets and threads around it.
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -40,6 +41,10 @@ public:
   bool start(uint16_t listen_port, std::string &error);
   void stop();
   uint16_t port() const { return port_; }
+  /// Reader threads still held (running, or finished but not yet reaped). Finished ones
+  /// are joined when the next client connects, so this stays small however many clients
+  /// come and go. For tests.
+  size_t reader_count() const;
 
   bool connected() const;
   /// Sends to the current client; false when there is none or the send failed.
@@ -50,8 +55,14 @@ public:
 
 private:
   struct Conn;
+  struct Reader {
+    std::thread thread;
+    std::shared_ptr<std::atomic<bool>> done; // set by serve() as its last act
+  };
   void accept_loop();
   void serve(std::shared_ptr<Conn> conn, const std::string &leftover);
+  /// Joins reader threads that have finished. Joins happen outside mu_.
+  void reap_readers();
   bool send_frame(const std::shared_ptr<Conn> &conn, const std::vector<uint8_t> &frame);
   std::shared_ptr<Conn> current() const;
 
@@ -62,7 +73,7 @@ private:
   std::thread accept_thread_;
   mutable std::mutex mu_;
   std::shared_ptr<Conn> current_;
-  std::vector<std::thread> readers_;
+  std::vector<Reader> readers_;
 };
 
 } // namespace sim::ws

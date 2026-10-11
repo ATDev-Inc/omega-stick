@@ -151,7 +151,7 @@ void Server::stop() {
   if (accept_thread_.joinable()) {
     accept_thread_.join();
   }
-  std::vector<std::thread> readers;
+  std::vector<Reader> readers;
   {
     std::lock_guard<std::mutex> lock(mu_);
     if (current_) {
@@ -159,9 +159,34 @@ void Server::stop() {
     }
     readers.swap(readers_);
   }
-  for (auto &t : readers) {
-    if (t.joinable()) {
-      t.join();
+  for (auto &r : readers) {
+    if (r.thread.joinable()) {
+      r.thread.join();
+    }
+  }
+}
+
+size_t Server::reader_count() const {
+  std::lock_guard<std::mutex> lock(mu_);
+  return readers_.size();
+}
+
+void Server::reap_readers() {
+  std::vector<Reader> finished;
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    for (size_t i = 0; i < readers_.size();) {
+      if (readers_[i].done->load()) {
+        finished.push_back(std::move(readers_[i]));
+        readers_.erase(readers_.begin() + static_cast<std::ptrdiff_t>(i));
+      } else {
+        i++;
+      }
+    }
+  }
+  for (auto &r : finished) {
+    if (r.thread.joinable()) {
+      r.thread.join(); // done is set last, so this returns almost at once
     }
   }
 }
@@ -275,8 +300,14 @@ void Server::accept_loop() {
     if (handlers_.on_connect) {
       handlers_.on_connect();
     }
+    reap_readers();
+    auto done = std::make_shared<std::atomic<bool>>(false);
     std::lock_guard<std::mutex> lock(mu_);
-    readers_.emplace_back([this, conn, leftover] { serve(conn, leftover); });
+    readers_.push_back(Reader{std::thread([this, conn, leftover, done] {
+                                serve(conn, leftover);
+                                done->store(true);
+                              }),
+                              done});
   }
 }
 
