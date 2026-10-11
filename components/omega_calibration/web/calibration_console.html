@@ -1456,6 +1456,11 @@
       applyManualOffset(parseFloat(els.offsetX.value), parseFloat(els.offsetY.value)));
     els.zeroOffsetBtn.addEventListener("click", () => applyManualOffset(0, 0));
 
+    // Same limits the device enforces (OmegaCalibration::MAX_CENTER_DEADZONE /
+    // MAX_RANGE_DEADZONE); keep in step with the inputs' max attributes.
+    const MAX_CENTER_DEADZONE = 0.5;
+    const MAX_RANGE_DEADZONE = 0.1;
+
     els.applyDeadzoneBtn.addEventListener("click", async () => {
       if (!transport || busy) return;
       const centerOn = els.centerDzEnable.checked;
@@ -1464,6 +1469,12 @@
       const rangeVal = parseFloat(els.rangeDzValue.value);
       if (centerOn && !Number.isFinite(centerVal)) { logLine("err", "Center deadzone override: enter a number first."); return; }
       if (rangeOn && !Number.isFinite(rangeVal)) { logLine("err", "Range deadzone override: enter a number first."); return; }
+      if (centerOn && (centerVal < 0 || centerVal > MAX_CENTER_DEADZONE)) {
+        logLine("err", "Center deadzone override must be between 0 and " + MAX_CENTER_DEADZONE + "."); return;
+      }
+      if (rangeOn && (rangeVal < 0 || rangeVal > MAX_RANGE_DEADZONE)) {
+        logLine("err", "Range deadzone override must be between 0 and " + MAX_RANGE_DEADZONE + "."); return;
+      }
       const payload = encodeSetDeadzoneOverride(centerOn, centerVal, rangeOn, rangeVal);
       busy = true; updateUI(); setStatus("busy", "Applying deadzone...");
       try {
@@ -1566,6 +1577,7 @@
         // sequence; the actual pass/fail arrives later as an unsolicited
         // CALIBRATION_RESULT frame, handled in dispatchFrame() above.
         await transact(TYPE.START_CALIBRATION, null, [TYPE.OK], CMD_TIMEOUT_MS, 0);
+        recalPending = true;
         logLine("sys", "Recalibration accepted; follow the device's console prompts " +
                 "(Web Serial) \u2014 this page updates automatically when it's done.");
       } catch (e) {
@@ -1577,7 +1589,6 @@
       }
     });
 
-        recalPending = true;
     let fwInfo = null;
 
     const REVERTIBLE_STATES = ["valid", "new", "pending_verify", "invalid", "aborted", "undefined"];

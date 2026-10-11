@@ -47,6 +47,19 @@ TEST(store_loads_existing_files_on_construction) {
   CHECK_NEAR(store.settings().manual_range_deadzone.value_or(0), 0.04f, 1e-5);
 }
 
+TEST(store_ignores_out_of_range_saved_deadzone_overrides) {
+  TempDir dir("store_bad_dz");
+  const auto cfg = config_for(dir);
+  OmegaCalibration::DeviceSettings s;
+  s.manual_center_deadzone = 2.0f; // above MAX_CENTER_DEADZONE
+  s.manual_range_deadzone = 0.05f; // valid, kept
+  std::error_code ec;
+  CHECK(OmegaCalibration::DeviceSettings::save(s, cfg.settings_path, ec));
+  OmegaStore store(cfg);
+  CHECK(!store.settings().manual_center_deadzone.has_value());
+  CHECK_NEAR(store.settings().manual_range_deadzone.value_or(0), 0.05f, 1e-6);
+}
+
 TEST(store_manual_offset_fires_callback_outside_lock) {
   TempDir dir("store_offset");
   auto cfg = config_for(dir);

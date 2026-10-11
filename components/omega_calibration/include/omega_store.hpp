@@ -11,6 +11,7 @@
 // control loop's own reads.
 
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <mutex>
@@ -103,6 +104,13 @@ public:
     if (!DeviceSettings::load(settings_, settings_path_, ec)) {
       logger_.info("no usable cached settings ({}); settings left at defaults", ec.message());
     }
+    // A saved override outside the limits the service enforces (hand-edited
+    // file, or saved by firmware that did not check) would suppress normal
+    // travel on every boot, so fall back to the calibration-derived value.
+    drop_out_of_range_override(settings_.manual_center_deadzone,
+                               OmegaCalibration::MAX_CENTER_DEADZONE, "center");
+    drop_out_of_range_override(settings_.manual_range_deadzone,
+                               OmegaCalibration::MAX_RANGE_DEADZONE, "range");
   }
 
   /// A consistent, point-in-time copy of everything (center + range +
@@ -246,6 +254,13 @@ private:
   mutable std::mutex mutex_;
   CenterResult center_{};
   RangeResult range_{};
+  void drop_out_of_range_override(std::optional<float> &value, float max, const char *name) {
+    if (value && !(std::isfinite(*value) && *value >= 0.0f && *value <= max)) {
+      logger_.warn("ignoring saved {} deadzone override {} (allowed 0..{})", name, *value, max);
+      value.reset();
+    }
+  }
+
   DeviceSettings settings_{};
   std::filesystem::path calibration_path_;
   std::filesystem::path settings_path_;

@@ -27,6 +27,10 @@
 //                                 auto), f32 center_value, f32 range_value
 //                                 (value ignored when its flag bit is clear,
 //                                 but always present: fixed 9-byte payload).
+//                                 A set value must be finite and within
+//                                 0..OmegaCalibration::MAX_CENTER_DEADZONE
+//                                 (0.5) / MAX_RANGE_DEADZONE (0.1), or the
+//                                 reply is ERROR (invalid_argument).
 //                                 Reply: OK / ERROR.
 //   0x53 SET_NUDGE_SETTINGS     - payload: f32 nudge_enter_threshold (delta),
 //                                 f32 nudge_exit_threshold (absolute),
@@ -776,10 +780,22 @@ protected:
       const bool has_range = (flags & 0x02) != 0;
       const float center_value = get_f32(payload, 1);
       const float range_value = get_f32(payload, 5);
-      if ((has_center && !(std::isfinite(center_value) && center_value >= 0.0f)) ||
-          (has_range && !(std::isfinite(range_value) && range_value >= 0.0f))) {
-        reply =
-            build_error(std::errc::invalid_argument, "deadzone override must be finite and >= 0");
+      // The limits are the same ones calibration clamps its own results to
+      // (OmegaCalibration::MAX_*_DEADZONE). Anything larger would make the
+      // joystick library clamp the radius and suppress normal travel, and
+      // the override persists across reboots, so refuse it up front.
+      if (has_center && !(std::isfinite(center_value) && center_value >= 0.0f &&
+                          center_value <= OmegaCalibration::MAX_CENTER_DEADZONE)) {
+        reply = build_error(std::errc::invalid_argument,
+                            fmt::format("center deadzone override must be between 0 and {}",
+                                        OmegaCalibration::MAX_CENTER_DEADZONE));
+        return true;
+      }
+      if (has_range && !(std::isfinite(range_value) && range_value >= 0.0f &&
+                         range_value <= OmegaCalibration::MAX_RANGE_DEADZONE)) {
+        reply = build_error(std::errc::invalid_argument,
+                            fmt::format("range deadzone override must be between 0 and {}",
+                                        OmegaCalibration::MAX_RANGE_DEADZONE));
         return true;
       }
       store_.set_deadzone_override(has_center ? std::optional<float>(center_value) : std::nullopt,
