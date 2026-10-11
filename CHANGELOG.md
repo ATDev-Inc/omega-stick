@@ -47,28 +47,30 @@ in `version.txt`.
   warned. A status area walks through checking, erasing, writing, verifying,
   restarting, reconnecting and the result, the page reconnects by itself
   after Flash or Revert, errors are in plain language with the raw detail in
-  the log, and a `.bin` can be dragged onto the Firmware section.
+  the log, and a `.bin` can be dragged onto the Firmware section. ([#29])
 - **Neutral output during an update.** From an accepted `OTA_BEGIN` until the
   reboot, and before every console-initiated reboot (finish, revert, restart,
   input-mode switch), the device sends neutral reports; it resumes normal
-  output if the upload ends without a reboot. (D22 rule 1)
+  output if the upload ends without a reboot. (D22 rule 1) ([#29])
 - **Check for latest firmware.** The console reads the release feed, says
   whether an update is available, links the release notes, and "Download and
   install" verifies the image's size and SHA-256 against the feed before the
   usual checks and confirm panel. An optional check runs once after
-  connecting, on by default.
+  connecting, on by default. ([#29])
 - **Pages site and release feed.** Publishing a full release builds a merged
   full-flash image and publishes https://atdev-inc.github.io/omega-stick/: a
   landing page, a copy of the console, the first-flash page, and
   `omega_stick-X.Y.Z.bin`, `omega_stick-X.Y.Z-full.bin`, `manifest.json`,
   `latest.json` and `SHA256SUMS`, also attached to the release. Pages is used
-  because release downloads send no CORS headers. Maintainers must set
-  Settings > Pages > Source to GitHub Actions and let the `github-pages`
-  environment deploy `v*` tags.
+  because release downloads send no CORS headers. Pages is enabled for this
+  repository (Source: GitHub Actions, and the `github-pages` environment
+  allows `main` and `v*` tags); a fork needs the same two settings. The site
+  goes live with the first full release whose tag contains this workflow.
+  ([#29])
 - **First flash from the browser.** `flash.html` installs the full image with
   ESP Web Tools 10.4.0. A first flash erases calibration and settings. The
   download-mode steps are the standard ESP32-S3 procedure and are not yet
-  confirmed on the Omega Stick.
+  confirmed on the Omega Stick. ([#29])
 - **Host, web and fuzz tests in CI.** Desktop unit tests that run the real
   espp code (calibration, store, console service, control loop, sensor
   driver, HID reports and descriptors, health check), Node tests for the
@@ -82,6 +84,13 @@ in `version.txt`.
 
 ### Changed
 
+- **The console finds the calibration service by protocol id.** The service
+  advertises `omega.calibration` version 1 through dispatcher discovery, the
+  console selects it by that id and uses the module id discovery reports for
+  all its traffic, and a device that only speaks discovery v1 falls back to
+  module 5. Discovery now runs before the first state and firmware-info
+  requests. Module 5 stays the default and the wire format is unchanged.
+  (D24, [#30])
 - **Partition table: two firmware slots.** The single factory app partition
   is replaced by two OTA slots of 1920 KB each. **Breaking:** the first
   install of this layout needs one serial flash (`idf.py flash`) and loses the
@@ -99,16 +108,25 @@ in `version.txt`.
 
 ### Fixed
 
+- **The console reconnects to the stick it just flashed.** After Flash or
+  Revert it used to reconnect to any previously granted device. It now takes
+  the exact saved port first, then a single matching USB id (using the USB
+  serial number when it knows it), and never guesses between several sticks:
+  with more than one candidate it does not pick one, and after about 40
+  seconds offers a Reconnect button instead. ([#29])
 - **Out-of-range deadzone overrides are rejected.** Typing 2 in the console's
   center deadzone box was stored and saved, and shrank the stick's usable
   travel until it was cleared. The device now refuses values above 0.5
   (center) or 0.1 (range), the console checks the same limits before
   sending, and an out-of-range override already saved on a device is ignored
-  and logged at boot.
+  and logged at boot. ([#31])
 - **A second recalibration request mid-sweep is refused.** The device used to
-  accept a RECALIBRATE while a sweep was running and then run another full
+  accept a recalibration request while a sweep was running and then run another full
   sweep right after it. It now stays busy until the sweep finishes, and the
-  console keeps its Re-run button disabled until the result arrives.
+  console keeps its Re-run button disabled until the result arrives. ([#31])
+- **Deadzone inputs and the firmware picker have accessible names.** Screen
+  readers announce them as "Center deadzone value", "Range deadzone value" and
+  "Firmware file (.bin)". ([#31])
 - **Console messages after a change tell the truth.** Switching input mode
   no longer logs a failure for a switch that worked (the device restarts
   after its OK, so there was never a state to read back), clicking the
@@ -139,6 +157,10 @@ in `version.txt`.
 ### Known issues
 
 - XAC mode has not been tested on a real Xbox Adaptive Controller.
+- The firmware update changes (neutral output, image checks, reconnect, the
+  latest-release check), the protocol id lookup and the deadzone and
+  recalibration changes are covered by host and Node tests only. None has been
+  tried on hardware.
 - Actuation force and throw have not been measured yet, so force figures are
   design targets.
 - Open defects are listed in
@@ -158,3 +180,6 @@ in `version.txt`.
 [#20]: https://github.com/ATDev-Inc/omega-stick/pull/20
 [#21]: https://github.com/ATDev-Inc/omega-stick/pull/21
 [#27]: https://github.com/ATDev-Inc/omega-stick/issues/27
+[#29]: https://github.com/ATDev-Inc/omega-stick/pull/29
+[#30]: https://github.com/ATDev-Inc/omega-stick/pull/30
+[#31]: https://github.com/ATDev-Inc/omega-stick/pull/31
