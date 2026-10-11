@@ -25,7 +25,13 @@ string(STRIP "${OMEGA_SIM_BASE_VERSION}" OMEGA_SIM_BASE_VERSION)
 
 add_library(omega_sim_lib STATIC
   src/json.cpp
-  src/ws_server.cpp)
+  src/ws_server.cpp
+  src/sim_clock.cpp
+  src/sensor.cpp
+  src/script.cpp
+  src/stick.cpp
+  src/sim_host.cpp
+  src/firmware.cpp)
 target_include_directories(omega_sim_lib PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}/src"
   # Stand-ins for the ESP-only OTA headers (espp/ota, esp_ota_ops.h,
@@ -42,12 +48,29 @@ if(WIN32)
 endif()
 omega_host_apply_flags(omega_sim_lib)
 
+add_executable(omega_sim src/main.cpp)
+target_link_libraries(omega_sim PRIVATE omega_sim_lib)
+omega_host_apply_flags(omega_sim)
+
 add_executable(omega_sim_tests
   tests/test_main.cpp
   tests/test_json.cpp
+  tests/test_sim.cpp
   tests/test_ws.cpp)
 target_include_directories(omega_sim_tests PRIVATE "${OMEGA_SIM_ROOT}/tests/host")
 target_link_libraries(omega_sim_tests PRIVATE omega_sim_lib)
 omega_host_apply_flags(omega_sim_tests)
 add_test(NAME sim_unit_tests COMMAND omega_sim_tests)
 set_tests_properties(sim_unit_tests PROPERTIES TIMEOUT 60)
+
+# Headless scenarios: each runs a script on simulated time against a fresh board
+# in its own data directory, and fails if any check in it fails.
+file(GLOB OMEGA_SIM_SCENARIOS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/scenarios/*.json")
+foreach(scenario ${OMEGA_SIM_SCENARIOS})
+  get_filename_component(scenario_name "${scenario}" NAME_WE)
+  add_test(NAME sim_scenario_${scenario_name}
+           COMMAND omega_sim --headless --fresh
+                   --data "${CMAKE_CURRENT_BINARY_DIR}/scenario_data/${scenario_name}"
+                   --script "${scenario}")
+  set_tests_properties(sim_scenario_${scenario_name} PROPERTIES TIMEOUT 120)
+endforeach()

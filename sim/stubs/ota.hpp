@@ -78,6 +78,7 @@ public:
       return false;
     }
     sim::flash().commit_image(desc);
+    image_.clear();
     return true;
   }
 

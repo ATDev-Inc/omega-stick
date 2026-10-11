@@ -9,7 +9,10 @@
 #   cmake --build build-host
 #   ctest --test-dir build-host --output-on-failure
 #
-# Options (all default OFF):
+# Options:
+#   OMEGA_HOST_BUILD_SIM  also build the desktop simulator (sim/) and run its unit tests and
+#                        headless scenarios in the same ctest run (default ON)
+# Options (default OFF):
 #   OMEGA_HOST_WERROR    warnings as errors (-Werror or /WX)
 #   OMEGA_HOST_SANITIZE  AddressSanitizer + UBSan (GCC/Clang frontends only)
 #   OMEGA_HOST_COVERAGE  --coverage instrumentation (GCC/Clang only)
@@ -120,3 +123,10 @@ endif()
 enable_testing()
 add_test(NAME omega_host_tests COMMAND omega_host_tests)
 set_tests_properties(omega_host_tests PROPERTIES TIMEOUT 60)
+
+# The desktop simulator (sim/) shares espp_host and the flags above and adds its
+# own tests and headless scenarios to the same ctest run.
+option(OMEGA_HOST_BUILD_SIM "Build the desktop simulator and its ctest scenarios" ON)
+if(OMEGA_HOST_BUILD_SIM)
+  add_subdirectory("${OMEGA_ROOT}/sim" "${CMAKE_CURRENT_BINARY_DIR}/sim")
+endif()
