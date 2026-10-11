@@ -280,7 +280,7 @@ public:
    * @brief Function used to transmit one encoded reply frame to the host.
    * @param frame The complete encoded frame bytes (header + payload + CRC).
    */
-  using send_fn = std::function<void(std::span<const uint8_t> frame)>;
+  using send_fn = std::function<bool(std::span<const uint8_t> frame)>;
 
   /// What GET_DIAGNOSTICS reports: the sensor fault state the polling loop
   /// publishes (SensorFaultMonitor, D21) and the reset log (ResetLog, D23).
@@ -302,8 +302,12 @@ public:
 
   /// Configuration for the CalibrationService.
   struct Config {
-    OmegaStore &store;     ///< The live calibration/settings store to serve (must outlive this).
-    send_fn send{nullptr}; ///< Transmits an encoded reply frame (required).
+    OmegaStore &store; ///< The live calibration/settings store to serve (must outlive this).
+    /// Transmits an encoded reply frame (required). Returns false when the
+    /// frame could not be queued (a fail-fast USB write under backpressure):
+    /// the service then drops any action the request deferred until after
+    /// its reply, since the host never saw that reply.
+    send_fn send{nullptr};
     /// Dispatcher module id this instance answers on (and stamps on its
     /// replies). The default (kModule, 5) is what
     /// `calibration_console.html` looks for; change it only if your host
@@ -409,9 +413,8 @@ public:
           continue;
       }
       // send outside the lock so a re-entrant transport cannot deadlock
-      if (!reply.empty())
-        send(reply);
-      apply_pending_input_mode();
+      const bool delivered = reply.empty() || send(reply);
+      run_after_reply(delivered);
     }
   }
 
@@ -430,9 +433,8 @@ public:
       std::lock_guard<std::mutex> lock(mutex_);
       handled = handle_frame_locked(type, payload, reply);
     }
-    if (!reply.empty())
-      send(reply);
-    apply_pending_input_mode();
+    const bool delivered = reply.empty() || send(reply);
+    run_after_reply(delivered);
     return handled;
   }
 
@@ -829,10 +831,17 @@ protected:
         return true;
       }
       const auto mode = static_cast<InputMode>(payload[0]);
-      // Applied by apply_pending_input_mode() once the OK has gone out:
+      const char *mode_name = mode == InputMode::XAC ? "XAC" : "MOUSE";
+      if (store_.snapshot().settings.input_mode == mode) {
+        // Nothing to save and no restart; say so rather than log a switch.
+        logger_.info("SET_INPUT_MODE {}: already active", mode_name);
+        reply = build_ok();
+        return true;
+      }
+      // Applied by run_after_reply() once the OK has actually gone out:
       // on_mode_changed may restart the device, which would drop the reply.
-      pending_input_mode_ = mode;
-      logger_.info("SET_INPUT_MODE {}", mode == InputMode::XAC ? "XAC" : "MOUSE");
+      after_reply_ = [this, mode] { store_.set_input_mode(mode); };
+      logger_.info("SET_INPUT_MODE {}", mode_name);
       reply = build_ok();
       return true;
     }
@@ -986,15 +995,20 @@ protected:
   }
 
   /// Transmit an encoded reply frame via the configured send function. Must
-  /// be called WITHOUT the internal mutex held.
-  void send(const std::vector<uint8_t> &frame) {
+  /// be called WITHOUT the internal mutex held. Returns false when the frame
+  /// was not queued (no send function, or the transport refused it).
+  bool send(const std::vector<uint8_t> &frame) {
     if (frame.empty())
-      return;
+      return true;
     if (!send_) {
       logger_.warn("no send function configured; dropping a {}-byte reply", frame.size());
-      return;
+      return false;
     }
-    send_(frame);
+    if (!send_(frame)) {
+      logger_.error("transport refused a {}-byte reply; the host will see a timeout", frame.size());
+      return false;
+    }
+    return true;
   }
 
   /// Build an ERROR reply frame (u32 code + UTF-8 context message).
@@ -1030,16 +1044,24 @@ protected:
   }
 
 private:
-  /// Applies a SET_INPUT_MODE accepted by handle_frame_locked(). Called after
-  /// the reply is sent, outside mutex_.
-  void apply_pending_input_mode() {
-    std::optional<InputMode> mode;
+  /// Runs the action a handler deferred until after its reply (today only
+  /// SET_INPUT_MODE's store update, whose callback may restart the device).
+  /// Called outside mutex_. When the reply was not delivered the action is
+  /// dropped with a log line: the host never saw the OK, so the device must
+  /// not behave as if it had. The host times out and can retry.
+  void run_after_reply(bool delivered) {
+    std::function<void()> action;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      mode = std::exchange(pending_input_mode_, std::nullopt);
+      action = std::exchange(after_reply_, nullptr);
     }
-    if (mode)
-      store_.set_input_mode(*mode);
+    if (!action)
+      return;
+    if (!delivered) {
+      logger_.error("reply was not delivered; the deferred action is dropped");
+      return;
+    }
+    action();
   }
 
   OmegaStore &store_;
@@ -1071,9 +1093,10 @@ private:
       return "undefined";
     }
   }
-  std::mutex mutex_; // guards parser_, pending_input_mode_, reply-building; not OmegaStore
+  std::mutex mutex_; // guards parser_, after_reply_, reply-building; not OmegaStore
   Stream parser_;
-  std::optional<InputMode> pending_input_mode_; // set by SET_INPUT_MODE, applied after the reply
+  std::function<void()>
+      after_reply_; // set by a handler, run by run_after_reply() once the reply is out
 };
 
 // Compile-time check that the service keeps satisfying the dispatcher's

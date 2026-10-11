@@ -40,6 +40,7 @@ struct Fixture {
       , service({.store = store, .send = [this](std::span<const uint8_t> f) {
                    ++send_calls;
                    sent.insert(sent.end(), f.begin(), f.end());
+                   return true;
                  }}) {}
 
   OmegaStore::Config with_paths(OmegaStore::Config c) const {
@@ -220,6 +221,40 @@ TEST(service_ok_reply_is_sent_before_mode_change_callback_runs) {
   CHECK_EQ(sends_seen_from_callback, 1);
 }
 
+// A reply the transport refused never reached the host, so the device must
+// not act on the request: no save, no restart, and the host can retry.
+TEST(service_dropped_reply_does_not_apply_the_mode_change) {
+  TempDir dir("svc_mode_dropped");
+  int mode_changes = 0;
+  OmegaStore::Config cfg;
+  cfg.calibration_path = dir.file("omega_calibration.cfg");
+  cfg.settings_path = dir.file("omega_settings.cfg");
+  cfg.on_mode_changed = [&](OmegaStore::InputMode) { ++mode_changes; };
+  OmegaStore store(cfg);
+  CalibrationService svc({.store = store, .send = [](std::span<const uint8_t>) { return false; }});
+  const std::vector<uint8_t> xac{1};
+  CHECK(svc.handle_frame(static_cast<uint8_t>(Msg::SetInputMode), xac));
+  CHECK_EQ(mode_changes, 0);
+  CHECK(store.settings().input_mode == OmegaStore::InputMode::MOUSE);
+  // A later request whose reply does go out is not affected by the dropped one.
+  std::vector<uint8_t> sent;
+  CalibrationService ok_svc({.store = store, .send = [&](std::span<const uint8_t> f) {
+                               sent.assign(f.begin(), f.end());
+                               return true;
+                             }});
+  CHECK(ok_svc.handle_frame(static_cast<uint8_t>(Msg::SetInputMode), xac));
+  CHECK_EQ(mode_changes, 1);
+}
+
+TEST(service_set_input_mode_to_the_active_mode_is_ok_without_a_callback) {
+  int mode_changes = 0;
+  Fixture fx("svc_mode_same", {.on_mode_changed = [&](OmegaStore::InputMode) { ++mode_changes; }});
+  CHECK(is(fx.request(Msg::SetInputMode, {0}), Msg::Ok)); // MOUSE is the default
+  CHECK_EQ(mode_changes, 0);
+  CHECK(is(fx.request(Msg::SetInputMode, {1}), Msg::Ok));
+  CHECK_EQ(mode_changes, 1);
+}
+
 TEST(service_save_to_flash_writes_files_and_reports_failure) {
   Fixture fx("svc_save");
   fx.store.set_calibration(support::sample_center(), support::sample_range());
@@ -234,6 +269,7 @@ TEST(service_save_to_flash_writes_files_and_reports_failure) {
   std::vector<uint8_t> sent;
   CalibrationService svc({.store = broken, .send = [&](std::span<const uint8_t> f) {
                             sent.assign(f.begin(), f.end());
+                            return true;
                           }});
   CHECK(svc.handle_frame(static_cast<uint8_t>(Msg::SaveToFlash), {}));
   const auto reply = support::decode_one(sent);
@@ -253,17 +289,20 @@ TEST(service_start_calibration_requires_hook_and_relays_its_verdict) {
   std::vector<uint8_t> sent;
   bool accept = true;
   int kicks = 0;
-  CalibrationService svc(
-      {.store = store,
-       .send = [&](std::span<const uint8_t> f) { sent.assign(f.begin(), f.end()); },
-       .start_calibration =
-           [&](std::error_code &ec) {
-             ++kicks;
-             if (!accept) {
-               ec = std::make_error_code(std::errc::device_or_resource_busy);
-             }
-             return accept;
-           }});
+  CalibrationService svc({.store = store,
+                          .send =
+                              [&](std::span<const uint8_t> f) {
+                                sent.assign(f.begin(), f.end());
+                                return true;
+                              },
+                          .start_calibration =
+                              [&](std::error_code &ec) {
+                                ++kicks;
+                                if (!accept) {
+                                  ec = std::make_error_code(std::errc::device_or_resource_busy);
+                                }
+                                return accept;
+                              }});
 
   CHECK(svc.handle_frame(static_cast<uint8_t>(Msg::StartCalibration), {}));
   auto f = support::decode_one(sent);
@@ -376,6 +415,7 @@ struct OtaFixture {
                                          std::vector<uint8_t> &out) {
     CalibrationService::Config cfg{.store = store, .send = [&out](std::span<const uint8_t> f) {
                                      out.insert(out.end(), f.begin(), f.end());
+                                     return true;
                                    }};
     if (wire_ota) {
       cfg.ota = &ota;

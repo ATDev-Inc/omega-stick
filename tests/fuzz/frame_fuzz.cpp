@@ -38,7 +38,7 @@ struct Harness {
       , store({.calibration_path = dir / "omega_calibration.cfg",
                .settings_path = dir / "omega_settings.cfg"})
       , service({.store = store,
-                 .send = [](std::span<const uint8_t>) {},
+                 .send = [](std::span<const uint8_t>) { return true; },
                  .start_calibration = [](std::error_code &) { return true; },
                  .log_level = espp::Logger::Verbosity::NONE}) {
     espp::OmegaCalibration::CenterResult center;
