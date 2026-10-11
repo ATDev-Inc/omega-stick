@@ -141,7 +141,7 @@ replies `{"type":"error","message":...}` (or, for a script given with
 | script `set_deadzone` | `center` 0 to 0.5, `range` 0 to 0.1, except that out-of-range values are accepted when the same step has `expect_reply: "invalid"`: the simulator then sends the value to the firmware on purpose, so a scenario tests the firmware's own check |
 | WebSocket message | at most 1 MiB |
 
-Only pages from `null` (a `file://` page), no Origin, `http://localhost[:port]`,
+Only pages from `null` or `file://` (a page opened from disk), no Origin, `http://localhost[:port]`,
 `http://127.0.0.1[:port]` and `https://atdev-inc.github.io` may connect; any other
 Origin gets 403.
 

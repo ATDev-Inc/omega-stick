@@ -139,7 +139,8 @@ inline std::string accept_key(std::string_view client_key) {
 
 // ---- handshake --------------------------------------------------------------
 
-/// The Origin policy: the calibration console opened from a file (Origin "null"),
+/// The Origin policy: the calibration console opened from a file (Origin "null",
+/// or "file://" when Chrome runs with --allow-file-access-from-files),
 /// from a local web server, or from its published page; a request without an
 /// Origin (a script, not a browser) is allowed too. Any other web page is refused
 /// so a site you happen to visit cannot drive the simulator.
@@ -148,7 +149,7 @@ inline bool origin_allowed(const std::optional<std::string> &origin) {
     return true;
   }
   const std::string &o = *origin;
-  if (o == "null" || o == "https://atdev-inc.github.io") {
+  if (o == "null" || o == "file://" || o == "https://atdev-inc.github.io") {
     return true;
   }
   for (const std::string_view prefix : {"http://localhost", "http://127.0.0.1"}) {

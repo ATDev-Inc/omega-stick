@@ -81,14 +81,14 @@ TEST(handshake_header_names_and_values_are_case_insensitive) {
 
 TEST(handshake_origin_policy) {
   for (const char *ok :
-       {"null", "http://localhost", "http://localhost:8000", "http://127.0.0.1:5500",
+       {"null", "file://", "http://localhost", "http://localhost:8000", "http://127.0.0.1:5500",
         "http://127.0.0.1", "https://atdev-inc.github.io"}) {
     CHECK_EQ(parse_handshake(request(std::string("Origin: ") + ok + "\r\n")).status, 101);
   }
   for (const char *bad :
        {"https://evil.example", "http://localhost.evil.example", "http://localhost:80evil",
         "http://127.0.0.1.evil.example", "https://atdev-inc.github.io.evil.example",
-        "http://atdev-inc.github.io", "https://localhost:8000", ""}) {
+        "http://atdev-inc.github.io", "https://localhost:8000", "file://evil", ""}) {
     CHECK_EQ(parse_handshake(request(std::string("Origin: ") + bad + "\r\n")).status, 403);
   }
 }

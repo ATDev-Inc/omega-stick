@@ -45,7 +45,5 @@ Notes:
 - A wrapper copy of the console page is written to a scratch directory only to
   preset the simulator address and to collect script errors. Every action goes
   through the page's own buttons, fields and keyboard or pointer events.
-- Do not pass `--allow-file-access-from-files` to Chrome: it changes the Origin of
-  a `file://` page from `null` to `file://`, which the simulator refuses.
 - The firmware update check waits for each new image to confirm itself (a 10 s
   health window) before the next step, as the real flow does.
