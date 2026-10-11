@@ -1,4 +1,8 @@
 // The simulator's small JSON parser and writer.
+//
+// Note: the test macros stringize their arguments, which MSVC's preprocessor cannot
+// do for raw literals that contain backslashes or \u escapes. Such documents are
+// named locals instead of macro arguments.
 
 #include <string>
 
@@ -47,14 +51,31 @@ TEST(json_handles_string_escapes_and_unicode) {
     CHECK(v.has_value());
     return v->as_string();
   };
-  CHECK_EQ(str(R"("a\"b\\c\/d\n\t")"), std::string("a\"b\\c/d\n\t"));
-  CHECK_EQ(str(R"("é")"), std::string("\xC3\xA9"));
-  CHECK_EQ(str(R"("😀")"), std::string("\xF0\x9F\x98\x80"));
-  CHECK(!parse(R"("\ud83d")").has_value()); // lone high surrogate
-  CHECK(!parse(R"("\ude00")").has_value()); // lone low surrogate
-  CHECK(!parse(R"("\q")").has_value());     // bad escape
-  CHECK(!parse("\"a\nb\"").has_value());    // raw control character
-  CHECK(!parse(R"("unterminated)").has_value());
+  const char *escapes = R"("a\"b\\c\/d\n\t")";
+  const std::string escapes_want = "a\"b\\c/d\n\t";
+  const std::string got_escapes = str(escapes);
+  CHECK(got_escapes == escapes_want);
+
+  const char *bmp = R"("é")";
+  const std::string bmp_want = "\xC3\xA9";
+  const std::string got_bmp = str(bmp);
+  CHECK(got_bmp == bmp_want);
+
+  const char *pair = R"("😀")";
+  const std::string pair_want = "\xF0\x9F\x98\x80";
+  const std::string got_pair = str(pair);
+  CHECK(got_pair == pair_want);
+
+  const char *lone_high = R"("\ud83d")";
+  const char *lone_low = R"("\ude00")";
+  const char *bad_escape = R"("\q")";
+  const char *raw_control = "\"a\nb\"";
+  const char *unterminated = R"("unterminated)";
+  CHECK(!parse(lone_high).has_value());
+  CHECK(!parse(lone_low).has_value());
+  CHECK(!parse(bad_escape).has_value());
+  CHECK(!parse(raw_control).has_value());
+  CHECK(!parse(unterminated).has_value());
 }
 
 TEST(json_rejects_malformed_documents) {
@@ -89,9 +110,9 @@ TEST(json_dump_roundtrips) {
   arr.push(1).push("two").push(Value());
   v.set("list", arr);
   const std::string text = v.dump();
-  CHECK_EQ(text,
-           std::string(
-               R"({"type":"hid","dx":3,"ok":true,"x":0.25,"msg":"a\"b\n","list":[1,"two",null]})"));
+  const std::string want =
+      R"({"type":"hid","dx":3,"ok":true,"x":0.25,"msg":"a\"b\n","list":[1,"two",null]})";
+  CHECK(text == want);
   auto back = parse(text);
   CHECK(back.has_value());
   CHECK_EQ(back->dump(), text);

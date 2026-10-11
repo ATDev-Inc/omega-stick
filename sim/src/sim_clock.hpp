@@ -35,9 +35,20 @@ public:
                    std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count()) *
                speed_);
   }
+  /// Sleeps until the deadline: a coarse sleep, then a yield-spin for the last
+  /// stretch, so 10 ms loop periods stay 10 ms even where the OS timer is coarse.
   void sleep_for(std::chrono::nanoseconds d) override {
-    std::this_thread::sleep_for(
-        std::chrono::nanoseconds(static_cast<int64_t>(static_cast<double>(d.count()) / speed_)));
+    using steady = std::chrono::steady_clock;
+    const auto deadline =
+        steady::now() +
+        std::chrono::nanoseconds(static_cast<int64_t>(static_cast<double>(d.count()) / speed_));
+    const auto coarse = deadline - std::chrono::milliseconds(2);
+    if (steady::now() < coarse) {
+      std::this_thread::sleep_until(coarse);
+    }
+    while (steady::now() < deadline) {
+      std::this_thread::yield();
+    }
   }
   bool is_virtual() const override { return false; }
 
@@ -57,6 +68,9 @@ public:
 private:
   std::atomic<int64_t> now_{1'000'000'000};
 };
+
+/// Asks the OS for 1 ms timer resolution (a no-op off Windows).
+void enable_precise_timers();
 
 /// The clock the firmware code runs on. Set once at startup.
 Clock &current_clock();

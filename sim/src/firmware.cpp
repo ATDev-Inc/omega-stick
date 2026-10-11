@@ -238,9 +238,6 @@ struct SimPorts : espp::omega_control::Ports {
 
   espp::omega_control::StickSample read_stick() override {
     js.update();
-    const Field f = bus.last_field();
-    host.live.bx = f.bx;
-    host.live.by = f.by;
     return {js.x(), js.y(), js.raw().x(), js.raw().y(), sensor_read_ok, sensor_conversion_count};
   }
 
@@ -261,15 +258,13 @@ struct SimPorts : espp::omega_control::Ports {
 };
 
 std::string boot(Host &host, int reset_reason) {
-  auto &flash = sim::flash();
   host.live.have_calibration = false;
   host.live.last_sweep = -1;
 
   // ==========================================================================
   // Reset-reason log (D23)
   // ==========================================================================
-  const esp_partition_t *running_slot = esp_ota_get_running_partition();
-  const std::string running_slot_label = running_slot ? running_slot->label : "factory";
+  const std::string running_slot_label = esp_ota_get_running_partition()->label;
   const std::string slot_tag = " (" + running_slot_label + ")";
   std::vector<Health::BootRecord> boots; // oldest first
   espp::ResetLog reset_log(
@@ -300,7 +295,7 @@ std::string boot(Host &host, int reset_reason) {
   // the other slot (D18 amendment).
   if (Health::revert_if_crash_looping(ota,
                                       Health::crashes_while_running(boots, running_slot_label))) {
-    flash.take_restart_reason();
+    sim::flash().take_restart_reason();
     return "revert";
   }
   {
@@ -312,11 +307,11 @@ std::string boot(Host &host, int reset_reason) {
   }
   // sim: an image flashed with next_image=crash_loop crashes right after the reset log
   // records the boot, before the application starts.
-  if (flash.running_behavior() == NextImage::CRASH_LOOP) {
+  if (sim::flash().running_behavior() == NextImage::CRASH_LOOP) {
     host.console_text("PANIC: simulated crash on boot (next_image crash_loop)");
     return "crash";
   }
-  const bool self_test_fails = flash.running_behavior() == NextImage::FAIL_SELF_TEST;
+  const bool self_test_fails = sim::flash().running_behavior() == NextImage::FAIL_SELF_TEST;
 
   SensorFaultStatus sensor_status;
   host.live.sensor_fault = false;
@@ -340,7 +335,12 @@ std::string boot(Host &host, int reset_reason) {
   // I2C bus and TMAG5273 (sim: a fake bus behind the real driver)
   // ==========================================================================
   std::error_code ec;
-  FakeTmagBus bus(host.sensor, [&host] { return host.stick_now(); });
+  FakeTmagBus bus(
+      host.sensor, [&host] { return host.stick_now(); },
+      [&host](const Field &f) {
+        host.live.bx = f.bx;
+        host.live.by = f.by;
+      });
   espp::TMAG5273 tmag(bus.config(TMAG_ADDRESS));
 
   host.console_text("Initializing TMAG5273...");

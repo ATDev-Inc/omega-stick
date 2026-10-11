@@ -47,7 +47,10 @@ struct SocketRuntime {
   }
 };
 
-void ensure_runtime() { static SocketRuntime runtime; }
+void ensure_runtime() {
+  static const SocketRuntime runtime;
+  (void)runtime;
+}
 
 void set_timeouts(sock_t s, int recv_ms, int send_ms) {
 #if defined(_WIN32)
@@ -101,7 +104,7 @@ Server::Server(Handlers handlers)
 
 Server::~Server() { stop(); }
 
-bool Server::start(uint16_t port, std::string &error) {
+bool Server::start(uint16_t listen_port, std::string &error) {
   const sock_t s = socket(AF_INET, SOCK_STREAM, 0);
   if (s == kInvalidSocket) {
     error = "socket() failed";
@@ -113,11 +116,11 @@ bool Server::start(uint16_t port, std::string &error) {
 #endif
   sockaddr_in addr{};
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(port);
+  addr.sin_port = htons(listen_port);
   addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // 127.0.0.1 only
   if (bind(s, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0 || listen(s, 4) != 0) {
-    error =
-        "cannot listen on 127.0.0.1:" + std::to_string(port) + " (is another simulator running?)";
+    error = "cannot listen on 127.0.0.1:" + std::to_string(listen_port) +
+            " (is another simulator running?)";
     close_socket(s);
     return false;
   }
@@ -277,7 +280,7 @@ void Server::accept_loop() {
   }
 }
 
-void Server::serve(std::shared_ptr<Conn> conn, std::string leftover) {
+void Server::serve(std::shared_ptr<Conn> conn, const std::string &leftover) {
   Decoder decoder;
   std::vector<uint8_t> buf(8192);
   bool close_sent = false;

@@ -21,7 +21,7 @@ struct Handlers {
   /// A client finished the handshake and is now the current connection.
   std::function<void()> on_connect;
   /// A text message arrived from the current client.
-  std::function<void(std::string text)> on_text;
+  std::function<void(const std::string &text)> on_text;
   /// A binary message arrived from the current client.
   std::function<void(std::span<const uint8_t> data)> on_binary;
   /// The current client went away (closed, error, or replaced by a new one).
@@ -37,7 +37,7 @@ public:
 
   /// Binds 127.0.0.1:port and starts accepting. Returns false (with `error`) on failure.
   /// With port 0 the OS picks a port; port() tells which.
-  bool start(uint16_t port, std::string &error);
+  bool start(uint16_t listen_port, std::string &error);
   void stop();
   uint16_t port() const { return port_; }
 
@@ -51,7 +51,7 @@ public:
 private:
   struct Conn;
   void accept_loop();
-  void serve(std::shared_ptr<Conn> conn, std::string leftover);
+  void serve(std::shared_ptr<Conn> conn, const std::string &leftover);
   bool send_frame(const std::shared_ptr<Conn> &conn, const std::vector<uint8_t> &frame);
   std::shared_ptr<Conn> current() const;
 

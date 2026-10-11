@@ -179,6 +179,7 @@ int main(int argc, char **argv) {
   if (options.headless) {
     clock = std::make_unique<sim::VirtualClock>();
   } else {
+    sim::enable_precise_timers();
     clock = std::make_unique<sim::RealClock>(options.speed);
   }
   sim::set_current_clock(clock.get());
@@ -191,7 +192,7 @@ int main(int argc, char **argv) {
   if (!options.headless) {
     sim::ws::Handlers handlers;
     handlers.on_connect = [&host_ptr] { host_ptr->on_connect(); };
-    handlers.on_text = [&host_ptr](std::string text) { host_ptr->on_text(text); };
+    handlers.on_text = [&host_ptr](const std::string &text) { host_ptr->on_text(text); };
     handlers.on_binary = [&host_ptr](std::span<const uint8_t> data) { host_ptr->on_binary(data); };
     server = std::make_unique<sim::ws::Server>(std::move(handlers));
   }
@@ -205,6 +206,9 @@ int main(int argc, char **argv) {
       return 1;
     }
     std::signal(SIGINT, on_sigint);
+#ifdef SIGPIPE
+    std::signal(SIGPIPE, SIG_IGN); // a page that vanishes mid-send must not kill the simulator
+#endif
     std::printf("omega_sim %s listening on ws://127.0.0.1:%u (data: %s)\n", OMEGA_SIM_FW_VERSION,
                 static_cast<unsigned>(server->port()), options.data.string().c_str());
     std::fflush(stdout);
@@ -237,7 +241,7 @@ int main(int argc, char **argv) {
     server->stop();
   }
   if (options.headless) {
-    return host.report(script.name);
+    return host.finish_report(script.name);
   }
   return 0;
 }

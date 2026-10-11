@@ -410,8 +410,9 @@ private:
       in_message_ = true;
     }
     if (fin) {
-      out.push_back({msg_op_, std::move(msg_)});
-      msg_.clear();
+      Message done{msg_op_, {}};
+      done.data.swap(msg_);
+      out.push_back(std::move(done));
       in_message_ = false;
     }
     return used;

@@ -44,7 +44,7 @@ target_compile_definitions(omega_sim_lib PUBLIC
   OMEGA_SIM_FW_VERSION="${OMEGA_SIM_BASE_VERSION}+sim")
 target_link_libraries(omega_sim_lib PUBLIC espp_host Threads::Threads)
 if(WIN32)
-  target_link_libraries(omega_sim_lib PUBLIC ws2_32)
+  target_link_libraries(omega_sim_lib PUBLIC ws2_32 winmm)
 endif()
 omega_host_apply_flags(omega_sim_lib)
 

@@ -80,7 +80,7 @@ double SensorModel::gaussian_locked() {
   return std::sqrt(-2.0 * std::log(u1)) * std::cos(2.0 * 3.14159265358979323846 * u2);
 }
 
-Field SensorModel::field(StickPos pos, int64_t t_ns) {
+Field SensorModel::field(const StickPos &pos, int64_t t_ns) {
   std::lock_guard<std::mutex> lock(mu_);
   const double strength = fault_ == Fault::WeakMagnet ? kWeakFactor : 1.0;
   const double drift = drift_units_locked(t_ns);
@@ -108,9 +108,10 @@ std::pair<double, double> SensorModel::true_center_mT(int64_t t_ns) const {
 
 // ---- fake bus -------------------------------------------------------------------
 
-FakeTmagBus::FakeTmagBus(SensorModel &model, Provider provider)
+FakeTmagBus::FakeTmagBus(SensorModel &model, Provider provider, FieldHook on_field)
     : model_(model)
-    , provider_(std::move(provider)) {
+    , provider_(std::move(provider))
+    , on_field_(std::move(on_field)) {
   regs_[espp::TMAG5273::DEVICE_ID] = 0x01;
 }
 
@@ -168,6 +169,9 @@ void FakeTmagBus::convert() {
   {
     std::lock_guard<std::mutex> lock(mu_);
     last_ = f;
+  }
+  if (on_field_) {
+    on_field_(f);
   }
   auto raw = [](double mT) {
     const double counts = std::round(mT / 266.0 * 32768.0);

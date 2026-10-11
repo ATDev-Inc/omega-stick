@@ -19,18 +19,23 @@ public:
   enum class Type { Null, Bool, Number, String, Array, Object };
 
   Value() = default;
+  // cppcheck-suppress noExplicitConstructor ; implicit on purpose: Value v = 3, "x", true
   Value(bool b)
       : type_(Type::Bool)
       , bool_(b) {}
+  // cppcheck-suppress noExplicitConstructor ; implicit on purpose: Value v = 3, "x", true
   Value(double n)
       : type_(Type::Number)
       , num_(n) {}
+  // cppcheck-suppress noExplicitConstructor ; implicit on purpose: Value v = 3, "x", true
   Value(int n)
       : type_(Type::Number)
       , num_(n) {}
+  // cppcheck-suppress noExplicitConstructor ; implicit on purpose: Value v = 3, "x", true
   Value(const char *s)
       : type_(Type::String)
       , str_(s) {}
+  // cppcheck-suppress noExplicitConstructor ; implicit on purpose: Value v = 3, "x", true
   Value(std::string s)
       : type_(Type::String)
       , str_(std::move(s)) {}

@@ -125,7 +125,8 @@ void Host::calibration_prompt(const std::string &text) {
   console_text(text);
 }
 
-void Host::on_mouse(const espp::omega_control::MouseReport &r) {
+void Host::on_mouse(const espp::omega_control::MouseReport &report) {
+  const auto &r = report;
   std::lock_guard<std::mutex> lock(out_mu_);
   win_dx_ += r.dx;
   win_dy_ += r.dy;
@@ -147,7 +148,8 @@ void Host::on_mouse(const espp::omega_control::MouseReport &r) {
   last_was_xac_ = false;
 }
 
-void Host::on_xac(const espp::omega_control::XacReport &r) {
+void Host::on_xac(const espp::omega_control::XacReport &report) {
+  const auto &r = report;
   std::lock_guard<std::mutex> lock(out_mu_);
   xac_x_ = r.x;
   xac_y_ = -r.y; // the firmware's y is negative for physical up; the page sees +y up
@@ -660,7 +662,7 @@ void Host::evaluate(const Step &step, size_t index) {
   }
 }
 
-int Host::report(const std::string &script_name) {
+int Host::finish_report(const std::string &script_name) {
   std::printf("\nomega_sim script \"%s\"\n", script_name.c_str());
   for (const std::string &line : report_lines_) {
     std::printf("  %s\n", line.c_str());

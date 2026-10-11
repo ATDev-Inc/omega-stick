@@ -1,5 +1,18 @@
 #include "sim_clock.hpp"
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+// clang-format off
+#include <windows.h>
+#include <timeapi.h> // after windows.h
+// clang-format on
+#endif
+
 namespace sim {
 
 namespace {
@@ -10,9 +23,17 @@ RealClock &fallback() {
 }
 } // namespace
 
+void enable_precise_timers() {
+#if defined(_WIN32)
+  timeBeginPeriod(1);
+#endif
+}
+
 Clock &current_clock() {
-  Clock *c = g_clock.load();
-  return c ? *c : fallback();
+  if (Clock *c = g_clock.load()) {
+    return *c;
+  }
+  return fallback();
 }
 
 void set_current_clock(Clock *clock) { g_clock = clock; }

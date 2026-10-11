@@ -54,7 +54,7 @@ public:
   double noise() const;
 
   /// The field for a stick position at time t_ns (one new conversion).
-  Field field(StickPos pos, int64_t t_ns);
+  Field field(const StickPos &pos, int64_t t_ns);
 
   /// The resting field the calibration should find at time t_ns (includes drift).
   std::pair<double, double> true_center_mT(int64_t t_ns) const;
@@ -81,7 +81,9 @@ class FakeTmagBus {
 public:
   using Provider = std::function<std::pair<StickPos, int64_t>()>; ///< stick position, time (ns)
 
-  FakeTmagBus(SensorModel &model, Provider provider);
+  using FieldHook = std::function<void(const Field &)>;
+  /// `on_field` (optional) is told each new field as the conversion happens.
+  FakeTmagBus(SensorModel &model, Provider provider, FieldHook on_field = nullptr);
   FakeTmagBus(const FakeTmagBus &) = delete;
   FakeTmagBus &operator=(const FakeTmagBus &) = delete;
 
@@ -97,6 +99,7 @@ private:
 
   SensorModel &model_;
   Provider provider_;
+  FieldHook on_field_;
   std::array<uint8_t, 256> regs_{};
   uint8_t counter_{0};
   mutable std::mutex mu_;

@@ -94,7 +94,10 @@ public:
 
   bool is_pending_verify() const { return sim::flash().pending_verify(); }
 
-  bool mark_app_valid(std::error_code &) { return sim::flash().mark_valid(); }
+  bool mark_app_valid(std::error_code &) {
+    sim::flash().mark_valid();
+    return true;
+  }
 
   bool mark_app_invalid_and_rollback(std::error_code &ec) {
     if (!sim::flash().mark_invalid_and_rollback()) {

@@ -106,7 +106,7 @@ public:
   void start_script(const Script &script);
   bool script_finished() const;
   /// Prints the headless report; returns the process exit code.
-  int report(const std::string &script_name);
+  int finish_report(const std::string &script_name);
   int failures() const { return failures_.load(); }
   void note_error(const std::string &message);
 

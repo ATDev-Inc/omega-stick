@@ -15,7 +15,7 @@ namespace sim {
 
 /// Position of a built-in pattern `t_ms` after it started. `range_t_ms` is the time since
 /// the firmware's range-calibration prompt ("START!"), or negative when none is running.
-StickPos pattern_position(const std::string &name, double t_ms, double range_t_ms);
+StickPos pattern_position(const std::string &name, double t, double range_t);
 
 /// How long a pattern lasts by itself, or negative for ones that run until stopped.
 double pattern_length_ms(const std::string &name);
@@ -45,7 +45,7 @@ public:
   void note_prompt(const std::string &text, int64_t now_ms);
 
 private:
-  StickPos script_position(int64_t t_ms, double range_t_ms) const;
+  StickPos script_position(int64_t t_ms, double range_start) const;
 
   mutable std::mutex mu_;
   Kind kind_{Kind::Manual};

@@ -315,11 +315,10 @@ public:
     return &slots_[running_].desc;
   }
 
-  bool mark_valid() {
+  void mark_valid() {
     std::lock_guard<std::mutex> lock(mu_);
     slots_[running_].state = ESP_OTA_IMG_VALID;
     save_locked();
-    return true;
   }
 
   /// Marks the running image invalid and points the next boot at the other

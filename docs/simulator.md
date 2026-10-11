@@ -45,21 +45,34 @@ delays, the 10 ms / 5 ms loop period) advances the clock instantly, and the
 stick is evaluated at the simulated time, so a scenario that takes a minute on
 a device finishes in well under a second.
 
+## Axes
+
+The stick position is x positive to the right and y positive up (pushed away
+from the user), both from -1 to 1. Everywhere the page sees a stick or gamepad
+value (`stick`, `sensor`, `hid` in XAC mode, script keyframes, `xac_x`/`xac_y`)
+it uses this convention. For mouse output the usual screen convention applies:
+`dx` grows to the right and `dy` grows downward, so `up` in `mouse_moved` means
+negative `dy`. The firmware itself treats a negative joystick y as "forward"
+(up, left click when nudged), so the sensor model puts physical up on the
+negative field-y direction; pushing the stick up (+y) then moves the cursor up
+and the XAC telemetry reports +y.
+
 ## Simulated sensor
 
 The stick position (x, y), each in -1..1, is turned into a magnetic field and
 written into the fake TMAG5273 result registers, together with a 3-bit
 conversion counter that advances on every new sample, exactly as the real
 driver expects to read it. The model has a center offset, a per-axis gain, a
-small amount of Gaussian noise, an optional slow drift of the center, and these
-faults:
+small amount of Gaussian noise (plus one LSB of dither even with noise off, so
+a perfectly still stick does not look like a stuck sensor), an optional slow
+drift of the center, and these faults:
 
 | Fault | Effect |
 |---|---|
 | `ok` | Normal |
 | `no_response` | Every I2C transaction fails (sensor unplugged) |
-| `stuck_counter` | Readings succeed but the conversion counter stops advancing |
-| `weak_magnet` | Field strength drops to a fraction of normal |
+| `stuck_counter` | Readings succeed but the conversion counter stops advancing (the result registers freeze with it, as a stalled conversion engine would leave them) |
+| `weak_magnet` | The field the stick produces drops to 15 % of normal; the resting offset stays |
 
 ## WebSocket protocol
 
@@ -104,6 +117,34 @@ Simulator to page:
 Unknown `type` values are ignored on both sides, so either side can add
 messages without breaking the other.
 
+The simulator sends `hello` when a page connects (once) and answers a page
+`hello` with nothing further. It sends `hid` only when there is something new
+(non-zero mouse motion, a button change, or a changed gamepad value), `sensor`
+every 100 ms of simulated time, and `source` on a change and every 250 ms while
+a pattern or script plays. Prompts and other console text go out as binary
+messages, one line per message.
+
+### Limits
+
+Control messages and scripts that break these are rejected: the simulator
+replies `{"type":"error","message":...}` (or, for a script given with
+`--script`, refuses to start) and otherwise ignores them.
+
+| Item | Limit |
+|---|---|
+| `stick` x, y | clamped to -1..1 (not rejected) |
+| `drift` rate | 0 to 10 stick units per minute |
+| `noise` sigma | 0 to 1 stick unit |
+| script `at_ms` | 0 to 86,400,000, steps in non-decreasing `at_ms` order |
+| script size | at most 5000 steps and 256 KiB of JSON |
+| script `stick` keyframes | -1..1 (rejected, not clamped) |
+| script `set_deadzone` | `center` 0 to 0.5, `range` 0 to 0.1, except that out-of-range values are accepted when the same step has `expect_reply: "invalid"`: the simulator then sends the value to the firmware on purpose, so a scenario tests the firmware's own check |
+| WebSocket message | at most 1 MiB |
+
+Only pages from `null` (a `file://` page), no Origin, `http://localhost[:port]`,
+`http://127.0.0.1[:port]` and `https://atdev-inc.github.io` may connect; any other
+Origin gets 403.
+
 ## Built-in patterns
 
 | Name | Motion |
@@ -142,7 +183,7 @@ Each step has `at_ms` and exactly one of:
 | `stick: [x, y]` | Keyframe. The stick moves linearly between consecutive keyframes |
 | `pattern: name` | Play a built-in pattern from this time (optional `duration_ms`) |
 | `fault`, `drift`, `noise`, `next_image` | Same values as the WebSocket messages |
-| `action` | A console request sent through the real protocol: `recalibrate`, `save`, `restart`, `set_mode` (with `value`: `mouse` or `xac`), `set_deadzone` (with `value`: `{"center": 0.1, "range": 0.05}`, either may be omitted). Optional `expect_reply`: `ok`, `busy`, `invalid`, `error` |
+| `action` | A console request sent through the real protocol: `recalibrate`, `save`, `restart`, `set_mode` (with `value`: `mouse` or `xac`), `set_deadzone` (with `value`: `{"center": 0.1, "range": 0.05}`, either may be omitted), `flash` (uploads a generated firmware image through OTA_BEGIN/DATA/FINISH; optional `version`, default `9.9.9-sim`), `revert`, `mark_valid`. Optional `expect_reply`: `ok`, `busy`, `invalid`, `error`; without it the reply must be `ok`. For `flash` the reply checked is the first failure, else OTA_FINISH's |
 | `expect` | Assertions, checked at that time (headless mode reports them; interactive mode logs them) |
 
 `expect` keys:
@@ -158,5 +199,31 @@ Each step has `at_ms` and exactly one of:
 | `neutral: true` | Every report since the previous `expect` was neutral |
 | `fw_slot: "ota_0"/"ota_1"` | The running slot |
 | `fw_pending: true/false` | The running image is waiting for its self-test |
+| `fw_version: "..."` | The running image's version string (what GET_FW_INFO reports) |
+| `xac_x: v`, `xac_y: v` | The latest gamepad value is within 0.1 of v (stick convention, +y up) |
+
+Stick keyframes interpolate linearly to the next keyframe, so hold a position by
+repeating it at a later time. `mouse_moved` needs at least 3 counts of net
+motion; below that it reads `none`.
 
 Scenarios kept in [sim/scenarios/](../sim/scenarios/) run headless in CI.
+
+## How it differs from the firmware
+
+- One link. The device has a WebUSB and a Web Serial stream with a service
+  each; the simulator has the one WebSocket stream and one service.
+- The link is up before the first-boot calibration sweep (the firmware brings
+  USB up after it), so a console can connect, read the prompts and fetch state
+  during the sweep. `START_CALIBRATION` is refused as busy until it is done.
+- A fresh board's sweep needs the stick to move: play the `calibrate` pattern
+  (or a script that does) while it runs.
+- Simulated flash is a directory: the process changes into `--data`, which is
+  where the espp file system keeps its files off the device.
+- An uploaded image is checked for the image magic and an `esp_app_desc_t` at
+  byte 32, and kept as its descriptor only; its code is this program.
+- `next_image` `crash_loop` makes the new image panic right after the reset log
+  records the boot (reason `crash`); the bootloader fake then rolls it back. A
+  confirmed image crash-looping is reverted with reason `revert`.
+- Restarts triggered by RESTART, REVERT and OTA_FINISH happen 750 ms of real
+  time after the reply, as on the device (`CalibrationService` waits in a real
+  thread). Headless runs wait for that before simulated time moves on.
