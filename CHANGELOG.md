@@ -20,7 +20,7 @@ in `version.txt`.
   pointer accessible virtual stick, motion patterns, sensor faults, drift and
   noise, next-image behavior, power-cycle and wipe, script upload with
   validation, and a live view of the simulated HID output. The page
-  reconnects by itself after a simulated restart or update.
+  reconnects by itself after a simulated restart or update. ([#35])
 - **Mouse mode.** The stick drives a standard USB HID mouse: relative X/Y
   movement, with short nudges of the stick for clicks and scrolling. No host
   software is needed. ([#10])
@@ -192,3 +192,4 @@ in `version.txt`.
 [#30]: https://github.com/ATDev-Inc/omega-stick/pull/30
 [#31]: https://github.com/ATDev-Inc/omega-stick/pull/31
 [#34]: https://github.com/ATDev-Inc/omega-stick/pull/34
+[#35]: https://github.com/ATDev-Inc/omega-stick/pull/35
