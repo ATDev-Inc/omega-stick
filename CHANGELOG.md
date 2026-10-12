@@ -77,7 +77,8 @@ in `version.txt`.
 - **First flash from the browser.** `flash.html` installs the full image with
   ESP Web Tools 10.4.0. A first flash erases calibration and settings. The
   download-mode steps are the standard ESP32-S3 procedure and are not yet
-  confirmed on the Omega Stick. ([#29])
+  confirmed on the Omega Stick. The console links to it from its Device and
+  Firmware update sections for a board that will not connect. ([#29], [#34])
 - **Host, web and fuzz tests in CI.** Desktop unit tests that run the real
   espp code (calibration, store, console service, control loop, sensor
   driver, HID reports and descriptors, health check), Node tests for the
@@ -190,3 +191,4 @@ in `version.txt`.
 [#29]: https://github.com/ATDev-Inc/omega-stick/pull/29
 [#30]: https://github.com/ATDev-Inc/omega-stick/pull/30
 [#31]: https://github.com/ATDev-Inc/omega-stick/pull/31
+[#34]: https://github.com/ATDev-Inc/omega-stick/pull/34

@@ -440,10 +440,15 @@
         <label for="simUrl">Simulator address</label>
         <input type="text" id="simUrl" value="ws://127.0.0.1:8765" spellcheck="false" autocomplete="off">
       </div>
-      <p id="devInfo" class="muted" style="margin: 8px 0 0;">
-        Not connected. Needs a firmware build with the calibration module (5) registered on the
-        same dispatcher as coredump/OTA (see the protocol spec in this page's source comment).
+      <p id="devInfo" class="muted" style="margin: 8px 0 0;">Not connected.</p>
+      <p class="muted" style="margin: 6px 0 0;">
         No stick? Run omega_sim and choose Connect Simulator (see docs/simulator.md).
+      </p>
+      <p class="muted" style="margin: 6px 0 0;">
+        New board, or a stick that never appears in the list? It may have no Omega Stick
+        firmware, or firmware too old for this page. Install it from the
+        <a href="https://atdev-inc.github.io/omega-stick/flash.html" target="_blank" rel="noopener">first-flash page</a>
+        (erases calibration and settings).
       </p>
     </div>
 
@@ -707,7 +712,9 @@
         <p id="fwHint" class="muted" style="margin: 0 0 6px;">
           Choose the app image (<code>build/&lt;project&gt;.bin</code>, not the .elf). The page checks
           the file before anything is sent. The device validates it, switches slots and restarts,
-          and this page reconnects by itself.
+          and this page reconnects by itself. Updating here keeps your calibration. A board that
+          will not start or connect needs the
+          <a href="https://atdev-inc.github.io/omega-stick/flash.html" target="_blank" rel="noopener">first-flash page</a> instead.
         </p>
         <div class="edit-row">
           <input type="file" id="fwFile" accept=".bin" aria-label="Firmware file (.bin)">

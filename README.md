@@ -283,6 +283,8 @@ holding BOOT. As a developer, set it locally in `idf.py menuconfig` (your
 
 ## Repository layout
 
+The short version is below. [DIRECTORY.md](DIRECTORY.md) maps every directory and the files that matter in each.
+
 ```
 main/                     application entry point, IDF component manifest, Kconfig options
 components/tmag5273/      TMAG5273 Hall-effect sensor driver
