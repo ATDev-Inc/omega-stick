@@ -33,7 +33,7 @@ omega_sim [--port 8765] [--data DIR] [--fresh] [--mode mouse|xac]
 | `--headless` | No WebSocket; run `--script` on simulated time as fast as possible, print a report, exit 0 if every `expect` passed, 1 otherwise |
 | `--speed N` | Interactive mode only: run simulated time N times faster than real time (default 1) |
 
-In the calibration console choose **Simulator**. The page connects to
+In the calibration console choose **Connect Simulator**. The page connects to
 `ws://127.0.0.1:8765` and from then on behaves as with a real stick, plus a
 Simulator panel for moving the stick and injecting faults.
 
