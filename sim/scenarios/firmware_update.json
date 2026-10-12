@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "a firmware update installs, boots pending, is confirmed, and can be reverted",
+  "steps": [
+    { "at_ms": 0, "pattern": "calibrate" },
+    { "at_ms": 40000, "expect": { "calibrated": true, "fw_slot": "ota_0", "fw_pending": false } },
+    { "at_ms": 41000, "action": "revert", "expect_reply": "error" },
+    { "at_ms": 42000, "action": "flash", "version": "9.9.9-sim" },
+    { "at_ms": 45000, "expect": { "fw_slot": "ota_1", "fw_pending": true, "fw_version": "9.9.9-sim", "calibrated": true } },
+    { "at_ms": 60000, "expect": { "fw_slot": "ota_1", "fw_pending": false, "fw_version": "9.9.9-sim" } },
+    { "at_ms": 61000, "action": "revert" },
+    { "at_ms": 65000, "expect": { "fw_slot": "ota_0", "fw_pending": true } },
+    { "at_ms": 80000, "expect": { "fw_slot": "ota_0", "fw_pending": false } }
+  ]
+}
