@@ -21,8 +21,14 @@ Last reviewed: 2026-10-12.
         sensor unplugged mid-session (expect a centered stick, then recovery).
   - [ ] Console over WebUSB and over Web Serial: state, diagnostics,
         recalibration, deadzone overrides, mode switch and reconnect.
-  - [ ] Update flow: upload, the console's checks and MARK_VALID, then a forced
-        failure (unplug before confirmation) to see the 120 s rollback.
+  - [ ] Update flow, happy path: upload, the console's checks, MARK_VALID, and
+        the image stays confirmed across a power cycle.
+  - [ ] Bootloader rollback: unplug and replug before MARK_VALID. The board
+        should come back on the previous image.
+  - [ ] Deadline rollback: keep the board powered and withhold MARK_VALID (close
+        the console before it confirms). The board should reboot into the
+        previous image at about 120 s (90 s before #37). An unplug does not test
+        this; it takes the bootloader path above.
   - [ ] Gamepad mode plugged straight into a Windows PC, no XAC: it appears in
         the Game Controllers panel (`joy.cpl`), X/Y track the stick, and it
         rests at center.
