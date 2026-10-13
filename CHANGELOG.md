@@ -100,7 +100,7 @@ in `version.txt`.
   unconfirmed after 120 s (was 90 s), and the "Mark valid" button still
   confirms without the checks. Reload the console before updating so an old
   copy of the page does not leave the new image to roll back. Not yet tested
-  on hardware. ([#TBD](https://github.com/ATDev-Inc/omega-stick/pull/TBD))
+  on hardware. ([#37](https://github.com/ATDev-Inc/omega-stick/pull/37))
 - **The console finds the calibration service by protocol id.** The service
   advertises `omega.calibration` version 1 through dispatcher discovery, the
   console selects it by that id and uses the module id discovery reports for
