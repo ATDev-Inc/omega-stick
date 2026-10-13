@@ -23,6 +23,9 @@ Last reviewed: 2026-10-12.
         recalibration, deadzone overrides, mode switch and reconnect.
   - [ ] Update flow: upload, the console's checks and MARK_VALID, then a forced
         failure (unplug before confirmation) to see the 120 s rollback.
+  - [ ] Gamepad mode plugged straight into a Windows PC, no XAC: it appears in
+        the Game Controllers panel (`joy.cpl`), X/Y track the stick, and it
+        rests at center.
   - [ ] First-flash page: the BOOT and RESET steps are unverified on the board.
   - [ ] Loop timing after the stack protector was enabled.
 - [ ] Tag `v0.1.0` on a clean tree, confirm the Pages site, the release feed and
