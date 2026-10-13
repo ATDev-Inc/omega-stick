@@ -867,11 +867,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
     espp::FirmwareHealthCheck<> fw_health(ota);
     while (true) {
-      fw_health.tick(usb.is_hid_ready(), [&tmag] {
-        std::error_code read_ec;
-        tmag.read_magnetic(read_ec);
-        return !read_ec;
-      });
+      fw_health.tick();
       // Cheap when idle: a try_lock and a timestamp compare per service.
       calibration_vendor.expire_stale_update(OTA_IDLE_TIMEOUT);
       calibration_cdc.expire_stale_update(OTA_IDLE_TIMEOUT);
@@ -1046,11 +1042,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
     espp::FirmwareHealthCheck<> fw_health(ota);
     while (true) {
-      fw_health.tick(usb.is_hid_ready(), [&tmag] {
-        std::error_code read_ec;
-        tmag.read_magnetic(read_ec);
-        return !read_ec;
-      });
+      fw_health.tick();
       // Cheap when idle: a try_lock and a timestamp compare per service.
       calibration_vendor.expire_stale_update(OTA_IDLE_TIMEOUT);
       calibration_cdc.expire_stale_update(OTA_IDLE_TIMEOUT);

@@ -37,8 +37,8 @@ in `version.txt`.
   input mode, save to flash, and recalibrate. ([#16])
 - **Firmware updates from the console, with automatic rollback.** Upload
   `omega_stick.bin` over USB into the inactive slot. A new image is confirmed
-  only after 10 s of working USB and sensor reads; otherwise it rolls back by
-  itself after 90 s, or at once if the sensor, calibration or USB fails to
+  by the console after its checks pass (see Changed); otherwise it rolls back by
+  itself after 120 s, or at once if the sensor, calibration or USB fails to
   start. A "Revert to previous firmware" button switches back deliberately,
   and an upload interrupted by a disconnect never needs a restart to retry.
   ([#19])
@@ -92,6 +92,15 @@ in `version.txt`.
 
 ### Changed
 
+- **The console confirms a new firmware image, not the firmware.** After an
+  update or a revert the console reconnects, checks that the stick is running
+  the image it flashed, answers requests and reports no sensor fault, then
+  confirms it; if a check fails it says which one and the stick goes back to
+  the previous firmware by itself. The firmware only rolls back an image still
+  unconfirmed after 120 s (was 90 s), and the "Mark valid" button still
+  confirms without the checks. Reload the console before updating so an old
+  copy of the page does not leave the new image to roll back. Not yet tested
+  on hardware. ([#TBD](https://github.com/ATDev-Inc/omega-stick/pull/TBD))
 - **The console finds the calibration service by protocol id.** The service
   advertises `omega.calibration` version 1 through dispatcher discovery, the
   console selects it by that id and uses the module id discovery reports for

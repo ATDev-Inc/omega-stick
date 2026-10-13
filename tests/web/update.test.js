@@ -261,11 +261,11 @@ test("decideOutcome: flashed build running and pending, then confirmed", () => {
   assert.match(o.message, /^Update confirmed/);
 });
 
-test("decideOutcome: old build back means the self-test failed", () => {
+test("decideOutcome: old build back means the new firmware was not confirmed", () => {
   const exp = { kind: "flash", version: "0.2.0", sha: "20212223", before: { version: "0.1.0", sha: "11111111" } };
   const o = P.decideOutcome(exp, { version: "0.1.0", sha: "11111111", pending: false });
   assert.equal(o.state, "rolled_back");
-  assert.equal(o.message, "The new firmware did not pass its self-test, so the device went back to 0.1.0.");
+  assert.equal(o.message, "The new firmware was not confirmed, so the device went back to 0.1.0.");
 });
 
 test("decideOutcome: version matches but the build differs is unexpected, not success", () => {
@@ -288,6 +288,77 @@ test("decideOutcome: revert, version only (previous sha is not reported)", () =>
   o = P.decideOutcome(exp, { version: "0.2.0", sha: "22222222", pending: false });
   assert.equal(o.state, "rolled_back");
   assert.match(o.message, /went back to 0\.2\.0/);
+});
+
+const CONFIRM_EXP = { kind: "flash", version: "0.2.0", sha: "20212223", before: { version: "0.1.0", sha: "11111111" } };
+const PENDING_NEW = { version: "0.2.0", sha: "20212223", pending: true };
+
+test("CONFIRM_CHECKS lists firmware, protocol, sensor in order", () => {
+  assert.deepEqual(P.CONFIRM_CHECKS.map((c) => c.id), ["firmware", "protocol", "sensor"]);
+  for (const c of P.CONFIRM_CHECKS) assert.ok(c.label);
+});
+
+test("judgeConfirmCheck: all checks pass", () => {
+  assert.deepEqual(P.judgeConfirmCheck("firmware", { expected: CONFIRM_EXP, after: PENDING_NEW }),
+    { ok: true, skipped: false, message: "" });
+  assert.equal(P.judgeConfirmCheck("protocol", { error: "" }).ok, true);
+  const r = P.judgeConfirmCheck("sensor", { diagnostics: { sensorFault: 0, sensorFirstFault: 0 } });
+  assert.deepEqual(r, { ok: true, skipped: false, message: "" });
+});
+
+test("judgeConfirmCheck: a version or build mismatch fails the firmware check", () => {
+  const wrongVer = P.judgeConfirmCheck("firmware", { expected: CONFIRM_EXP, after: { version: "0.3.0", sha: "abcdabcd", pending: true } });
+  assert.equal(wrongVer.ok, false);
+  assert.match(wrongVer.message, /not the version that was installed/);
+  const wrongSha = P.judgeConfirmCheck("firmware", { expected: CONFIRM_EXP, after: { version: "0.2.0", sha: "99999999", pending: true } });
+  assert.equal(wrongSha.ok, false);
+  const old = P.judgeConfirmCheck("firmware", { expected: CONFIRM_EXP, after: { version: "0.1.0", sha: "11111111", pending: false } });
+  assert.equal(old.ok, false);
+  assert.match(old.message, /was not confirmed/);
+  assert.equal(P.judgeConfirmCheck("firmware", { expected: CONFIRM_EXP, after: null }).ok, false);
+  // Already not pending is not "confirming": MARK_VALID is not needed or wanted.
+  assert.equal(P.judgeConfirmCheck("firmware", { expected: CONFIRM_EXP, after: { ...PENDING_NEW, pending: false } }).ok, false);
+});
+
+test("judgeConfirmCheck: a failed GET_STATE fails the protocol check", () => {
+  const r = P.judgeConfirmCheck("protocol", { error: "GET_STATE timed out" });
+  assert.equal(r.ok, false);
+  assert.match(r.message, /GET_STATE timed out/);
+});
+
+test("judgeConfirmCheck: a sensor fault fails the sensor check", () => {
+  let r = P.judgeConfirmCheck("sensor", { diagnostics: { sensorFault: 1 } });
+  assert.equal(r.ok, false);
+  assert.equal(r.skipped, false);
+  assert.match(r.message, /read failed/);
+  r = P.judgeConfirmCheck("sensor", { diagnostics: { sensorFault: 2 } });
+  assert.match(r.message, /reading stuck/);
+  assert.match(P.judgeConfirmCheck("sensor", { diagnostics: { sensorFault: 9 } }).message, /code 9/);
+});
+
+test("judgeConfirmCheck: diagnostics unsupported skips the sensor check, other errors fail it", () => {
+  const skip = P.judgeConfirmCheck("sensor", { error: "device error (code 88): GET_DIAGNOSTICS: Function not implemented" });
+  assert.equal(skip.ok, true);
+  assert.equal(skip.skipped, true);
+  assert.match(skip.message, /skipped/);
+  assert.equal(P.judgeConfirmCheck("sensor", { error: "function_not_supported" }).skipped, true);
+  const bad = P.judgeConfirmCheck("sensor", { error: "GET_DIAGNOSTICS timed out" });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.skipped, false);
+  assert.equal(P.judgeConfirmCheck("sensor", {}).ok, false);
+});
+
+test("judgeConfirmCheck: an unknown check id fails", () => {
+  assert.equal(P.judgeConfirmCheck("nope", {}).ok, false);
+});
+
+test("confirmFailureNotice says the device will go back and points at the manual override", () => {
+  const s = P.confirmFailureNotice("The sensor reported a fault (read failed).");
+  assert.ok(s.startsWith("The sensor reported a fault (read failed)."));
+  assert.match(s, /not confirmed/);
+  assert.match(s, /within about two minutes/);
+  assert.match(s, /Mark running image valid/);
+  assert.match(s, /skips these checks/);
 });
 
 test("decideOutcome: nothing readable", () => {

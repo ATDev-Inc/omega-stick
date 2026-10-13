@@ -274,7 +274,7 @@ async function main() {
   await waitFor("the update to be confirmed", async () => /Update confirmed/.test(await text("updateMessage")), 90000);
   await sleep(1000);
   const msgNew = await text("updateMessage");
-  // The new image confirms itself after a health window; revert and reflash only after that.
+  // The console checks the new image and confirms it (MARK_VALID); revert and reflash only after that.
   const settled = () => waitFor("the image to be confirmed", async () => ev($("fwPending") + ".hidden"), 40000);
   await settled();
   const reconnectedG = (await connectedCount()) > connG;
@@ -297,13 +297,19 @@ async function main() {
   await sleep(300);
   const connF = await connectedCount();
   await flash(imgOf("0.3.0"));
-  await waitFor("the rollback to be reported", async () => /did not pass its self-test/i.test(await text("updateError")), 60000);
+  // The console's sensor check fails, so it refuses to confirm and says so at once. The
+  // simulator then rolls the image back at the firmware's 120 s deadline (speed factor
+  // applies), reboots into the previous image and the page reconnects by itself.
+  await waitFor("the refused confirmation to be reported", async () => /was not confirmed/i.test(await text("updateError")), 60000);
   await sleep(1500);
   const msgRollback = await text("updateError");
+  const verWhilePending = await fwVersion();
+  await waitFor("the deadline rollback", async () => (await fwVersion()) === startVer, 120000);
   const verAfterRollback = await fwVersion();
-  check("g", "flash 0.2.0 confirmed, revert, then a fail_self_test image is rolled back",
+  check("g", "flash 0.2.0 confirmed, revert, then a fail_self_test image is refused and rolled back at the deadline",
     verNew === "0.2.0" && reconnectedG && /Update confirmed/.test(msgNew) &&
-    verReverted === startVer && /did not pass its self-test/.test(msgRollback) && verAfterRollback === startVer,
+    verReverted === startVer && /sensor reported a fault/.test(msgRollback) && /was not confirmed/.test(msgRollback) &&
+    verWhilePending === "0.3.0" && verAfterRollback === startVer,
     "start " + startVer + "; after flash " + verNew + " (" + msgNew + "); after revert " + verReverted + " (" + msgRevert.slice(0, 80) + "); rollback: " + msgRollback + " -> version " + verAfterRollback + ", reconnects " + connF + " -> " + (await connectedCount()));
 
   // ---- h. no page errors, no simulator errors ----

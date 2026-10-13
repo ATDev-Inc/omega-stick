@@ -24,7 +24,11 @@ node --test "tests/web/*.test.js"
   from C++ with `OMEGA_WRITE_GOLDEN=1 build-host/omega_host_tests`, never by hand.
 - `update.test.js`: the pure firmware-update logic in `omega_protocol.js`
   (`inspectImage`, `compareFirmware`, `buildFlashPlan`, `buildRevertPlan`,
-  `decideOutcome`, `describeUpdateError`, `formatProgress`), and
+  `decideOutcome`, `describeUpdateError`, `formatProgress`), the post-update
+  confirm checks (`CONFIRM_CHECKS`, `judgeConfirmCheck`,
+  `confirmFailureNotice`: a version or build mismatch, a failed GET_STATE or
+  a sensor fault must stop MARK_VALID, and a device without diagnostics skips
+  the sensor check), and
   `pickReconnectCandidate`, which chooses the stick to reopen after a reboot
   (exact saved port first, then a unique VID/PID or USB serial match, and
   never a guess between several sticks). Test images are
@@ -39,7 +43,9 @@ node --test "tests/web/*.test.js"
   in `docs/simulator.md`, `createHidAccumulator`).
 - `mock_sim.mjs` and `mock_sim.test.js`: a small stand-in for `omega_sim` (WebSocket
   server on 127.0.0.1, Node built-ins only) used to try the console's Simulator
-  connection in a browser without the real simulator. Run it with
+  connection in a browser without the real simulator. It answers GET_FW_INFO
+  (an upload leaves the image pending), GET_DIAGNOSTICS (with a settable
+  sensor fault, or an unsupported error) and MARK_VALID. Run it with
   `node tests/web/mock_sim.mjs [port]`; the test is a quick smoke test of it.
 - `sync.test.js`: keeps the copy of the protocol code inside the HTML identical
   to `omega_protocol.js`, and checks the page only uses exported names.

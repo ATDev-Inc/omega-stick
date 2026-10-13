@@ -98,7 +98,7 @@ Page to simulator:
 | `{"type":"fault","sensor":"no_response"}` | Set the sensor fault (`ok`, `no_response`, `stuck_counter`, `weak_magnet`) |
 | `{"type":"drift","rate":0.02}` | Center drift in stick units per minute, 0 for none |
 | `{"type":"noise","sigma":0.002}` | Sensor noise, in stick units |
-| `{"type":"next_image","behavior":"fail_self_test"}` | How the next firmware image flashed through the console behaves after its restart: `ok`, `fail_self_test` (never confirms, rolls back), `crash_loop` (crashes on boot, reverted) |
+| `{"type":"next_image","behavior":"fail_self_test"}` | How the next firmware image flashed through the console behaves after its restart: `ok`, `fail_self_test` (the sensor fails reads on the new image, so GET_DIAGNOSTICS reports a fault, the console refuses to confirm and the deadline rolls it back), `crash_loop` (crashes on boot, reverted) |
 | `{"type":"reset"}` | Power-cycle the simulated stick |
 | `{"type":"wipe"}` | Erase the simulated flash and power-cycle (a new board) |
 
@@ -198,7 +198,7 @@ Each step has `at_ms` and exactly one of:
 | `sensor_fault: true/false` | The firmware reports a sensor fault |
 | `neutral: true` | Every report since the previous `expect` was neutral |
 | `fw_slot: "ota_0"/"ota_1"` | The running slot |
-| `fw_pending: true/false` | The running image is waiting for its self-test |
+| `fw_pending: true/false` | The running image is waiting to be confirmed (the console sends MARK_VALID; the image never confirms itself, and rolls back at the deadline) |
 | `fw_version: "..."` | The running image's version string (what GET_FW_INFO reports) |
 | `xac_x: v`, `xac_y: v` | The latest gamepad value is within 0.1 of v (stick convention, +y up) |
 
@@ -207,6 +207,8 @@ repeating it at a later time. `mouse_moved` needs at least 3 counts of net
 motion; below that it reads `none`.
 
 Scenarios kept in [sim/scenarios/](../sim/scenarios/) run headless in CI.
+`update_never_confirmed.json` flashes a good image that nobody confirms and
+checks that the deadline rolls it back.
 
 ## How it differs from the firmware
 

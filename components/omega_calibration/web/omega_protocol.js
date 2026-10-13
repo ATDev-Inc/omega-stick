@@ -517,7 +517,7 @@
     const st = (prev && prev.state) || "";
     if (st && st !== "valid") {
       warnings.push({ code: "prev_state", message: "The previous firmware is in state \"" + st +
-                      "\". It will have to pass the self-test again, or the device goes back." });
+                      "\". After the restart it has to be confirmed again, or the device goes back." });
     }
     return plan;
   }
@@ -555,11 +555,65 @@
     }
     if (isOld) {
       return { state: "rolled_back",
-               message: "The new firmware did not pass its self-test, so the device went back to " + after.version + "." };
+               message: "The new firmware was not confirmed, so the device went back to " + after.version + "." };
     }
     return { state: "unexpected",
              message: "The device is running " + after.version + ", which is not the version that was installed (" +
                       (expected.version || "unknown") + ")." };
+  }
+
+  // The checks the console runs after a reboot into a pending image, in order,
+  // before it sends MARK_VALID. To add a check: add an entry here, a case in
+  // judgeConfirmCheck, and one line gathering its input in the page.
+  const CONFIRM_CHECKS = [
+    { id: "firmware", label: "Checking the running firmware" },
+    { id: "protocol", label: "Checking the connection" },
+    { id: "sensor", label: "Checking the sensor" },
+  ];
+  const SENSOR_FAULT_LABEL = { 1: "read failed", 2: "reading stuck" };
+
+  // Judges one check from the input the page gathered. Returns
+  // { ok, skipped, message }; message explains a failure or a skip.
+  //   firmware: { expected, after }  as for decideOutcome; must be "confirming"
+  //   protocol: { error }            error text of a failed GET_STATE, else ""
+  //   sensor:   { diagnostics, error }  decoded DIAGNOSTICS (decodeDiagnostics)
+  //             or the error text of a failed GET_DIAGNOSTICS. A device that
+  //             replies function_not_supported has older firmware: skipped.
+  function judgeConfirmCheck(id, input) {
+    input = input || {};
+    if (id === "firmware") {
+      const o = decideOutcome(input.expected || {}, input.after || null);
+      return o.state === "confirming" ? { ok: true, skipped: false, message: "" }
+                                      : { ok: false, skipped: false, message: o.message };
+    }
+    if (id === "protocol") {
+      return input.error
+        ? { ok: false, skipped: false, message: "The device did not answer a status request (" + input.error + ")." }
+        : { ok: true, skipped: false, message: "" };
+    }
+    if (id === "sensor") {
+      if (input.error) {
+        if (describeUpdateError(input.error).category === "unsupported") {
+          return { ok: true, skipped: true,
+                   message: "This firmware does not report sensor status, so the sensor check was skipped." };
+        }
+        return { ok: false, skipped: false, message: "The sensor status could not be read (" + input.error + ")." };
+      }
+      const code = input.diagnostics ? input.diagnostics.sensorFault : undefined;
+      if (code === undefined) return { ok: false, skipped: false, message: "The sensor status could not be read." };
+      if (code !== 0) {
+        return { ok: false, skipped: false,
+                 message: "The sensor reported a fault (" + (SENSOR_FAULT_LABEL[code] || ("code " + code)) + ")." };
+      }
+      return { ok: true, skipped: false, message: "" };
+    }
+    return { ok: false, skipped: false, message: "Unknown check: " + id + "." };
+  }
+
+  // Wording shown when a check failed and MARK_VALID was not sent.
+  function confirmFailureNotice(message) {
+    return message + " The new firmware was not confirmed. The device goes back to the previous firmware by " +
+           "itself within about two minutes. To keep it anyway, use \"Mark running image valid\", which skips these checks.";
   }
 
   // Maps a raw failure (Error text from the page's transactions, device ERROR
@@ -1041,7 +1095,8 @@
     FEED_URL, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
     OTA_SLOT_SIZE, CHIP_ID_ESP32S3, DEFAULT_PROJECT, KIND_LABEL,
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
-    decideOutcome, describeUpdateError, formatProgress, formatBytes,
+    decideOutcome, CONFIRM_CHECKS, judgeConfirmCheck, confirmFailureNotice,
+    describeUpdateError, formatProgress, formatBytes,
     HEADER_SIZE, CRC_SIZE, MAX_PAYLOAD, MAX_FRAME,
     MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, PROTOCOL_ID, PROTOCOL_VERSION,
     FLAGS_REQUEST, FLAGS_REPLY_BIT, FLAG_CORRELATION,
