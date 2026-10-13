@@ -551,6 +551,27 @@ std::string boot(Host &host, int reset_reason) {
   xac_state.common.range = range;
 
   Health fw_health(ota);
+  // sim: an image flashed with next_image=fail_self_test boots and calibrates, then its sensor
+  // stops answering, so SensorFaultMonitor trips and the console sees sensor_fault in
+  // GET_DIAGNOSTICS and refuses to confirm. The fault is lifted again when this boot ends.
+  struct SelfTestFault {
+    sim::SensorModel &model;
+    sim::Fault previous;
+    bool active;
+    SelfTestFault(sim::SensorModel &m, bool on)
+        : model(m)
+        , previous(m.fault())
+        , active(on) {
+      if (active) {
+        model.set_fault(sim::Fault::NoResponse);
+      }
+    }
+    ~SelfTestFault() {
+      if (active) {
+        model.set_fault(previous);
+      }
+    }
+  } self_test_fault{host.sensor, self_test_fails};
   // Declared last, so it runs first on the way out: the page must not reach the
   // service while the joystick it re-applies calibration to is already gone.
   struct Unlink {
@@ -561,12 +582,7 @@ std::string boot(Host &host, int reset_reason) {
     if (host.restart_requested()) {
       return host.take_restart_reason();
     }
-    // sim: an image that fails its self-test never sees a ready HID endpoint.
-    fw_health.tick(!self_test_fails, [&tmag] {
-      std::error_code read_ec;
-      tmag.read_magnetic(read_ec);
-      return !read_ec;
-    });
+    fw_health.tick();
     calibration.expire_stale_update(OTA_IDLE_TIMEOUT);
 
     const bool hold = output_holds.load() > 0;

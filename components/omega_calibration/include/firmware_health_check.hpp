@@ -8,11 +8,12 @@
 // installed image boots in the PENDING_VERIFY state, and the bootloader
 // reverts to the previous image on the next reset unless the app confirms
 // itself. Nothing confirms it automatically (espp::Ota deliberately leaves
-// that to the application), so this is where it happens.
+// that to the application), so the application has to decide who does.
 //
-// The new image is confirmed only once it has demonstrably done its job: USB
-// has enumerated, the magnetic sensor answers, and the polling loop has been
-// running for HEALTHY_UPTIME. If it cannot manage that within
+// The firmware never confirms a new image itself. The browser console
+// reconnects after the reboot, checks that the right image is running and that
+// the sensor is healthy, and sends MARK_VALID. All this class does for a
+// pending image is the backstop: if nobody has confirmed it by
 // ROLLBACK_DEADLINE it is marked invalid and the device reboots into the
 // previous image on purpose, instead of limping along until a power cycle
 // happens to trigger the rollback.
@@ -21,18 +22,19 @@
 //  - A fatal init failure (sensor, calibration, USB) on a pending image calls
 //    reject_if_pending() so it rolls back immediately instead of halting on a
 //    broken image forever.
-//  - The calibration console's MARK_VALID button is a manual override. The
-//    pending state is re-read on every check, so once someone confirms the
-//    image the automatic check stands down and never rolls it back.
+//  - MARK_VALID from the calibration console is the normal way out of the
+//    pending state. The state is re-read on every check, so once the host
+//    confirms the image the check stands down and never rolls it back.
 //  - A CONFIRMED image that crashes on CRASH_LOOP_RESETS boots in a row hands
 //    the device to the other slot (revert_if_crash_looping(), fed from the
 //    reset log at boot). The bootloader only protects a pending image, so
 //    without this a crash loop after confirmation would run until someone
 //    re-flashed over serial.
 //
-// Consequence worth knowing: any reset (mode switch, unplug) during the first
-// HEALTHY_UPTIME after an update reverts to the previous firmware. The
-// console shows the image as "pending verify" until it is confirmed.
+// Consequence worth knowing: any reset (mode switch, unplug) before the host
+// has confirmed an update reverts to the previous firmware, and a device with
+// no console attached reverts after ROLLBACK_DEADLINE. The console shows the
+// image as "pending verify" until it is confirmed.
 
 #include <chrono>
 #include <cstddef>
@@ -52,8 +54,9 @@ namespace espp {
 /// The clock is injectable so host tests can advance time by hand.
 template <typename Clock = std::chrono::steady_clock> class FirmwareHealthCheck {
 public:
-  static constexpr std::chrono::seconds HEALTHY_UPTIME{10};
-  static constexpr std::chrono::seconds ROLLBACK_DEADLINE{90};
+  /// Covers the console's reconnect wait (about 15 s for the drop plus up to
+  /// 40 s to reconnect), its checks and retries, with margin.
+  static constexpr std::chrono::seconds ROLLBACK_DEADLINE{120};
   static constexpr std::chrono::seconds CHECK_INTERVAL{1};
   /// Consecutive crashing boots before the running image is given up on.
   /// Three keeps one panic, which a core dump already records, from
@@ -66,8 +69,9 @@ public:
       , start_(Clock::now())
       , last_check_(start_) {
     if (pending_) {
-      printf("OTA: running image is PENDING VERIFY; confirming after %llds of healthy operation\n",
-             static_cast<long long>(HEALTHY_UPTIME.count()));
+      printf("OTA: running image is PENDING VERIFY; waiting for the host to confirm it, "
+             "rolling back after %llds\n",
+             static_cast<long long>(ROLLBACK_DEADLINE.count()));
     }
   }
 
@@ -163,9 +167,8 @@ public:
   }
 
   /// Call once per polling-loop iteration. Free when nothing is pending;
-  /// otherwise `sensor_ok` runs at most once per CHECK_INTERVAL, so it may
-  /// do an I2C transaction.
-  template <typename SensorOk> void tick(bool hid_ready, SensorOk &&sensor_ok) {
+  /// otherwise it looks at the OTA state at most once per CHECK_INTERVAL.
+  void tick() {
     if (!pending_) {
       return;
     }
@@ -175,26 +178,13 @@ public:
     }
     last_check_ = now;
     if (!ota_.is_pending_verify()) {
-      printf("OTA: image was confirmed elsewhere (console MARK_VALID); health check stopped\n");
-      pending_ = false;
-      return;
-    }
-    const bool sensor = sensor_ok();
-    const bool healthy = hid_ready && sensor;
-    std::error_code ec;
-    if (healthy && now - start_ >= HEALTHY_UPTIME) {
-      if (ota_.mark_app_valid(ec)) {
-        printf("OTA: new firmware confirmed healthy; rollback cancelled\n");
-      } else {
-        printf("OTA: mark_app_valid failed (%s); next reset will roll back\n",
-               ec.message().c_str());
-      }
+      printf("OTA: image confirmed by the host (MARK_VALID); rollback cancelled\n");
       pending_ = false;
       return;
     }
     if (now - start_ >= ROLLBACK_DEADLINE) {
-      printf("OTA: new firmware never became healthy (hid_ready=%d sensor_ok=%d); rolling back\n",
-             hid_ready, sensor);
+      printf("OTA: new firmware was not confirmed by the host in time; rolling back\n");
+      std::error_code ec;
       ota_.mark_app_invalid_and_rollback(ec); // only returns on failure
       printf("OTA: rollback failed (%s); next reset will roll back\n", ec.message().c_str());
       pending_ = false;

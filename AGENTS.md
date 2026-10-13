@@ -135,10 +135,12 @@ espp.
   `SensorFaultMonitor`; the control core then sends a neutral report instead
   of the last deflection until the sensor recovers (decision D21).
 - **Firmware updates** go over the same console protocol into the inactive
-  OTA slot. A new image boots pending verification and `FirmwareHealthCheck`
-  confirms it after 10 s of USB plus sensor health, or rolls back (90 s
-  deadline, or at once on an init failure). While an upload runs, and before
-  every console-initiated reboot, `CalibrationService` raises
+  OTA slot. A new image boots pending verification and never confirms itself:
+  the console reconnects, checks the version and SHA, a GET_STATE round trip and
+  GET_DIAGNOSTICS, then sends MARK_VALID. `FirmwareHealthCheck` only rolls back
+  an image still pending at the 120 s deadline (or at once on an init failure).
+  While an upload runs, and before every console-initiated reboot,
+  `CalibrationService` raises
   `Config::output_hold` and the control loop sends neutral reports (decision
   D22 rule 1); `main.cpp` counts the holds from the two services. The console
   checks the image before flashing and reconnects by itself afterwards. Full
