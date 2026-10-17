@@ -235,7 +235,8 @@ every pull request:
 - **Firmware build** for `esp32s3` (`build.yml`).
 - **Host unit tests** in [tests/host](tests/host/README.md): gcc with
   coverage, clang with AddressSanitizer and UBSan, and MSVC, all with warnings
-  as errors (`host_tests.yml`).
+  as errors (`host_tests.yml`). The same job builds the desktop simulator and
+  runs its unit tests and scripted scenarios.
 - **Web console tests** in [tests/web](tests/web/README.md) under Node
   (`web_tests.yml`), including golden frames shared with the C++ side.
 - **Fuzzing** of the frame parser and calibration service in
@@ -280,6 +281,30 @@ logic changes belong in the testable layer, not in `main.cpp`.
 
 The only stand-ins left under `tests/host/stubs/` are for the ESP-only OTA
 headers (`ota.hpp`, `esp_app_desc.h`, `esp_ota_ops.h`).
+
+### Simulator
+
+`omega_sim` runs the firmware's real calibration, console, update and control
+loop code on your computer around a simulated sensor, so you can use the
+calibration console with no stick attached. Build and start it with:
+
+```console
+cmake -S sim -B build-sim
+cmake --build build-sim
+build-sim/omega_sim --fresh
+```
+
+then open the console and choose **Connect Simulator**. The Simulator panel
+moves the stick, plays motion patterns and injects faults, drift and noise.
+Scripts in `sim/scenarios/` run headless as part of the host tests; adding one
+is a good way to cover a console or calibration flow end to end. See
+[sim/README.md](sim/README.md) and [docs/simulator.md](docs/simulator.md),
+which also lists what the simulator cannot prove. It is not a substitute for
+testing on hardware.
+
+`sim/src/firmware.cpp` mirrors the boot sequence and control wiring in
+`main/main.cpp`. If you change that wiring, make the same change in the
+simulator.
 
 If you change the calibration store, the console protocol, the calibration
 file format, the control loop, or a driver's register handling, add or update a
