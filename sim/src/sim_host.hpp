@@ -80,6 +80,8 @@ public:
   struct Live {
     std::atomic<int> mode{0}; ///< 0 mouse, 1 xac
     std::atomic<bool> sensor_fault{false};
+    /// False from boot until the polling loop has seen the sensor answer.
+    std::atomic<bool> sensor_observed{false};
     std::atomic<bool> have_calibration{false};
     std::atomic<int> last_sweep{-1};              ///< -1 none yet, 0 failed, 1 succeeded
     std::atomic<double> center_x{0}, center_y{0}; ///< measured center, mT

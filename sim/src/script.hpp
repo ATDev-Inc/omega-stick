@@ -27,6 +27,7 @@ struct Expect {
   std::optional<std::string> clicked;     ///< left, right, none
   std::optional<std::string> mode;        ///< mouse, xac
   std::optional<bool> sensor_fault;
+  std::optional<bool> sensor_observed;
   std::optional<bool> neutral;
   std::optional<std::string> fw_slot;
   std::optional<bool> fw_pending;

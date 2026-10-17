@@ -41,6 +41,7 @@ namespace {
 constexpr uint8_t TMAG_ADDRESS = 0x35;
 constexpr size_t RESET_LOG_ENTRIES = 16;
 constexpr auto OTA_IDLE_TIMEOUT = 30s;
+constexpr int64_t SLOW_SENSOR_START_NS = 3'000'000'000;
 constexpr float MANUAL_OFFSET_X = 0.0f;
 constexpr float MANUAL_OFFSET_Y = 0.0f;
 const std::string CALIBRATION_FILE_NAME = "omega_calibration.cfg";
@@ -105,7 +106,9 @@ std::string slot_from_reset_name(const std::string &name) {
 // ---- sensor fault status (mirror of main.cpp) ----
 
 struct SensorFaultStatus {
-  std::atomic<uint8_t> fault{0};
+  // Starts "not observed" (D22): the console must not read the boot-time zero
+  // as a healthy sensor before the polling loop has seen it answer.
+  std::atomic<uint8_t> fault{espp::omega_control::SENSOR_NOT_OBSERVED};
   std::atomic<uint8_t> first_fault{0};
   std::atomic<uint32_t> count{0};
 
@@ -118,6 +121,13 @@ struct SensorFaultStatus {
       first_fault.store(static_cast<uint8_t>(fault_kind), std::memory_order_relaxed);
     }
     count.store(fault_count, std::memory_order_relaxed);
+  }
+
+  // The sensor has answered enough polls in a row. Only replaces "not
+  // observed": a fault published meanwhile stays until it clears.
+  void observed_healthy() {
+    uint8_t expected = espp::omega_control::SENSOR_NOT_OBSERVED;
+    fault.compare_exchange_strong(expected, 0, std::memory_order_relaxed);
   }
 };
 
@@ -253,6 +263,10 @@ struct SimPorts : espp::omega_control::Ports {
           format("Sensor recovered (fault %u since boot)", static_cast<unsigned>(fault_count)));
     }
   }
+  void sensor_observed_healthy() override {
+    sensor_status.observed_healthy();
+    host.live.sensor_observed = true;
+  }
 
   espp::omega_control::Clock::time_point now() override { return steady_at(host.now_ns()); }
 };
@@ -311,10 +325,13 @@ std::string boot(Host &host, int reset_reason) {
     host.console_text("PANIC: simulated crash on boot (next_image crash_loop)");
     return "crash";
   }
-  const bool self_test_fails = sim::flash().running_behavior() == NextImage::FAIL_SELF_TEST;
+  const NextImage behavior = sim::flash().running_behavior();
+  const bool self_test_fails =
+      behavior == NextImage::FAIL_SELF_TEST || behavior == NextImage::SLOW_SENSOR_FAIL;
 
   SensorFaultStatus sensor_status;
   host.live.sensor_fault = false;
+  host.live.sensor_observed = false;
   auto make_diagnostics = [&reset_log, &sensor_status]() {
     espp::CalibrationService::DiagnosticsData d;
     d.sensor_fault = sensor_status.fault.load(std::memory_order_relaxed);
@@ -578,6 +595,17 @@ std::string boot(Host &host, int reset_reason) {
     Host &h;
     ~Unlink() { h.clear_link(); }
   } unlink{host};
+  // sim: slow_sensor_start and slow_sensor_fail begin polling only after a delay, as the board
+  // does while it waits for HID readiness. The console is already served meanwhile, so
+  // GET_DIAGNOSTICS must say "not observed", not "healthy".
+  if (behavior == NextImage::SLOW_SENSOR_START || behavior == NextImage::SLOW_SENSOR_FAIL) {
+    host.console_text("sim: sensor polling starts late (next_image slow_sensor_*)");
+    const int64_t start_ns = host.now_ns();
+    while (!host.should_exit() && !host.restart_requested() &&
+           host.now_ns() - start_ns < SLOW_SENSOR_START_NS) {
+      host.sleep(10ms);
+    }
+  }
   while (!host.should_exit()) {
     if (host.restart_requested()) {
       return host.take_restart_reason();

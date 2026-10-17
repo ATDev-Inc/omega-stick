@@ -86,7 +86,7 @@ typedef enum {
 namespace sim {
 
 /// How an image flashed through the console behaves once it has booted.
-enum class NextImage { OK, FAIL_SELF_TEST, CRASH_LOOP };
+enum class NextImage { OK, FAIL_SELF_TEST, CRASH_LOOP, SLOW_SENSOR_START, SLOW_SENSOR_FAIL };
 
 inline const char *next_image_name(NextImage b) {
   switch (b) {
@@ -94,6 +94,10 @@ inline const char *next_image_name(NextImage b) {
     return "fail_self_test";
   case NextImage::CRASH_LOOP:
     return "crash_loop";
+  case NextImage::SLOW_SENSOR_START:
+    return "slow_sensor_start";
+  case NextImage::SLOW_SENSOR_FAIL:
+    return "slow_sensor_fail";
   case NextImage::OK:
   default:
     return "ok";
@@ -101,7 +105,8 @@ inline const char *next_image_name(NextImage b) {
 }
 
 inline bool parse_next_image(const std::string &name, NextImage &out) {
-  for (const NextImage b : {NextImage::OK, NextImage::FAIL_SELF_TEST, NextImage::CRASH_LOOP}) {
+  for (const NextImage b : {NextImage::OK, NextImage::FAIL_SELF_TEST, NextImage::CRASH_LOOP,
+                            NextImage::SLOW_SENSOR_START, NextImage::SLOW_SENSOR_FAIL}) {
     if (name == next_image_name(b)) {
       out = b;
       return true;

@@ -67,7 +67,9 @@ static constexpr float MANUAL_OFFSET_Y = 0.0f;
 // relaxed atomics: each field is independently meaningful and a tick of
 // skew between them does not matter.
 struct SensorFaultStatus {
-  std::atomic<uint8_t> fault{0};
+  // Starts "not observed" (D22): the console must not read the boot-time zero
+  // as a healthy sensor before the polling loop has seen it answer.
+  std::atomic<uint8_t> fault{espp::omega_control::SENSOR_NOT_OBSERVED};
   std::atomic<uint8_t> first_fault{0};
   std::atomic<uint32_t> count{0};
 
@@ -80,6 +82,13 @@ struct SensorFaultStatus {
       first_fault.store(static_cast<uint8_t>(fault_kind), std::memory_order_relaxed);
     }
     count.store(fault_count, std::memory_order_relaxed);
+  }
+
+  // The sensor has answered enough polls in a row. Only replaces "not
+  // observed": a fault published meanwhile stays until it clears.
+  void observed_healthy() {
+    uint8_t expected = espp::omega_control::SENSOR_NOT_OBSERVED;
+    fault.compare_exchange_strong(expected, 0, std::memory_order_relaxed);
   }
 };
 
@@ -220,6 +229,8 @@ struct EspPorts : espp::omega_control::Ports {
       printf("Sensor recovered (fault %u since boot)\n", static_cast<unsigned>(fault_count));
     }
   }
+
+  void sensor_observed_healthy() override { sensor_status.observed_healthy(); }
 
   espp::omega_control::Clock::time_point now() override {
     return espp::omega_control::Clock::now();

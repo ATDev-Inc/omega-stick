@@ -98,7 +98,7 @@ Page to simulator:
 | `{"type":"fault","sensor":"no_response"}` | Set the sensor fault (`ok`, `no_response`, `stuck_counter`, `weak_magnet`) |
 | `{"type":"drift","rate":0.02}` | Center drift in stick units per minute, 0 for none |
 | `{"type":"noise","sigma":0.002}` | Sensor noise, in stick units |
-| `{"type":"next_image","behavior":"fail_self_test"}` | How the next firmware image flashed through the console behaves after its restart: `ok`, `fail_self_test` (the sensor fails reads on the new image, so GET_DIAGNOSTICS reports a fault, the console refuses to confirm and the deadline rolls it back), `crash_loop` (crashes on boot, reverted) |
+| `{"type":"next_image","behavior":"fail_self_test"}` | How the next firmware image flashed through the console behaves after its restart: `ok`, `fail_self_test` (the sensor fails reads on the new image, so GET_DIAGNOSTICS reports a fault, the console refuses to confirm and the deadline rolls it back), `crash_loop` (crashes on boot, reverted), `slow_sensor_start` (starts polling the sensor 3 s after boot, then runs normally: until then GET_DIAGNOSTICS reports sensor_fault 3, "not observed"), `slow_sensor_fail` (starts polling late and then every read fails) |
 | `{"type":"reset"}` | Power-cycle the simulated stick |
 | `{"type":"wipe"}` | Erase the simulated flash and power-cycle (a new board) |
 
@@ -196,6 +196,7 @@ Each step has `at_ms` and exactly one of:
 | `clicked: "left"/"right"/"none"` | A button press happened since the previous `expect` |
 | `mode: "mouse"/"xac"` | Current input mode |
 | `sensor_fault: true/false` | The firmware reports a sensor fault |
+| `sensor_observed: true/false` | The polling loop has seen the sensor answer since boot (false is the "not observed" state, GET_DIAGNOSTICS sensor_fault 3) |
 | `neutral: true` | Every report since the previous `expect` was neutral |
 | `fw_slot: "ota_0"/"ota_1"` | The running slot |
 | `fw_pending: true/false` | The running image is waiting to be confirmed (the console sends MARK_VALID; the image never confirms itself, and rolls back at the deadline) |

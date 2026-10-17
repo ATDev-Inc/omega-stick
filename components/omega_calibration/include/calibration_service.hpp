@@ -121,7 +121,12 @@
 //
 // Message types & payloads (device -> host), same module, reply flag set:
 //   0xD3 DIAGNOSTICS : payload (see build_diagnostics_payload() below):
-//                  u8  sensor_fault        (0 none, 1 read failed, 2 stuck)
+//                  u8  sensor_fault        (0 none, 1 read failed, 2 stuck,
+//                                           3 not observed yet: the polling loop
+//                                           has not seen the sensor answer since
+//                                           boot, so 0 would be a guess; hosts
+//                                           that do not know 3 must treat any
+//                                           non-zero value as "not healthy")
 //                  u8  sensor_first_fault  (same codes; latched since boot)
 //                  u32 sensor_fault_count  (trips since boot)
 //                  u32 boot_count
@@ -321,7 +326,7 @@ public:
   /// publishes (SensorFaultMonitor, D21) and the reset log (ResetLog, D23).
   /// Gathered by Config::diagnostics so this service needs neither object.
   struct DiagnosticsData {
-    uint8_t sensor_fault{0};       ///< SensorFaultMonitor::Fault in effect now
+    uint8_t sensor_fault{0};       ///< SensorFaultMonitor::Fault in effect now, or 3 (not observed)
     uint8_t sensor_first_fault{0}; ///< first fault since boot, latched
     uint32_t sensor_fault_count{0};
     uint32_t boot_count{0};

@@ -45,6 +45,15 @@ inline constexpr SensorFaultMonitor::Config XAC_SENSOR_FAULT_CONFIG{
     .recover_after_good_reads = 20,
 };
 
+// What GET_DIAGNOSTICS reports in its sensor_fault byte before the polling loop
+// has seen the sensor answer: the SensorFaultMonitor::Fault codes are 0 none,
+// 1 read failed, 2 stuck, and this one means "not observed yet", so the console
+// can tell an untested sensor from a healthy one (D22). It is published at boot
+// and replaced by 0 once recover_after_good_reads consecutive reads succeed
+// (about 100 ms of polling in either loop), or by a fault code if the sensor
+// trips first.
+inline constexpr std::uint8_t SENSOR_NOT_OBSERVED = 3;
+
 // Scales the normalized joystick output (-1..1) into mouse movement counts
 // per polling interval. Lower this to slow the cursor down, raise it to
 // speed the cursor up.
@@ -154,10 +163,16 @@ struct CommonState {
   int drift_nudge_count{0};
   SensorFaultMonitor sensor;
   bool sensor_was_faulted{false};
+  /// Consecutive good reads since the last failed one, and whether
+  /// Ports::sensor_observed_healthy() has been called (once per boot).
+  int good_reads{0};
+  int observe_after_good_reads{10};
+  bool sensor_observed{false};
 
   CommonState() = default;
   explicit CommonState(const SensorFaultMonitor::Config &sensor_config)
-      : sensor(sensor_config) {}
+      : sensor(sensor_config)
+      , observe_after_good_reads(sensor_config.recover_after_good_reads) {}
 };
 
 struct MouseState {
@@ -364,6 +379,10 @@ struct Ports {
   /// kind) and once when it recovers. `fault_count` is the trips since boot.
   virtual void sensor_fault_changed(bool faulted, SensorFaultMonitor::Fault fault,
                                     std::uint32_t fault_count) = 0;
+  /// Called once, the first time the sensor has answered
+  /// `recover_after_good_reads` polls in a row without a fault in effect. Until
+  /// then the published sensor status is SENSOR_NOT_OBSERVED, not "healthy".
+  virtual void sensor_observed_healthy() = 0;
 
 protected:
   ~Ports() = default;
@@ -388,6 +407,12 @@ inline FaultEdge sensor_fault_update(CommonState &common, const StepInput &in, P
     edge.tripped = edge.faulted;
     edge.recovered = !edge.faulted;
     ports.sensor_fault_changed(edge.faulted, common.sensor.fault(), common.sensor.fault_count());
+  }
+  common.good_reads = in.stick.read_ok ? common.good_reads + 1 : 0;
+  if (!common.sensor_observed && !edge.faulted &&
+      common.good_reads >= common.observe_after_good_reads) {
+    common.sensor_observed = true;
+    ports.sensor_observed_healthy();
   }
   return edge;
 }

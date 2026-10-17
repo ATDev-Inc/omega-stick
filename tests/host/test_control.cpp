@@ -69,6 +69,7 @@ struct FakePorts : oc::Ports {
   std::vector<std::string> calls;
   std::vector<oc::MouseReport> mouse;
   std::vector<oc::XacReport> xac;
+  int observed{0};
   bool sweep_ok{true};
   Cal::CenterResult sweep_center;
   Cal::RangeResult sweep_range;
@@ -105,6 +106,8 @@ struct FakePorts : oc::Ports {
   void sensor_fault_changed(bool faulted, Cal::SensorFaultMonitor::Fault, std::uint32_t) override {
     calls.push_back(faulted ? "fault" : "recovered");
   }
+  // Counted apart from `calls` so the exact-sequence checks below are unaffected.
+  void sensor_observed_healthy() override { ++observed; }
 
   int count(const std::string &name) const {
     int n = 0;
@@ -519,6 +522,77 @@ TEST(control_mouse_sensor_fault_sends_neutral_reports_after_three_failed_reads) 
   }
   CHECK_EQ(ports.count("fault"), 1);
   CHECK_EQ(ports.count("send_mouse"), 3 + 48);
+}
+
+// ---- sensor observed (D22) --------------------------------------------------
+
+TEST(control_mouse_reports_the_sensor_observed_after_ten_good_reads) {
+  FakePorts ports;
+  oc::MouseState s;
+  for (int i = 0; i < 9; i++) {
+    oc::mouse_tick(s, input(0.0f, 0.0f, i * 10), ports);
+  }
+  CHECK_EQ(ports.observed, 0);
+  oc::mouse_tick(s, input(0.0f, 0.0f, 90), ports);
+  CHECK_EQ(ports.observed, 1);
+  // Once per boot, however long it runs.
+  for (int i = 10; i < 100; i++) {
+    oc::mouse_tick(s, input(0.0f, 0.0f, i * 10), ports);
+  }
+  CHECK_EQ(ports.observed, 1);
+}
+
+TEST(control_xac_reports_the_sensor_observed_after_twenty_good_reads) {
+  FakePorts ports;
+  oc::XacState s;
+  for (int i = 0; i < 19; i++) {
+    oc::xac_tick(s, input(0.0f, 0.0f, i * 5), ports);
+  }
+  CHECK_EQ(ports.observed, 0);
+  oc::xac_tick(s, input(0.0f, 0.0f, 95), ports);
+  CHECK_EQ(ports.observed, 1);
+}
+
+TEST(control_mouse_a_failed_read_restarts_the_observation_count) {
+  FakePorts ports;
+  oc::MouseState s;
+  for (int i = 0; i < 9; i++) {
+    oc::mouse_tick(s, input(0.0f, 0.0f, i * 10), ports);
+  }
+  oc::mouse_tick(s, failed_read(0.0f, 0.0f, 90), ports); // a glitch, not yet a fault
+  for (int i = 10; i < 19; i++) {
+    oc::mouse_tick(s, input(0.0f, 0.0f, i * 10), ports);
+  }
+  CHECK_EQ(ports.observed, 0);
+  oc::mouse_tick(s, input(0.0f, 0.0f, 190), ports);
+  CHECK_EQ(ports.observed, 1);
+}
+
+// The startup order the console depends on: a sensor that never answers is
+// never reported as observed, so a diagnostics request made before polling
+// started and one made while the reads fail both see "not observed" / a fault.
+TEST(control_mouse_a_sensor_that_never_answers_is_never_observed) {
+  FakePorts ports;
+  oc::MouseState s;
+  for (int ms = 0; ms <= 2000; ms += 10) {
+    oc::mouse_tick(s, failed_read(0.0f, 0.0f, ms), ports);
+  }
+  CHECK_EQ(ports.count("fault"), 1);
+  CHECK_EQ(ports.observed, 0);
+}
+
+TEST(control_mouse_observed_follows_a_recovery_from_a_boot_time_fault) {
+  FakePorts ports;
+  oc::MouseState s;
+  for (int ms = 0; ms < 100; ms += 10) {
+    oc::mouse_tick(s, failed_read(0.0f, 0.0f, ms), ports);
+  }
+  CHECK_EQ(ports.count("fault"), 1);
+  for (int ms = 100; ms < 300; ms += 10) {
+    oc::mouse_tick(s, input(0.0f, 0.0f, ms), ports);
+  }
+  CHECK_EQ(ports.count("recovered"), 1);
+  CHECK_EQ(ports.observed, 1);
 }
 
 TEST(control_mouse_sensor_fault_releases_a_held_nudge) {

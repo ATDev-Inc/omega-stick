@@ -78,6 +78,8 @@ Expect parse_expect(const json::Value &e, size_t index) {
       x.mode = want_choice(v, key, {"mouse", "xac"});
     } else if (key == "sensor_fault") {
       x.sensor_fault = want_bool(v, key);
+    } else if (key == "sensor_observed") {
+      x.sensor_observed = want_bool(v, key);
     } else if (key == "neutral") {
       x.neutral = want_bool(v, key);
     } else if (key == "fw_slot") {
@@ -169,7 +171,8 @@ Step parse_step(const json::Value &s, size_t index) {
     st.kind = Step::Kind::NextImage;
     NextImage ignored;
     if (!body->is_string() || !parse_next_image(body->as_string(), ignored)) {
-      fail(index, "next_image must be ok, fail_self_test or crash_loop");
+      fail(index, "next_image must be ok, fail_self_test, crash_loop, slow_sensor_start or "
+                  "slow_sensor_fail");
     }
     st.name = body->as_string();
   } else if (body_key == "expect") {
