@@ -616,6 +616,28 @@
            "itself within about two minutes. To keep it anyway, use \"Mark running image valid\", which skips these checks.";
   }
 
+  // Where a board is installed (or reinstalled) when it does not take updates
+  // over USB. Also linked from the "unreachable board" hint in the console.
+  const FIRST_FLASH_URL = "https://atdev-inc.github.io/omega-stick/flash.html";
+
+  // Builds without updates over USB (CONFIG_OMEGA_STICK_OTA off, the v0.1.0
+  // default) answer GET_FW_INFO with function_not_supported. Only that answer
+  // means "this device has no USB updates"; a timeout, a dropped link or any
+  // other failure is transient and must leave the update controls alone.
+  // `error` is whatever GET_FW_INFO failed with, or null/undefined on success.
+  function usbUpdatesUnavailable(error) {
+    if (error === null || error === undefined) return false;
+    return describeUpdateError(error).category === "unsupported";
+  }
+
+  // The plain-language note shown in place of the update controls. The
+  // first-flash installer erases calibration and settings by default
+  // (new_install_prompt_erase in the manifest), so the note says so.
+  const NO_USB_UPDATES_NOTE =
+    "This firmware does not take updates over USB. New versions are installed from the first-flash page. " +
+    "Installing from there with its erase option ticked removes the saved calibration and settings, " +
+    "so the stick needs calibrating again afterwards.";
+
   // Maps a raw failure (Error text from the page's transactions, device ERROR
   // replies, espp OTA error strings) to plain language. Returns
   // { category, title, advice }. Device ERROR replies read
@@ -1097,6 +1119,7 @@
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
     decideOutcome, CONFIRM_CHECKS, judgeConfirmCheck, confirmFailureNotice,
     describeUpdateError, formatProgress, formatBytes,
+    FIRST_FLASH_URL, NO_USB_UPDATES_NOTE, usbUpdatesUnavailable,
     HEADER_SIZE, CRC_SIZE, MAX_PAYLOAD, MAX_FRAME,
     MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, PROTOCOL_ID, PROTOCOL_VERSION,
     FLAGS_REQUEST, FLAGS_REPLY_BIT, FLAG_CORRELATION,

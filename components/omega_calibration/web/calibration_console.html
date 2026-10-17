@@ -452,7 +452,7 @@
       <p class="muted" style="margin: 6px 0 0;">
         New board, or a stick that never appears in the list? It may have no Omega Stick
         firmware, or firmware too old for this page. Install it from the
-        <a href="https://atdev-inc.github.io/omega-stick/flash.html" target="_blank" rel="noopener">first-flash page</a>
+        <a id="firstFlashHint" target="_blank" rel="noopener">first-flash page</a>
         (erases calibration and settings).
       </p>
     </div>
@@ -675,6 +675,11 @@
           <span id="fwPending" class="warn-text" hidden>PENDING VERIFY: the device goes back to the previous firmware shortly after it starts unless this firmware is confirmed. "Mark running image valid" confirms it without running the console's checks.</span>
           <button id="markValidBtn" disabled hidden title="Confirms the running image and skips the console's checks">Mark running image valid</button>
         </div>
+        <p id="fwNoUpdates" class="muted" style="margin: 6px 0;" hidden>
+          <span id="fwNoUpdatesText"></span>
+          <a id="fwNoUpdatesLink" target="_blank" rel="noopener">First-flash page</a>
+        </p>
+        <div id="fwControls">
         <div class="row" style="margin: 6px 0;">
           <dl class="kv">
             <dt>Version</dt><dd id="fwVersion">n/a</dd>
@@ -719,7 +724,7 @@
           the file before anything is sent. The device validates it, switches slots and restarts,
           and this page reconnects by itself. Updating here keeps your calibration. A board that
           will not start or connect needs the
-          <a href="https://atdev-inc.github.io/omega-stick/flash.html" target="_blank" rel="noopener">first-flash page</a> instead.
+          <a id="firstFlashHint2" target="_blank" rel="noopener">first-flash page</a> instead.
         </p>
         <div class="edit-row">
           <input type="file" id="fwFile" accept=".bin" aria-label="Firmware file (.bin)">
@@ -742,6 +747,7 @@
           <p id="updateDetail" class="muted" aria-hidden="true"></p>
           <p id="updateError" role="alert"></p>
           <button id="fwReconnectBtn" hidden>Reconnect to the device</button>
+        </div>
         </div>
       </fieldset>
 
@@ -1415,6 +1421,28 @@
            "itself within about two minutes. To keep it anyway, use \"Mark running image valid\", which skips these checks.";
   }
 
+  // Where a board is installed (or reinstalled) when it does not take updates
+  // over USB. Also linked from the "unreachable board" hint in the console.
+  const FIRST_FLASH_URL = "https://atdev-inc.github.io/omega-stick/flash.html";
+
+  // Builds without updates over USB (CONFIG_OMEGA_STICK_OTA off, the v0.1.0
+  // default) answer GET_FW_INFO with function_not_supported. Only that answer
+  // means "this device has no USB updates"; a timeout, a dropped link or any
+  // other failure is transient and must leave the update controls alone.
+  // `error` is whatever GET_FW_INFO failed with, or null/undefined on success.
+  function usbUpdatesUnavailable(error) {
+    if (error === null || error === undefined) return false;
+    return describeUpdateError(error).category === "unsupported";
+  }
+
+  // The plain-language note shown in place of the update controls. The
+  // first-flash installer erases calibration and settings by default
+  // (new_install_prompt_erase in the manifest), so the note says so.
+  const NO_USB_UPDATES_NOTE =
+    "This firmware does not take updates over USB. New versions are installed from the first-flash page. " +
+    "Installing from there with its erase option ticked removes the saved calibration and settings, " +
+    "so the stick needs calibrating again afterwards.";
+
   // Maps a raw failure (Error text from the page's transactions, device ERROR
   // replies, espp OTA error strings) to plain language. Returns
   // { category, title, advice }. Device ERROR replies read
@@ -1896,6 +1924,7 @@
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
     decideOutcome, CONFIRM_CHECKS, judgeConfirmCheck, confirmFailureNotice,
     describeUpdateError, formatProgress, formatBytes,
+    FIRST_FLASH_URL, NO_USB_UPDATES_NOTE, usbUpdatesUnavailable,
     HEADER_SIZE, CRC_SIZE, MAX_PAYLOAD, MAX_FRAME,
     MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, PROTOCOL_ID, PROTOCOL_VERSION,
     FLAGS_REQUEST, FLAGS_REPLY_BIT, FLAG_CORRELATION,
@@ -1925,6 +1954,7 @@
       encodeSetManualOffset, encodeSetDeadzoneOverride, encodeSetNudgeSettings, encodeSetInputMode,
       inspectImage, buildFlashPlan, buildRevertPlan, decideOutcome, CONFIRM_CHECKS, judgeConfirmCheck, confirmFailureNotice,
       describeUpdateError, formatProgress, formatBytes,
+      FIRST_FLASH_URL, NO_USB_UPDATES_NOTE, usbUpdatesUnavailable,
       DEFAULT_PROJECT, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
       SIM_PATTERNS, encodeSimMessage, parseSimMessage, validateSimScript, createHidAccumulator,
     } = globalThis.OmegaProtocol;
@@ -1956,7 +1986,7 @@
                       "modeMouseBtn", "modeXacBtn",
                       "recalibrateBtn", "recalInfo",
                       "diagRefreshBtn", "diagInfo", "resetList",
-                      "fwRunning", "fwPending", "markValidBtn",
+                      "fwRunning", "fwPending", "markValidBtn", "fwControls", "fwNoUpdates", "fwNoUpdatesText", "fwNoUpdatesLink",
                       "fwVersion", "fwBuild", "fwIdf", "fwRunPart", "fwBootPart", "fwSha", "fwCopyBtn", "fwPrevSlot", "fwPrevVersion", "fwPrevBuild", "fwPrevState", "fwRevertBtn", "fwFile", "flashBtn", "fwProgress", "restartBtn",
                       "latestCheckBtn", "latestInstallBtn", "latestAuto", "latestResult", "latestNotes",
                       "fwDrop", "fwFileInfo", "confirmPanel", "confirmTitle", "confirmBody", "confirmOkBtn", "confirmCancelBtn",
@@ -2301,6 +2331,8 @@
       logLine("sys", "Connected (" + (t.kind === "usb" ? "WebUSB vendor interface"
         : t.kind === "sim" ? "simulator over WebSocket" : "Web Serial / CDC") + ").");
       calibrationModule = MODULE_CALIBRATION;
+      discoveryFw = "";
+      setUsbUpdates(true);
       // Discovery first, so the first calibration request already uses the
       // module id the device reported (worst case adds DISCOVERY_TIMEOUT_MS).
       return checkModulePresent().catch(() => {}).then(() => {
@@ -2462,6 +2494,7 @@
       return result;
     }
 
+    let discoveryFw = ""; // firmware string from the dispatcher discovery reply
     async function checkModulePresent() {
       if (!transport) return;
       const payload = await new Promise((resolve) => {
@@ -2475,6 +2508,7 @@
       if (!payload) return;
       let info;
       try { info = parseDiscovery(payload); } catch (_) { return; }
+      discoveryFw = info.fw || "";
       // Identify the service by its protocol id (discovery v2); the module id is
       // only a routing key. Older firmware (discovery v1) falls back to the id.
       const sel = selectCalibrationModule(info);
@@ -2817,8 +2851,35 @@
         els.fwPending.hidden = !pending;
         els.markValidBtn.hidden = !pending;
         return true;
-      } catch (e) { els.fwRunning.textContent = "(unavailable)"; return false; }
+      } catch (e) {
+        if (usbUpdatesUnavailable(e)) {
+          setUsbUpdates(false);
+          els.fwRunning.textContent = discoveryFw ? "omega_stick " + discoveryFw : "-";
+          els.fwVersion.textContent = discoveryFw || "n/a";
+        } else {
+          els.fwRunning.textContent = "(unavailable)";
+        }
+        return false;
+      }
     }
+
+    // False once GET_FW_INFO says this build has no updates over USB: the
+    // update controls go away and a note points at the first-flash page.
+    // Transient failures never reach here (see usbUpdatesUnavailable).
+    let usbUpdates = true;
+    function setUsbUpdates(on) {
+      usbUpdates = on;
+      els.fwControls.hidden = !on;
+      els.fwNoUpdates.hidden = on;
+      if (!on) {
+        els.fwPending.hidden = true;
+        els.markValidBtn.hidden = true;
+        els.fwNoUpdatesText.textContent = NO_USB_UPDATES_NOTE;
+      }
+    }
+    els.fwNoUpdatesLink.href = FIRST_FLASH_URL;
+    document.getElementById("firstFlashHint").href = FIRST_FLASH_URL;
+    document.getElementById("firstFlashHint2").href = FIRST_FLASH_URL;
 
     // After an update or revert the new image boots "pending verify". The
     // firmware does not confirm itself: it goes back to the previous image at
@@ -3287,6 +3348,7 @@
     }
     els.latestCheckBtn.addEventListener("click", () => checkLatest(false));
     function maybeAutoCheck() {
+      if (!usbUpdates) return;
       renderLatest();
       if (autoCheckDone || !els.latestAuto.checked) return;
       autoCheckDone = true;
