@@ -255,11 +255,20 @@ confirms only when all of these hold:
 - The running image's version and SHA match what the console flashed, and it is
   pending verify.
 - A GET_STATE round trip succeeds.
-- GET_DIAGNOSTICS reports no sensor fault. If the device does not support
-  diagnostics this check is skipped.
+- GET_DIAGNOSTICS reports a healthy sensor that has actually been observed.
+  The firmware reports sensor status 3 ("not observed yet") from boot until its
+  polling loop has read the sensor 10 times in a row (about 100 ms of polling),
+  so a reply made before polling started is never mistaken for a healthy
+  sensor. The console asks every 0.5 s, waits up to 10 s while the status is 3,
+  and then needs a healthy reply twice, at least 1.5 s apart, before it
+  confirms. A fault, or a sensor still unobserved after 10 s, fails the check.
+  If the device does not support diagnostics this check is skipped.
 
 If a check fails the console does not confirm. It says which check failed and
-that the stick will go back to the previous firmware by itself. Confirming from
+that the stick will go back to the previous firmware by itself, and it
+reconnects after that rollback to report which image the stick ended up on.
+If the new image turns out to be confirmed already (older firmware that
+confirms itself), the console reports success without sending MARK_VALID. Confirming from
 the host also proves the whole remote path still works after the update (vendor
 enumeration, the protocol, OTA itself), so a bad image cannot lock the user out
 of the next update, and what counts as healthy can be changed in the console
