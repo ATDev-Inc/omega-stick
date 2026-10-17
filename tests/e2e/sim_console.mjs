@@ -333,6 +333,36 @@ async function main() {
   check("h", "no script errors in the page, no crash lines in the simulator output, simulator still running",
     errs === "[]" && simBad.length === 0 && simExit === null,
     "page errors " + errs + "; simulator bad lines " + JSON.stringify(simBad.slice(0, 3)) + "; exited " + JSON.stringify(simExit));
+  // ---- j. a build with firmware updates off (--no-ota): no update controls, a note, the version ----
+  // GET_FW_INFO answers function_not_supported, so the console hides the update controls and
+  // points at the first-flash page, but still shows the version the simulator announced.
+  sim.kill();
+  simOut = "";
+  const port2 = await freePort();
+  sim = spawn(simPath, ["--fresh", "--no-ota", "--data", path.join(tmp, "simdata-no-ota"), "--port", String(port2), "--speed", speed], { stdio: ["ignore", "pipe", "pipe"] });
+  sim.stdout.on("data", (d) => { simOut += d; });
+  sim.stderr.on("data", (d) => { simOut += d; });
+  sim.on("exit", () => { });
+  await waitFor("the no-ota simulator to listen", () => /listening on/.test(simOut), 10000);
+  await cdp.send("Page.navigate", { url: pathToFileURL(path.join(tmp, "page.html")).href });
+  await sleep(1200);
+  await setValue("simUrl", "ws://127.0.0.1:" + port2); // the wrapper preset the old port on load
+  await waitFor("connect to the no-ota simulator", async () => {
+    await click("simBtn");
+    await sleep(150);
+    return (await text("simBtn")) === "Disconnect";
+  }, 10000);
+  await waitFor("the update note", async () => !(await ev($("fwNoUpdates") + ".hidden")), 20000).catch(() => { });
+  const controlsHidden = await ev($("fwControls") + ".hidden");
+  const noteShown = !(await ev($("fwNoUpdates") + ".hidden"));
+  const noteText = await text("fwNoUpdatesText");
+  // The update panel's own version field stays n/a (the firmware does not put its version in the
+  // discovery reply), so the running version is checked where the console shows it: the hello.
+  const verOff = await text("simInfo");
+  check("j", "--no-ota: update controls hidden, no-updates note shown, simulator hello still shows the version",
+    controlsHidden && noteShown && noteText.length > 0 && /firmware \d+\.\d+\.\d+/.test(verOff) && /updates over USB are off/.test(simOut),
+    "controls hidden " + controlsHidden + "; note shown " + noteShown + " (" + noteText.slice(0, 60) + "); version " + verOff);
+
   if (verbose) console.log("---- final log ----\n" + (await logText()) + "\n---- simulator output ----\n" + simOut);
 }
 

@@ -12,7 +12,7 @@ automatic reconnect, a `no_response` sensor fault and recovery, a firmware
 update that the console checks and confirms, a revert, and an image whose
 sensor fails, which the console refuses to confirm and the simulator rolls back
 at the deadline, and an image whose sensor starts polling late, which the console
-waits for before confirming. It also fails on any script error in the page or any crash line
+waits for before confirming, and a simulator started with `--no-ota`, for which the console hides its update controls and shows the no-updates note. It also fails on any script error in the page or any crash line
 in the simulator output.
 
 ## Running it

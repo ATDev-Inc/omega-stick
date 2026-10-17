@@ -14,6 +14,9 @@ in `version.txt`.
 
 ### Added
 
+- **Simulator `--no-ota` option.** `omega_sim --no-ota` behaves like the v0.1.0
+  firmware, built with updates over USB off, so the console's no-updates view
+  can be tried and tested without a board. ([#TBD])
 - **Simulator connection in the console.** "Connect Simulator" links the
   console to `omega_sim` over a localhost WebSocket (works even in browsers
   without WebUSB or Web Serial) and shows a Simulator panel: a keyboard and
