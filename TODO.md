@@ -63,8 +63,13 @@ Last reviewed: 2026-10-17.
 
 ## Firmware updates over USB (M2, v0.2.0)
 
-The code is in the tree but off in v0.1.0 builds (D25). Build with
-`-DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ota"` to test it.
+The code is in the tree but off in v0.1.0 builds (D25). To test it, build into
+a separate directory with its own sdkconfig, so the default build's
+`CONFIG_OMEGA_STICK_OTA` setting is not carried over (defaults never override
+a value an existing sdkconfig already has):
+`idf.py -B build-ota -DSDKCONFIG=build-ota/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ota" build`.
+Check `build-ota/sdkconfig` reads `CONFIG_OMEGA_STICK_OTA=y`. See
+[docs/firmware-updates.md](docs/firmware-updates.md).
 
 - [ ] Update flow, happy path: upload, the console's checks, MARK_VALID, and
       the image stays confirmed across a power cycle.
