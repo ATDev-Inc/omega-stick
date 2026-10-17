@@ -172,6 +172,9 @@ in `version.txt`.
   or similar connectors while the board is powered.
 - **Update docs match the two-slot layout.** Removed the stale "factory app"
   wording from the README.
+- **Roadmap and task list.** [ROADMAP.md](ROADMAP.md) sets out the milestones
+  from the first tagged release to a stick others can build, and
+  [TODO.md](TODO.md) is the maintainers' working list behind it.
 
 ### Known issues
 
