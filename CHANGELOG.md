@@ -98,8 +98,8 @@ in `version.txt`.
   page; install or reinstall there, which erases saved calibration and
   settings. The update code stays in the tree and CI still builds it, and it
   returns in a later 0.x release. The bootloader and partition table are
-  unchanged, so that later release needs no bootloader reinstall. ([#TBD])
-
+  unchanged, so that later release needs no bootloader reinstall.
+  ([#39](https://github.com/ATDev-Inc/omega-stick/pull/39))
 - **The console confirms a new firmware image, not the firmware.** After an
   update or a revert the console reconnects, checks that the stick is running
   the image it flashed, answers requests and reports no sensor fault, then
