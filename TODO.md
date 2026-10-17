@@ -11,8 +11,8 @@ Last reviewed: 2026-10-17.
 
 - [ ] Merge the open pull requests into `owen-updates`: #36 (simulator in
       AGENTS.md and CONTRIBUTING.md), #37 (console confirms the new image) and
-      the `OMEGA_STICK_OTA` build switch that ships v0.1.0 with USB updates off
-      (D25).
+      #39 (the `OMEGA_STICK_OTA` build switch that ships v0.1.0 with USB
+      updates off, D25; stacked on #37).
 - [ ] Decide #12 (`marshall-updates` to `main`) and #15 (`fix/xac-descriptor`
       to `main`). Both predate `owen-updates`; #15 is probably covered by the
       espp 1.3.6 adoption (D20). Check before merging or closing.
