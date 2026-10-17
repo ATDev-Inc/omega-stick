@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "an update whose sensor polling starts late reports not observed, then healthy, and can be confirmed",
+  "steps": [
+    { "at_ms": 0, "pattern": "calibrate" },
+    { "at_ms": 40000, "expect": { "calibrated": true } },
+    { "at_ms": 41000, "next_image": "slow_sensor_start" },
+    { "at_ms": 42000, "action": "flash", "version": "9.9.9-sim" },
+    { "at_ms": 44000, "expect": { "fw_slot": "ota_1", "fw_pending": true, "sensor_observed": false, "sensor_fault": false } },
+    { "at_ms": 60000, "expect": { "fw_slot": "ota_1", "fw_pending": true, "sensor_observed": true, "sensor_fault": false } },
+    { "at_ms": 61000, "action": "mark_valid" },
+    { "at_ms": 70000, "expect": { "fw_slot": "ota_1", "fw_pending": false, "fw_version": "9.9.9-sim" } },
+    { "at_ms": 190000, "expect": { "fw_slot": "ota_1", "fw_pending": false } }
+  ]
+}

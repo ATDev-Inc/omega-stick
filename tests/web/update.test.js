@@ -261,11 +261,11 @@ test("decideOutcome: flashed build running and pending, then confirmed", () => {
   assert.match(o.message, /^Update confirmed/);
 });
 
-test("decideOutcome: old build back means the self-test failed", () => {
+test("decideOutcome: old build back means the new firmware was not confirmed", () => {
   const exp = { kind: "flash", version: "0.2.0", sha: "20212223", before: { version: "0.1.0", sha: "11111111" } };
   const o = P.decideOutcome(exp, { version: "0.1.0", sha: "11111111", pending: false });
   assert.equal(o.state, "rolled_back");
-  assert.equal(o.message, "The new firmware did not pass its self-test, so the device went back to 0.1.0.");
+  assert.equal(o.message, "The new firmware was not confirmed, so the device went back to 0.1.0.");
 });
 
 test("decideOutcome: version matches but the build differs is unexpected, not success", () => {
@@ -288,6 +288,88 @@ test("decideOutcome: revert, version only (previous sha is not reported)", () =>
   o = P.decideOutcome(exp, { version: "0.2.0", sha: "22222222", pending: false });
   assert.equal(o.state, "rolled_back");
   assert.match(o.message, /went back to 0\.2\.0/);
+});
+
+const CONFIRM_EXP = { kind: "flash", version: "0.2.0", sha: "20212223", before: { version: "0.1.0", sha: "11111111" } };
+const PENDING_NEW = { version: "0.2.0", sha: "20212223", pending: true };
+
+test("CONFIRM_CHECKS lists firmware, protocol, sensor in order", () => {
+  assert.deepEqual(P.CONFIRM_CHECKS.map((c) => c.id), ["firmware", "protocol", "sensor"]);
+  for (const c of P.CONFIRM_CHECKS) assert.ok(c.label);
+});
+
+test("judgeConfirmCheck: all checks pass", () => {
+  assert.deepEqual(P.judgeConfirmCheck("firmware", { expected: CONFIRM_EXP, after: PENDING_NEW }),
+    { ok: true, skipped: false, message: "" });
+  assert.equal(P.judgeConfirmCheck("protocol", { error: "" }).ok, true);
+  const r = P.judgeConfirmCheck("sensor", { diagnostics: { sensorFault: 0, sensorFirstFault: 0 } });
+  assert.deepEqual(r, { ok: true, skipped: false, message: "" });
+});
+
+test("judgeConfirmCheck: a version or build mismatch fails the firmware check", () => {
+  const wrongVer = P.judgeConfirmCheck("firmware", { expected: CONFIRM_EXP, after: { version: "0.3.0", sha: "abcdabcd", pending: true } });
+  assert.equal(wrongVer.ok, false);
+  assert.match(wrongVer.message, /not the version that was installed/);
+  const wrongSha = P.judgeConfirmCheck("firmware", { expected: CONFIRM_EXP, after: { version: "0.2.0", sha: "99999999", pending: true } });
+  assert.equal(wrongSha.ok, false);
+  const old = P.judgeConfirmCheck("firmware", { expected: CONFIRM_EXP, after: { version: "0.1.0", sha: "11111111", pending: false } });
+  assert.equal(old.ok, false);
+  assert.match(old.message, /was not confirmed/);
+  assert.equal(P.judgeConfirmCheck("firmware", { expected: CONFIRM_EXP, after: null }).ok, false);
+});
+
+test("judgeConfirmCheck: the expected image already confirmed is a success that needs no MARK_VALID", () => {
+  // Older self-confirming firmware can confirm itself between the reconnect and the console's own check.
+  const r = P.judgeConfirmCheck("firmware", { expected: CONFIRM_EXP, after: { ...PENDING_NEW, pending: false } });
+  assert.equal(r.ok, true);
+  assert.equal(r.alreadyConfirmed, true);
+  assert.match(r.message, /Update confirmed/);
+  // A pending image is the normal case and is not flagged.
+  assert.equal(P.judgeConfirmCheck("firmware", { expected: CONFIRM_EXP, after: PENDING_NEW }).alreadyConfirmed, undefined);
+  // A different or rolled-back image that is not pending is still rejected.
+  assert.equal(P.judgeConfirmCheck("firmware", { expected: CONFIRM_EXP, after: { version: "0.3.0", sha: "abcdabcd", pending: false } }).ok, false);
+  assert.equal(P.judgeConfirmCheck("firmware", { expected: CONFIRM_EXP, after: { version: "0.1.0", sha: "11111111", pending: false } }).ok, false);
+});
+
+test("judgeConfirmCheck: a failed GET_STATE fails the protocol check", () => {
+  const r = P.judgeConfirmCheck("protocol", { error: "GET_STATE timed out" });
+  assert.equal(r.ok, false);
+  assert.match(r.message, /GET_STATE timed out/);
+});
+
+test("judgeConfirmCheck: a sensor fault fails the sensor check", () => {
+  let r = P.judgeConfirmCheck("sensor", { diagnostics: { sensorFault: 1 } });
+  assert.equal(r.ok, false);
+  assert.equal(r.skipped, false);
+  assert.match(r.message, /read failed/);
+  r = P.judgeConfirmCheck("sensor", { diagnostics: { sensorFault: 2 } });
+  assert.match(r.message, /reading stuck/);
+  assert.match(P.judgeConfirmCheck("sensor", { diagnostics: { sensorFault: 9 } }).message, /code 9/);
+});
+
+test("judgeConfirmCheck: diagnostics unsupported skips the sensor check, other errors fail it", () => {
+  const skip = P.judgeConfirmCheck("sensor", { error: "device error (code 88): GET_DIAGNOSTICS: Function not implemented" });
+  assert.equal(skip.ok, true);
+  assert.equal(skip.skipped, true);
+  assert.match(skip.message, /skipped/);
+  assert.equal(P.judgeConfirmCheck("sensor", { error: "function_not_supported" }).skipped, true);
+  const bad = P.judgeConfirmCheck("sensor", { error: "GET_DIAGNOSTICS timed out" });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.skipped, false);
+  assert.equal(P.judgeConfirmCheck("sensor", {}).ok, false);
+});
+
+test("judgeConfirmCheck: an unknown check id fails", () => {
+  assert.equal(P.judgeConfirmCheck("nope", {}).ok, false);
+});
+
+test("confirmFailureNotice says the device will go back and points at the manual override", () => {
+  const s = P.confirmFailureNotice("The sensor reported a fault (read failed).");
+  assert.ok(s.startsWith("The sensor reported a fault (read failed)."));
+  assert.match(s, /not confirmed/);
+  assert.match(s, /within about two minutes/);
+  assert.match(s, /Mark running image valid/);
+  assert.match(s, /skips these checks/);
 });
 
 test("decideOutcome: nothing readable", () => {
@@ -391,4 +473,106 @@ test("reconnect: USB without a known serial and several matches is ambiguous", (
   const u = (ref) => sp(ref, { kind: "usb" });
   assert.equal(P.pickReconnectCandidate(link, [u("a"), u("b")]).reason, "ambiguous");
   assert.equal(P.pickReconnectCandidate(link, [u("a")]).reason, "only-match");
+});
+
+// ---- the sensor check over time (D22: "not observed" is not "healthy") ------
+
+function fakeClock() {
+  const c = { t: 0, sleeps: 0 };
+  c.now = () => c.t;
+  c.sleep = async (ms) => { c.t += ms; c.sleeps++; };
+  return c;
+}
+// A device whose DIAGNOSTICS sensor byte follows `codes` (the last repeats), one entry per request.
+function sensorReader(codes, requests) {
+  let i = 0;
+  return async () => {
+    requests.push(i);
+    const code = codes[Math.min(i++, codes.length - 1)];
+    return { diagnostics: { sensorFault: code } };
+  };
+}
+
+test("judgeConfirmCheck: code 3 (not observed yet) is a wait, not a fault and not healthy", () => {
+  const r = P.judgeConfirmCheck("sensor", { diagnostics: { sensorFault: 3 } });
+  assert.equal(r.ok, false);
+  assert.equal(r.wait, true);
+  assert.equal(P.SENSOR_NOT_OBSERVED, 3);
+  assert.doesNotMatch(r.message, /fault/i);
+});
+
+test("describeSensorState names code 3 as starting up, never as a fault", () => {
+  assert.equal(P.describeSensorState(0), "none");
+  assert.equal(P.describeSensorState(1), "read failed");
+  assert.equal(P.describeSensorState(2), "reading stuck");
+  assert.equal(P.describeSensorState(3), "waiting for first readings");
+  assert.equal(P.describeSensorState(9), "code 9");
+});
+
+test("sensor check: startup-order regression, diagnostics asked before polling then reads fail, is withheld", async () => {
+  const clock = fakeClock();
+  const asked = [];
+  // The first replies come before polling began (3); the sensor then fails (1).
+  const r = await P.awaitSensorHealthy(sensorReader([3, 3, 3, 1], asked), clock.sleep, clock.now);
+  assert.equal(r.ok, false);
+  assert.match(r.message, /read failed/);
+  assert.equal(asked.length, 4);
+});
+
+test("sensor check: waits through code 3 and confirms only after healthy twice, at least 1.5 s apart", async () => {
+  const clock = fakeClock();
+  const asked = [];
+  const waits = [];
+  const r = await P.awaitSensorHealthy(sensorReader([3, 3, 3, 0], asked), clock.sleep, clock.now, { onWait: (m) => waits.push(m) });
+  assert.equal(r.ok, true);
+  assert.equal(waits.length, 3);
+  // Three waits, then the first 0 at 1500 ms, the second 0 at 3000 ms (1.5 s later).
+  assert.equal(asked.length, 3 + 4);
+  assert.equal(clock.t, 3000);
+});
+
+test("sensor check: a sensor stuck at code 3 fails after 10 s and never reports healthy", async () => {
+  const clock = fakeClock();
+  const asked = [];
+  const r = await P.awaitSensorHealthy(sensorReader([3], asked), clock.sleep, clock.now);
+  assert.equal(r.ok, false);
+  assert.match(r.message, /not producing readings after 10 seconds/);
+  assert.ok(clock.t >= P.SENSOR_WAIT_MS && clock.t <= P.SENSOR_WAIT_MS + P.SENSOR_POLL_MS);
+});
+
+test("sensor check: firmware that cannot say 'not observed' (always 0) is still held for the dwell", async () => {
+  const clock = fakeClock();
+  const asked = [];
+  const r = await P.awaitSensorHealthy(sensorReader([0], asked), clock.sleep, clock.now);
+  assert.equal(r.ok, true);
+  assert.equal(clock.t, P.SENSOR_DWELL_MS);
+  // ...and a fault that shows up during the dwell stops it.
+  const clock2 = fakeClock();
+  const r2 = await P.awaitSensorHealthy(sensorReader([0, 0, 1], []), clock2.sleep, clock2.now);
+  assert.equal(r2.ok, false);
+  assert.match(r2.message, /read failed/);
+});
+
+test("sensor check: unsupported diagnostics skips at once, a transport error fails at once, abort stops", async () => {
+  const clock = fakeClock();
+  const skip = await P.awaitSensorHealthy(async () => ({ error: "device error (code 88): GET_DIAGNOSTICS: Function not implemented" }), clock.sleep, clock.now);
+  assert.equal(skip.skipped, true);
+  assert.equal(clock.t, 0);
+  const bad = await P.awaitSensorHealthy(async () => ({ error: "GET_DIAGNOSTICS timed out" }), clock.sleep, clock.now);
+  assert.equal(bad.ok, false);
+  assert.equal(clock.t, 0);
+  const aborted = await P.awaitSensorHealthy(sensorReader([3], []), clock.sleep, clock.now, { abort: () => true });
+  assert.equal(aborted.aborted, true);
+  assert.equal(aborted.ok, false);
+});
+
+test("runConfirmCheck judges the non-sensor checks once and waits only for the sensor", async () => {
+  const clock = fakeClock();
+  const env = { sleep: clock.sleep, now: clock.now };
+  const fw = await P.runConfirmCheck("firmware", async () => ({ expected: CONFIRM_EXP, after: PENDING_NEW }), env);
+  assert.equal(fw.ok, true);
+  assert.equal((await P.runConfirmCheck("protocol", async () => ({ error: "x" }), env)).ok, false);
+  assert.equal(clock.sleeps, 0);
+  const sensor = await P.runConfirmCheck("sensor", sensorReader([3, 0], []), env);
+  assert.equal(sensor.ok, true);
 });

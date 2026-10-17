@@ -115,15 +115,20 @@
       0x5B OTA_ABORT              (no payload) -- abandon the upload session
       0x5C GET_FW_INFO            (no payload) -- reply FW_INFO
       0x5D MARK_VALID             (no payload) -- confirm the running image
-                                   (cancels app rollback)
+                                   (cancels app rollback). The firmware does not
+                                   confirm itself: after an update or revert the
+                                   console reconnects, checks the image (running
+                                   build, GET_STATE, sensor fault from
+                                   GET_DIAGNOSTICS) and sends this. An image still
+                                   pending at the firmware's deadline is rolled back.
       0x5E REVERT                 (no payload) -- make the other OTA slot (the
                                    previously installed firmware) the boot
                                    partition; reply OK, then reboot ~750 ms later.
                                    ERROR if an upload is in progress, the other
                                    slot has no app image, or the bootloader
                                    selection could not be written. The reverted
-                                   image boots pending verify and must pass the
-                                   same health check.
+                                   image boots pending verify and must be
+                                   confirmed the same way.
       0x5F GET_DIAGNOSTICS        (no payload) -- asks for the sensor fault
                                    status and the reset log. Reply:
                                    DIAGNOSTICS, or ERROR when the firmware
@@ -145,7 +150,7 @@
                     firmware sends fewer strings: hosts must tolerate a shorter
                     payload and treat missing strings as empty.
       0xD3 DIAGNOSTICS (reply to GET_DIAGNOSTICS) -- little-endian:
-                      u8  sensor_fault        (0 none, 1 read failed, 2 stuck)
+                      u8  sensor_fault        (0 none, 1 read failed, 2 stuck, 3 not observed yet)
                       u8  sensor_first_fault  (same codes; latched since boot)
                       u32 sensor_fault_count  (trips since boot)
                       u32 boot_count
@@ -503,6 +508,8 @@
                   <option value="ok">ok</option>
                   <option value="fail_self_test">fail_self_test (rolls back)</option>
                   <option value="crash_loop">crash_loop (reverted)</option>
+                  <option value="slow_sensor_start">slow_sensor_start (sensor polled 3 s late)</option>
+                  <option value="slow_sensor_fail">slow_sensor_fail (polled late, then fails)</option>
                 </select>
               </label>
             </div>
@@ -667,8 +674,8 @@
         <legend>Firmware update</legend>
         <div class="row">
           <span class="muted">Running: <span id="fwRunning">-</span></span>
-          <span id="fwPending" class="warn-text" hidden>PENDING VERIFY: rolls back on next reset unless confirmed</span>
-          <button id="markValidBtn" disabled hidden>Mark running image valid</button>
+          <span id="fwPending" class="warn-text" hidden>PENDING VERIFY: the device goes back to the previous firmware shortly after it starts unless this firmware is confirmed. "Mark running image valid" confirms it without running the console's checks.</span>
+          <button id="markValidBtn" disabled hidden title="Confirms the running image and skips the console's checks">Mark running image valid</button>
         </div>
         <div class="row" style="margin: 6px 0;">
           <dl class="kv">
@@ -1311,7 +1318,7 @@
     const st = (prev && prev.state) || "";
     if (st && st !== "valid") {
       warnings.push({ code: "prev_state", message: "The previous firmware is in state \"" + st +
-                      "\". It will have to pass the self-test again, or the device goes back." });
+                      "\". After the restart it has to be confirmed again, or the device goes back." });
     }
     return plan;
   }
@@ -1349,11 +1356,128 @@
     }
     if (isOld) {
       return { state: "rolled_back",
-               message: "The new firmware did not pass its self-test, so the device went back to " + after.version + "." };
+               message: "The new firmware was not confirmed, so the device went back to " + after.version + "." };
     }
     return { state: "unexpected",
              message: "The device is running " + after.version + ", which is not the version that was installed (" +
                       (expected.version || "unknown") + ")." };
+  }
+
+  // The checks the console runs after a reboot into a pending image, in order,
+  // before it sends MARK_VALID. To add a check: add an entry here, a case in
+  // judgeConfirmCheck, and one line gathering its input in the page.
+  const CONFIRM_CHECKS = [
+    { id: "firmware", label: "Checking the running firmware" },
+    { id: "protocol", label: "Checking the connection" },
+    { id: "sensor", label: "Checking the sensor" },
+  ];
+  // DIAGNOSTICS sensor_fault codes. 3 is not a fault: the firmware has not yet
+  // seen the sensor answer since boot (D22), which is different from healthy.
+  const SENSOR_NOT_OBSERVED = 3;
+  const SENSOR_FAULT_LABEL = { 1: "read failed", 2: "reading stuck" };
+  const SENSOR_STATE_NAMES = { 0: "none", 1: "read failed", 2: "reading stuck", 3: "waiting for first readings" };
+  function describeSensorState(code) {
+    return SENSOR_STATE_NAMES[code] || ("code " + code);
+  }
+  // How the sensor check waits: poll GET_DIAGNOSTICS this often, for up to this
+  // long while the firmware still says "not observed"; then, once it says
+  // healthy, ask again at least SENSOR_DWELL_MS later and require healthy again
+  // (so firmware that cannot say "not observed" is still given time to fail).
+  const SENSOR_POLL_MS = 500;
+  const SENSOR_WAIT_MS = 10000;
+  const SENSOR_DWELL_MS = 1500;
+
+  // Judges one check from the input the page gathered. Returns
+  // { ok, skipped, message }; message explains a failure or a skip.
+  //   firmware: { expected, after }  as for decideOutcome; must be "confirming"
+  //   protocol: { error }            error text of a failed GET_STATE, else ""
+  //   sensor:   { diagnostics, error }  decoded DIAGNOSTICS (decodeDiagnostics)
+  //             or the error text of a failed GET_DIAGNOSTICS. A device that
+  //             replies function_not_supported has older firmware: skipped.
+  //             Code 3 (not observed yet) gives { ok: false, wait: true }: not a
+  //             failure, ask again (see awaitSensorHealthy).
+  // A firmware check that finds the expected image already confirmed gives
+  // { ok: true, alreadyConfirmed: true }: nothing is left to confirm.
+  function judgeConfirmCheck(id, input) {
+    input = input || {};
+    if (id === "firmware") {
+      const o = decideOutcome(input.expected || {}, input.after || null);
+      if (o.state === "confirming") return { ok: true, skipped: false, message: "" };
+      if (o.state === "confirmed") return { ok: true, skipped: false, alreadyConfirmed: true, message: o.message };
+      return { ok: false, skipped: false, message: o.message };
+    }
+    if (id === "protocol") {
+      return input.error
+        ? { ok: false, skipped: false, message: "The device did not answer a status request (" + input.error + ")." }
+        : { ok: true, skipped: false, message: "" };
+    }
+    if (id === "sensor") {
+      if (input.error) {
+        if (describeUpdateError(input.error).category === "unsupported") {
+          return { ok: true, skipped: true,
+                   message: "This firmware does not report sensor status, so the sensor check was skipped." };
+        }
+        return { ok: false, skipped: false, message: "The sensor status could not be read (" + input.error + ")." };
+      }
+      const code = input.diagnostics ? input.diagnostics.sensorFault : undefined;
+      if (code === undefined) return { ok: false, skipped: false, message: "The sensor status could not be read." };
+      if (code === SENSOR_NOT_OBSERVED) {
+        return { ok: false, skipped: false, wait: true,
+                 message: "The sensor has not produced its first readings yet." };
+      }
+      if (code !== 0) {
+        return { ok: false, skipped: false,
+                 message: "The sensor reported a fault (" + (SENSOR_FAULT_LABEL[code] || ("code " + code)) + ")." };
+      }
+      return { ok: true, skipped: false, message: "" };
+    }
+    return { ok: false, skipped: false, message: "Unknown check: " + id + "." };
+  }
+
+  // The sensor check over time. read() gathers one input for judgeConfirmCheck
+  // ("sensor"); sleep(ms) and now() are injected so tests need no real time;
+  // opts.abort() stops early; opts.onWait(message) reports a wait. Returns the
+  // final judgement { ok, skipped, message }.
+  //   not observed  -> ask again every SENSOR_POLL_MS up to SENSOR_WAIT_MS, then
+  //                    fail ("not producing readings"): no MARK_VALID
+  //   fault / error -> fail at once
+  //   unsupported   -> skipped at once (older firmware)
+  //   healthy       -> must still be healthy SENSOR_DWELL_MS later
+  async function awaitSensorHealthy(read, sleep, now, opts) {
+    opts = opts || {};
+    const started = now();
+    let healthySince = null;
+    for (;;) {
+      if (opts.abort && opts.abort()) return { ok: false, skipped: false, aborted: true, message: "" };
+      const r = judgeConfirmCheck("sensor", await read());
+      if (r.skipped || (!r.ok && !r.wait)) return r;
+      if (r.ok) {
+        if (healthySince === null) healthySince = now();
+        else if (now() - healthySince >= SENSOR_DWELL_MS) return r;
+      } else {
+        healthySince = null;
+        if (now() - started >= SENSOR_WAIT_MS) {
+          return { ok: false, skipped: false,
+                   message: "The sensor was still not producing readings after " + Math.round(SENSOR_WAIT_MS / 1000) + " seconds." };
+        }
+        if (opts.onWait) opts.onWait(r.message);
+      }
+      await sleep(SENSOR_POLL_MS);
+    }
+  }
+
+  // Runs one confirm check: the sensor check waits (awaitSensorHealthy), the
+  // others are judged once from what gather() returns.
+  async function runConfirmCheck(id, gather, env) {
+    env = env || {};
+    if (id === "sensor") return awaitSensorHealthy(gather, env.sleep, env.now, env);
+    return judgeConfirmCheck(id, await gather());
+  }
+
+  // Wording shown when a check failed and MARK_VALID was not sent.
+  function confirmFailureNotice(message) {
+    return message + " The new firmware was not confirmed. The device goes back to the previous firmware by " +
+           "itself within about two minutes. To keep it anyway, use \"Mark running image valid\", which skips these checks.";
   }
 
   // Maps a raw failure (Error text from the page's transactions, device ERROR
@@ -1537,14 +1661,14 @@
   // validate uploaded scripts, and accumulate HID output for the output view.
   const SIM_PATTERNS = ["rest", "circle", "calibrate", "nudge_right", "nudge_left", "nudge_up", "nudge_down", "wander"];
   const SIM_FAULTS = ["ok", "no_response", "stuck_counter", "weak_magnet"];
-  const SIM_NEXT_IMAGE = ["ok", "fail_self_test", "crash_loop"];
+  const SIM_NEXT_IMAGE = ["ok", "fail_self_test", "crash_loop", "slow_sensor_start", "slow_sensor_fail"];
   const SIM_SOURCE_KINDS = ["manual", "pattern", "script"];
   const SIM_REPLIES = ["ok", "busy", "invalid", "error"];
   const SIM_ACTIONS = ["recalibrate", "save", "restart", "set_mode", "set_deadzone", "flash", "revert", "mark_valid"];
   const SIM_SCRIPT_MAX_BYTES = 262144, SIM_SCRIPT_MAX_STEPS = 5000;
   const SIM_MAX_AT_MS = 86400000; // a day
   const SIM_STEP_KEYS = ["stick", "pattern", "fault", "drift", "noise", "next_image", "action", "expect"];
-  const SIM_EXPECT_KEYS = ["calibrated", "center_max", "mouse_moved", "clicked", "mode", "sensor_fault", "neutral", "fw_slot", "fw_pending", "fw_version", "xac_x", "xac_y"];
+  const SIM_EXPECT_KEYS = ["calibrated", "center_max", "mouse_moved", "clicked", "mode", "sensor_fault", "sensor_observed", "neutral", "fw_slot", "fw_pending", "fw_version", "xac_x", "xac_y"];
 
   const isNum = (v) => typeof v === "number" && Number.isFinite(v);
   const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -1780,7 +1904,7 @@
     const oneOf = (k, list) => { if (!list.includes(e[k])) add(at + "expect." + k + " must be one of " + list.join(", ") + "."); };
     for (const k of Object.keys(e)) {
       switch (k) {
-        case "calibrated": case "sensor_fault": case "fw_pending": case "neutral": bool(k); break;
+        case "calibrated": case "sensor_fault": case "sensor_observed": case "fw_pending": case "neutral": bool(k); break;
         case "center_max": if (!isNum(e[k]) || e[k] < 0 || e[k] > 10) add(at + "expect.center_max must be a number from 0 to 10."); break;
         case "fw_version": if (typeof e[k] !== "string" || e[k].length === 0) add(at + "expect.fw_version must be text."); break;
         case "xac_x": case "xac_y": if (!isNum(e[k]) || e[k] < -1 || e[k] > 1) add(at + "expect." + k + " must be a number from -1 to 1."); break;
@@ -1835,7 +1959,9 @@
     FEED_URL, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
     OTA_SLOT_SIZE, CHIP_ID_ESP32S3, DEFAULT_PROJECT, KIND_LABEL,
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
-    decideOutcome, describeUpdateError, formatProgress, formatBytes,
+    decideOutcome, CONFIRM_CHECKS, judgeConfirmCheck, awaitSensorHealthy, runConfirmCheck, confirmFailureNotice,
+    SENSOR_NOT_OBSERVED, SENSOR_POLL_MS, SENSOR_WAIT_MS, SENSOR_DWELL_MS, describeSensorState,
+    describeUpdateError, formatProgress, formatBytes,
     HEADER_SIZE, CRC_SIZE, MAX_PAYLOAD, MAX_FRAME,
     MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, PROTOCOL_ID, PROTOCOL_VERSION,
     FLAGS_REQUEST, FLAGS_REPLY_BIT, FLAG_CORRELATION,
@@ -1863,7 +1989,8 @@
       MAX_FRAME, MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, PROTOCOL_ID, PROTOCOL_VERSION, TYPE, INPUT_MODE,
       buildFrame, FrameParser, readU32, parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
       encodeSetManualOffset, encodeSetDeadzoneOverride, encodeSetNudgeSettings, encodeSetInputMode,
-      inspectImage, buildFlashPlan, buildRevertPlan, decideOutcome, describeUpdateError, formatProgress, formatBytes,
+      inspectImage, buildFlashPlan, buildRevertPlan, decideOutcome, CONFIRM_CHECKS, runConfirmCheck, confirmFailureNotice, describeSensorState,
+      describeUpdateError, formatProgress, formatBytes,
       DEFAULT_PROJECT, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
       SIM_PATTERNS, encodeSimMessage, parseSimMessage, validateSimScript, createHidAccumulator,
     } = globalThis.OmegaProtocol;
@@ -2248,7 +2375,10 @@
         return refreshFwInfo().then((ok) => {
           if (ok) {
             logLine("sys", fwSummary());
-            if (fwInfo.pending) watchPendingVerify();
+            if (fwInfo.pending && !(upd && upd.phase === "rebooting")) {
+              logLine("sys", "The running firmware is pending verification and will be replaced by the previous " +
+                "one unless it is confirmed. Use \"Mark running image valid\" to confirm it (this skips the console's checks).");
+            }
           }
           maybeAutoCheck();
           return onUpdateReconnected(ok).then(() => ok);
@@ -2510,13 +2640,11 @@
     // ===================================================================
     // Diagnostics (GET_DIAGNOSTICS / DIAGNOSTICS)
     // ===================================================================
-    const SENSOR_FAULT_NAMES = { 0: "none", 1: "read failed", 2: "reading stuck" };
-
     function renderDiagnostics(d) {
-      const faultName = (code) => SENSOR_FAULT_NAMES[code] || ("code " + code);
-      diagEls.sensorFault.textContent = faultName(d.sensorFault);
-      diagEls.sensorFault.classList.toggle("warn-text", d.sensorFault !== 0);
-      diagEls.sensorFirstFault.textContent = faultName(d.sensorFirstFault);
+      // Code 3 is the sensor still starting up, not a fault: no warning colour.
+      diagEls.sensorFault.textContent = describeSensorState(d.sensorFault);
+      diagEls.sensorFault.classList.toggle("warn-text", d.sensorFault !== 0 && d.sensorFault !== 3);
+      diagEls.sensorFirstFault.textContent = describeSensorState(d.sensorFirstFault);
       diagEls.sensorFaultCount.textContent = String(d.sensorFaultCount);
       diagEls.bootCount.textContent = String(d.bootCount);
       els.resetList.replaceChildren();
@@ -2756,25 +2884,11 @@
       } catch (e) { els.fwRunning.textContent = "(unavailable)"; return false; }
     }
 
-    // After an update the new image boots "pending verify" and confirms itself
-    // once it has run healthily for ~10 s (FirmwareHealthCheck in main.cpp), or
-    // rolls back if it never does. Poll until the flag clears so the panel and
-    // the log show the outcome without a manual refresh. If the device rolls
-    // back it reboots, the connection drops, and the watch stops on its own.
-    let pendingWatch = null;
-    function watchPendingVerify() {
-      if (pendingWatch) return;
-      logLine("sys", "New firmware is pending verification; waiting for it to confirm itself...");
-      pendingWatch = setInterval(async () => {
-        if (!transport) { clearInterval(pendingWatch); pendingWatch = null; return; }
-        if (busy) return;
-        const ok = await refreshFwInfo();
-        if (!ok || fwInfo.pending) return;
-        clearInterval(pendingWatch); pendingWatch = null;
-        logLine("sys", "Firmware confirmed healthy; rollback cancelled. Running " + fwSummary());
-        onUpdatePendingCleared();
-      }, 3000);
-    }
+    // After an update or revert the new image boots "pending verify". The
+    // firmware does not confirm itself: it goes back to the previous image at
+    // its deadline unless the console sends MARK_VALID. The console does that
+    // after its checks (confirmFlashedImage); the button below is the manual
+    // override for a stick that is pending for any other reason.
 
     els.fwCopyBtn.addEventListener("click", async () => {
       const text = fwSummary();
@@ -2788,9 +2902,13 @@
       if (!transport || busy) return;
       try {
         await transact(TYPE.MARK_VALID, null, [TYPE.OK], CMD_TIMEOUT_MS, 0);
-        logLine("sys", "Running image marked valid.");
+        logLine("sys", "Running image marked valid by hand (the console's checks were skipped).");
       } catch (e) { logLine("err", "MARK_VALID failed: " + e.message); }
-      refreshFwInfo();
+      const ok = await refreshFwInfo();
+      if (ok && !fwInfo.pending && upd && upd.phase === "waiting_rollback") {
+        upd.phase = "done";
+        finishStatus("warn", "The new firmware was confirmed by hand, without the console's checks. The device is running " + fwInfo.version + ".");
+      }
     });
 
     // ===================================================================
@@ -3079,7 +3197,7 @@
           app ? ["Built " + app.date + " " + app.time + ", ESP-IDF " + app.idf] : []),
         errors: pl.errors, warnings: pl.warnings,
         notes: plan.blocked ? [] : ["The device will restart into the new firmware, and this page will reconnect by itself. " +
-          "If the new firmware fails its self-test, the device goes back to the current one."],
+          "This page then checks the new firmware and confirms it. If it is not confirmed, the device goes back to the current one."],
         confirmLabel: plan.kind === "downgrade" ? "Flash older version" : (plan.kind === "same-build" ? "Flash anyway" : "Flash"),
         returnTo: els.flashBtn,
       });
@@ -3327,8 +3445,8 @@
         kindLabel: plan.kindLabel,
         lines: ["Slot " + (f.prevLabel || "?") + ", built " + build + ", state " + f.prevState],
         errors: pl.errors, warnings: pl.warnings,
-        notes: ["The device will restart. The previous firmware starts in the pending verify state and has to pass the " +
-                "self-test, or the device goes back again."],
+        notes: ["The device will restart. The previous firmware starts in the pending verify state; this page checks it and " +
+                "confirms it, or the device goes back again."],
         confirmLabel: "Revert",
         returnTo: els.fwRevertBtn,
       });
@@ -3488,6 +3606,7 @@
     async function onUpdateReconnected(infoOk) {
       if (!upd || upd.phase !== "rebooting" || reporting) return;
       reporting = true;
+      let runChecks = false;
       try {
         let ok = infoOk;
         for (let i = 0; !ok && i < 3 && transport; i++) {
@@ -3503,7 +3622,7 @@
             upd.phase = "confirming";
             setStep("confirm", o.message);
             setProgress(null, "Checking the new firmware");
-            watchPendingVerify();
+            runChecks = true;
             break;
           case "confirmed":
             upd.phase = "done";
@@ -3518,20 +3637,111 @@
             finishStatus(o.state === "no_device" ? "err" : "warn", o.message);
         }
       } finally { reporting = false; }
+      // After the finally so a drop while checking can be handled by a reconnect.
+      if (runChecks) await confirmFlashedImage();
+    }
+
+    // The console confirms the image itself. Runs OmegaProtocol.CONFIRM_CHECKS
+    // in order (each gathers its input here, judgeConfirmCheck decides), and
+    // only if all pass sends MARK_VALID and verifies pending cleared. On a
+    // failed check MARK_VALID is not sent; the firmware rolls back at its
+    // deadline, and the manual "Mark running image valid" button stays.
+    async function confirmFlashedImage() {
+      const t = transport;
+      if (!t || !upd || upd.phase !== "confirming") return;
+      // The link dropped or the flow moved on: the reconnect path decides again.
+      const stale = () => transport !== t || !upd || upd.phase !== "confirming";
+      const gather = {
+        firmware: async () => {
+          const ok = await refreshFwInfo();
+          return { expected: upd.expected, after: ok ? { version: fwInfo.version, sha: fwInfo.sha, pending: fwInfo.pending } : null };
+        },
+        protocol: async () => {
+          try { await transact(TYPE.GET_STATE, null, [TYPE.STATE], CMD_TIMEOUT_MS, 1); return { error: "" }; }
+          catch (e) { return { error: e.message }; }
+        },
+        sensor: async () => {
+          try {
+            const r = await transact(TYPE.GET_DIAGNOSTICS, null, [TYPE.DIAGNOSTICS], CMD_TIMEOUT_MS, 1);
+            return { diagnostics: decodeDiagnostics(r.payload) };
+          } catch (e) { return { error: e.message }; }
+        },
+      };
+      let waitLogged = false;
+      busy = true; updateUI();
+      try {
+        setProgress(null, "Checking the new firmware");
+        for (const c of CONFIRM_CHECKS) {
+          setStep("confirm", c.label + "...");
+          const r = await runConfirmCheck(c.id, gather[c.id], {
+            sleep: sleepMs, now: Date.now, abort: stale,
+            onWait: (m) => {
+              if (!waitLogged) { waitLogged = true; logLine("sys", m + " Waiting up to 10 seconds for it before deciding."); }
+              setStep("confirm", c.label + ". " + m + " Waiting...");
+            },
+          });
+          if (stale()) return;
+          if (r.alreadyConfirmed) {
+            // The firmware (or a hand) confirmed it between reconnect and this
+            // check: there is nothing left to confirm, and no MARK_VALID to send.
+            logLine("sys", "The new firmware was already confirmed; no further checks needed.");
+            onUpdatePendingCleared();
+            return;
+          }
+          if (r.skipped) logLine("sys", "Check skipped (" + c.id + "): " + r.message);
+          else if (r.ok) logLine("sys", "Check passed: " + c.label.replace(/^Checking /, "") + ".");
+          if (!r.ok) {
+            logLine("err", "Check failed (" + c.id + "): " + r.message + " MARK_VALID was not sent.");
+            // Not "done": the stick reboots into the previous firmware at its
+            // deadline, and the page must reconnect and report what it ran.
+            upd.phase = "waiting_rollback";
+            showStatusBox();
+            finishStatus("err", confirmFailureNotice(r.message));
+            return;
+          }
+        }
+        setStep("confirm", "Confirming the new firmware...");
+        try {
+          await transact(TYPE.MARK_VALID, null, [TYPE.OK], CMD_TIMEOUT_MS, 0);
+        } catch (e) {
+          if (stale()) return;
+          logLine("err", "MARK_VALID failed: " + e.message);
+          upd.phase = "done";
+          finishStatus("err", "The checks passed, but the device did not accept the confirmation. " +
+            "It may go back to the previous firmware within about two minutes. You can try \"Mark running image valid\".");
+          return;
+        }
+        const ok = await refreshFwInfo();
+        if (stale()) return;
+        if (!ok || fwInfo.pending) {
+          logLine("err", "MARK_VALID was accepted but the device still reports the image as pending.");
+          upd.phase = "done";
+          finishStatus("err", "The device accepted the confirmation but still reports the new firmware as pending. " +
+            "It may go back to the previous firmware within about two minutes. Reconnect and check which firmware it runs.");
+          return;
+        }
+        logLine("sys", "New firmware confirmed; rollback cancelled. Running " + fwSummary());
+        onUpdatePendingCleared();
+      } finally { endBusy(); }
     }
     function onUpdatePendingCleared() {
       if (!upd || upd.phase !== "confirming") return;
       upd.phase = "done";
       finishStatus("ok", "Update confirmed. The device is running " + fwInfo.version + ".");
     }
-    // The link dropped. During the self-test watch this usually means the
-    // device rolled back and rebooted; reconnect and decide again.
+    // The link dropped while the checks ran, before MARK_VALID was sent or
+    // confirmed. The device usually rebooted (a reset while pending goes back
+    // to the previous firmware); otherwise it will go back at its deadline.
+    // Reconnect and decide again from what it reports.
     function onUpdateTransportGone() {
       if (confirmResolve) closeConfirm(false);
-      if (upd && upd.phase === "confirming" && !reconnecting) {
+      if (upd && (upd.phase === "confirming" || upd.phase === "waiting_rollback") && !reconnecting) {
+        const rolling = upd.phase === "waiting_rollback";
         upd.phase = "rebooting";
-        logLine("sys", "The device restarted while its new firmware was being checked; reconnecting.");
-        setStep("reconnect", "The device restarted. Reconnecting to find out which firmware it is running...");
+        logLine("sys", rolling
+          ? "The connection dropped after the new firmware was refused; the device is probably going back to the previous firmware. Reconnecting."
+          : "The connection dropped while the new firmware was being checked; reconnecting.");
+        setStep("reconnect", "The connection dropped. Reconnecting to find out which firmware the device is running...");
         setProgress(null, "Reconnecting");
         autoReconnect(RECONNECT_TIMEOUT_MS).then((ok) => {
           if (!ok && upd && upd.phase === "rebooting") {

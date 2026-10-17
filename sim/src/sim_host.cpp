@@ -284,7 +284,8 @@ void Host::handle_control(const json::Value &msg) {
   } else if (type == "next_image") {
     NextImage b;
     if (!parse_next_image(msg.string_or("behavior"), b)) {
-      reject("next_image: behavior must be ok, fail_self_test or crash_loop");
+      reject("next_image: behavior must be ok, fail_self_test, crash_loop, slow_sensor_start or "
+             "slow_sensor_fail");
       return;
     }
     flash().set_next_image(b);
@@ -629,6 +630,11 @@ void Host::evaluate(const Step &step, size_t index) {
   if (e.mode) {
     const std::string got = live.mode.load() == 1 ? "xac" : "mouse";
     check(got == *e.mode, "mode " + got + " (expected " + *e.mode + ")");
+  }
+  if (e.sensor_observed) {
+    const bool got = live.sensor_observed.load();
+    check(got == *e.sensor_observed, std::string("sensor_observed ") + yes_no(got) + " (expected " +
+                                         yes_no(*e.sensor_observed) + ")");
   }
   if (e.sensor_fault) {
     const bool got = live.sensor_fault.load();

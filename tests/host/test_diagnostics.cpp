@@ -96,6 +96,22 @@ TEST(diagnostics_reply_follows_documented_layout) {
   CHECK_EQ(p.size(), std::size_t{11 + 3 * 15});
 }
 
+TEST(diagnostics_passes_the_not_observed_code_through_unchanged) {
+  // 3 = the polling loop has not seen the sensor yet (D22). The service does not
+  // interpret the byte; a console that does not know 3 sees a non-zero value.
+  Fixture fx("diag_not_observed", [] {
+    Diag d = sample();
+    d.sensor_fault = 3;
+    d.sensor_first_fault = 0;
+    d.sensor_fault_count = 0;
+    return d;
+  });
+  const auto reply = fx.request(Msg::GetDiagnostics);
+  CHECK(is(reply, Msg::Diagnostics));
+  CHECK_EQ(reply.payload[0], 3);
+  CHECK_EQ(reply.payload[1], 0);
+}
+
 TEST(diagnostics_keeps_newest_resets_when_the_list_cannot_fit) {
   Fixture fx("diag_fit", [] {
     Diag d;

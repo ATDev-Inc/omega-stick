@@ -21,8 +21,8 @@ After a first flash (from the [flash page](#first-flash-and-recovery) or
 `idf.py`), the firmware can be updated over the same USB
 connection the calibration console uses. No programmer, driver, or boot-button
 sequence is involved. The new image is written to the inactive app slot, checked,
-and booted. If it does not prove itself, the device goes back to the previous
-image on its own.
+and booted. The console then checks that the new image works and confirms it. If
+it is not confirmed, the device goes back to the previous image on its own.
 
 The pieces:
 
@@ -32,8 +32,10 @@ The pieces:
 - The "Firmware update" section of the calibration console
   ([calibration_console.html](../components/omega_calibration/web/calibration_console.html)).
 - Bootloader rollback (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` in
-  [sdkconfig.defaults](../sdkconfig.defaults)) and a health check in
-  [firmware_health_check.hpp](../components/omega_calibration/include/firmware_health_check.hpp) that decides when a new image is trusted.
+  [sdkconfig.defaults](../sdkconfig.defaults)) and a rollback
+  deadline in
+  [firmware_health_check.hpp](../components/omega_calibration/include/firmware_health_check.hpp)
+  for an image the console never confirms.
 
 ## Partition layout
 
@@ -100,16 +102,18 @@ build are allowed, because recovery must not depend on the running release
 ### What the page shows during an update
 
 A status area walks through Checking file, Erasing (up to a minute), Writing
-NN%, Verifying, Restarting, Reconnecting, and finally "Update confirmed" or a
-note that the device rolled back. After Flash or Revert the page reconnects by
+NN%, Verifying, Restarting, Reconnecting, Confirming, and finally "Update
+confirmed" or a note that the new image was not confirmed. After Flash or Revert the page reconnects by
 itself, waiting about 40 seconds before it offers a Reconnect button. It
 takes the exact port it was using first, then a single granted device with the
 same USB id (matching the USB serial number when it has one). It never guesses
 between several sticks: if more than one could be the one it just flashed, it
-waits and offers the Reconnect button so you choose. It then reports whether
-the new build is running, is still being checked, was confirmed, or whether the
-device went back to the old build. Errors are in plain language; the raw detail
-stays in the log.
+waits and offers the Reconnect button so you choose. Once reconnected it
+runs the checks listed under [Rollback and the health
+check](#rollback-and-the-health-check) and confirms the image itself (the
+Confirming step). It reports whether the new build is running, was confirmed,
+or failed a named check, in which case the stick goes back to the old build by
+itself. Errors are in plain language; the raw detail stays in the log.
 
 ### Neutral output during an update
 
@@ -155,7 +159,7 @@ These live in the calibration module (see the protocol comment at the top of
 | `0x5A` | OTA_FINISH | none. Validates and activates the image, replies OK, then reboots |
 | `0x5B` | OTA_ABORT | none. Aborts an upload begun by this service |
 | `0x5C` | GET_FW_INFO | none. Replies FW_INFO |
-| `0x5D` | MARK_VALID | none. Confirms the running image and cancels rollback |
+| `0x5D` | MARK_VALID | none. Confirms the running image and cancels rollback. The console sends it once its checks pass; the firmware never sends it for itself |
 | `0x5E` | REVERT | none. Makes the other OTA slot (the previous firmware) the boot partition, replies OK, then reboots about 750 ms later. ERROR if an upload is in progress, the other slot has no app image, or the bootloader selection could not be written |
 | `0xD2` | FW_INFO (reply) | u8 pending_verify, u8 session_active, then length-prefixed strings: project, version, build date, build time, ESP-IDF version, running partition, 8-char ELF SHA, boot partition, previous slot label, previous version, previous build date, previous build time, previous state |
 
@@ -244,17 +248,40 @@ The bootloader is built with app rollback enabled. A freshly installed image
 boots in the **pending verify** state, and the bootloader reverts to the previous
 image at the next reset unless the application confirms itself.
 
-Nothing confirms it automatically by default, so `FirmwareHealthCheck` in
+The firmware never confirms a new image itself. After the update's reboot the
+console reconnects and checks the image, then sends MARK_VALID (0x5D). It
+confirms only when all of these hold:
+
+- The running image's version and SHA match what the console flashed, and it is
+  pending verify.
+- A GET_STATE round trip succeeds.
+- GET_DIAGNOSTICS reports a healthy sensor that has actually been observed.
+  The firmware reports sensor status 3 ("not observed yet") from boot until its
+  polling loop has read the sensor 10 times in a row (about 100 ms of polling),
+  so a reply made before polling started is never mistaken for a healthy
+  sensor. The console asks every 0.5 s, waits up to 10 s while the status is 3,
+  and then needs a healthy reply twice, at least 1.5 s apart, before it
+  confirms. A fault, or a sensor still unobserved after 10 s, fails the check.
+  If the device does not support diagnostics this check is skipped.
+
+If a check fails the console does not confirm. It says which check failed and
+that the stick will go back to the previous firmware by itself, and it
+reconnects after that rollback to report which image the stick ended up on.
+If the new image turns out to be confirmed already (older firmware that
+confirms itself), the console reports success without sending MARK_VALID. Confirming from
+the host also proves the whole remote path still works after the update (vendor
+enumeration, the protocol, OTA itself), so a bad image cannot lock the user out
+of the next update, and what counts as healthy can be changed in the console
+without shipping new firmware.
+
+The firmware keeps a backstop. `FirmwareHealthCheck` in
 `components/omega_calibration/include/firmware_health_check.hpp` (used by
-`main/main.cpp`) does it. The new image is confirmed only when all of these hold:
-
-- USB HID has enumerated.
-- The TMAG5273 sensor answers.
-- The polling loop has been running for `HEALTHY_UPTIME` (10 seconds).
-
-If the image is not healthy within `ROLLBACK_DEADLINE` (90 seconds), the firmware
-marks itself invalid and reboots into the previous image, rather than limping
-along until a power cycle happens to trigger the rollback.
+`main/main.cpp`) marks an image that is still pending at `ROLLBACK_DEADLINE`
+(120 seconds) invalid and reboots into the previous image, rather than limping
+along until a power cycle happens to trigger the rollback. The deadline is
+generous so the console's confirm lands first in normal use. It exists because
+some users depend on the stick to operate their computer and may not be able to
+unplug or power-cycle it themselves.
 
 A fatal init failure on a pending image (magnetic sensor, calibration, or USB
 setup) does not wait for the deadline: the firmware rolls back immediately
@@ -262,13 +289,21 @@ instead of halting on a broken image.
 
 Things to know:
 
-- **Any reset in the first 10 seconds or so after an update reverts to the
-  previous image.** A mode switch or an unplug in that window counts. This is by
-  design: the new image has not yet shown it works.
+- **Any reset before the console confirms reverts to the previous image.** A
+  mode switch or an unplug in that window counts, including pulling the cable
+  during "Confirming". This is by design: the new image has not yet shown it
+  works.
 - While pending, the console shows "pending verify" and a "Mark running image
-  valid" button. It is a manual override that sends MARK_VALID and cancels the
-  rollback. Once the image is confirmed this way, the automatic check stops and
-  never rolls it back, even if the sensor later fails.
+  valid" button. It is a deliberate override: it sends MARK_VALID and cancels the
+  rollback without running the checks. Once the image is confirmed, by the
+  console's checks or by this button, nothing rolls it back, even if the sensor
+  later fails.
+- **A new firmware needs a console that confirms.** A console that still waits
+  for the firmware to confirm itself would never send MARK_VALID, and the new
+  image would roll back at the deadline. The console change ships first (it is
+  harmless against firmware that still confirms itself), and the console is
+  served from the Pages site, but a tab left open with an old copy of the page
+  is a risk. Reload the console before updating.
 - The console also shows the running partition and the boot partition (the one
   the bootloader will start next). They differ while an update is pending.
 - **A confirmed image that crashes three boots in a row hands over to the other
@@ -294,8 +329,9 @@ disabled while an upload is running or when the other slot holds no app image.
 Things to know:
 
 - The reverted-to image boots **pending verify** again. It confirms or rolls back
-  under the same rules as any update: healthy within `HEALTHY_UPTIME` (10 seconds),
-  or marked invalid and rebooted at `ROLLBACK_DEADLINE` (90 seconds).
+  under the same rules as any update: the console reconnects, runs the same
+  checks and confirms it, or it is marked invalid and rebooted at
+  `ROLLBACK_DEADLINE` (120 seconds).
 - A slot the health check previously marked `invalid` can still be selected on
   purpose. The console shows its state so the choice is deliberate.
 - Reverting again from the reverted image goes back to the newer one, so the two
@@ -381,8 +417,9 @@ update that needs a serial flash (a partition table change) at the top.
 
 ## Limitations
 
-- **The health check cannot judge correctness.** It sees that USB enumerated, the
-  sensor answers and the loop runs. It cannot detect a wrong-but-enumerating HID
+- **The health checks cannot judge correctness.** They see that the console can
+  reach the stick, the image is the one that was flashed and the sensor reports
+  no fault. It cannot detect a wrong-but-enumerating HID
   report layout, for example an XAC that enumerates but misreads axes. After
   every update, test the device. If it misbehaves, use "Revert to previous
   firmware" in the console, or upload the previous `.bin` if the other slot is
@@ -401,5 +438,8 @@ update that needs a serial flash (a partition table change) at the top.
   place. Secure boot and image signing are deferred (see D22 in
   [decisions.md](decisions.md#d22-update-safety-rules-and-a-register-of-deferred-security-controls)).
 - **The update flow is not hardware-tested.** Neutral output, the image checks,
-  automatic reconnect and the latest-release check are covered by host and
-  Node tests only.
+  automatic reconnect, the console's confirm step and the latest-release check
+  are covered by host and Node tests only. The console is now the only thing
+  standing between an update and a rollback, so the first hardware update test
+  should exercise this flow end to end, including pulling the cable during
+  "Confirming".

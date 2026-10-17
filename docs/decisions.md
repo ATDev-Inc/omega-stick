@@ -269,8 +269,8 @@ service. Known bugs are kept as expected-failure tests until fixed.
 
 Firmware is updated over USB from the calibration console into one of two OTA
 slots (`ota_0` / `ota_1`), with `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` set. A new
-image confirms itself once USB HID has enumerated, the TMAG5273 is answering, and
-10 s of polling have passed. Otherwise it is rolled back.
+image is confirmed by the console once the checks in D22 rule 2 pass. Otherwise
+it is rolled back.
 
 The alternative was a manual-only confirmation step. It was rejected because a
 reset before confirmation silently reverts to the old image, which hid updates in
@@ -298,6 +298,38 @@ a boot is charged to the previous boot's slot, so a crash in the other image
 one and the two slots cannot bounce the device between them. An other slot the
 bootloader already rejected is not retried automatically; the console's REVERT
 remains the deliberate way to try it again.
+
+**Amended 2026-10-12: the console confirms the new image, not the firmware.**
+The original design had the image confirm itself after USB enumerated, the
+sensor answered and 10 s had passed. It now never confirms itself. After the
+reboot the console reconnects, checks the running version and SHA, a GET_STATE
+round trip and GET_DIAGNOSTICS, and sends MARK_VALID (rules in D22 rule 2). The
+manual-only objection above (a reset before confirming silently reverts, and the
+user is not told) is answered by the console confirming within seconds of
+reconnecting and reporting the outcome, including which check failed, and by the
+deadline: the firmware still marks an image that is pending at
+`ROLLBACK_DEADLINE` (now 120 s, was 90 s) invalid and reboots into the previous
+slot, so a bad image does not stay. `HEALTHY_UPTIME` is gone. `reject_if_pending`
+on a fatal init failure and the crash-loop revert are unchanged.
+
+Why: William Emfinger (author of espp), who did it this way on the Backbone
+controller, pointed out two things. Confirming from the host proves the whole
+remote path still works after the update (vendor enumeration, the protocol, OTA
+itself), so a bad image can never lock the user out of the next update. And the
+health checks are defined outside the firmware, so they can be added to or
+changed without shipping new firmware just to change what counts as healthy.
+We keep a firmware deadline, which Backbone did not, because some users depend
+on the stick to operate their computer and may not be able to unplug or
+power-cycle it themselves; a bad image that broke the console link must not
+stay running until someone else does that. The deadline is generous so the
+console's confirm always lands first in normal use.
+
+**Consequence.** The console is now the only thing standing between an update
+and a rollback. A new firmware paired with an old console that still waits for
+self-confirmation would never be confirmed and would roll back at the deadline,
+so the console change ships first (it is harmless against self-confirming
+firmware, whose health check tolerates an external confirm). No protocol change:
+MARK_VALID (0x5D) already existed and `kProtocolVersion` stays 1.
 
 ## D19: `version.txt` plus a commit suffix, not `git describe` strings
 
@@ -399,12 +431,25 @@ sibling projects; see
    `mouse_tick` / `xac_tick` as `output_hold`, which send a neutral report on
    every tick while it is set (stick centered, no motion, buttons released) and
    hold back a pending recalibration.
-2. **A new image confirms itself only after a self-test.** It must enumerate on
-   USB, the sensor must answer, and the loop must have run for a dwell time.
-   Otherwise it rolls back. `FirmwareHealthCheck` implements this. The reset
-   log (D23) already feeds its crash-loop revert for confirmed images (D18);
-   using it to judge a pending image's first boots, where an image whose first
-   boots were abnormal resets has not shown it works, is still open.
+2. **A new image is confirmed by the console, not by itself.** After a reboot
+   into a pending image the console reconnects and checks it: the running
+   image's version and SHA match what it flashed and it is pending, a
+   GET_STATE round trip succeeds, and GET_DIAGNOSTICS reports a sensor that is
+   healthy and has been observed (skipped if the device does not support
+   diagnostics). The sensor status byte is 3 ("not observed") from boot until
+   the polling loop has read the sensor 10 times in a row, so the boot-time
+   zero cannot be mistaken for health; the console waits up to 10 s for that
+   and needs a healthy reply twice, 1.5 s apart. Only then does it send
+   MARK_VALID. The same applies after REVERT. If a check fails the console does
+   not confirm, says which one failed and that the stick will go back to the
+   previous firmware by itself. The firmware keeps one backstop: an image still
+   pending at `ROLLBACK_DEADLINE` (120 s) marks itself invalid and reboots into
+   the previous slot. A fatal init failure still rolls back at once. The manual
+   "Mark valid" button stays as a deliberate override that skips the checks.
+   See the amendment to D18. The reset log (D23) already feeds the crash-loop
+   revert for confirmed images (D18); using it to judge a pending image's first
+   boots, where an image whose first boots were abnormal resets has not shown
+   it works, is still open.
 3. **Downgrades stay possible.** The update path does not reject an older or
    equal version. Recovery from a bad release must not depend on the bad
    release's own good behaviour.

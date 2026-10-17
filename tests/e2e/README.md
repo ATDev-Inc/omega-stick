@@ -9,9 +9,11 @@ It exercises: connecting and the hello, the first-boot calibration prompts, the
 nudge click, re-running calibration from the console, a deadzone override
 (accepted in range, refused out of range), the switch to XAC mode with the
 automatic reconnect, a `no_response` sensor fault and recovery, a firmware
-update with confirmation, a revert, and an image that fails its self-test and is
-rolled back. It also fails on any script error in the page or any crash line in
-the simulator output.
+update that the console checks and confirms, a revert, and an image whose
+sensor fails, which the console refuses to confirm and the simulator rolls back
+at the deadline, and an image whose sensor starts polling late, which the console
+waits for before confirming. It also fails on any script error in the page or any crash line
+in the simulator output.
 
 ## Running it
 
@@ -45,5 +47,7 @@ Notes:
 - A wrapper copy of the console page is written to a scratch directory only to
   preset the simulator address and to collect script errors. Every action goes
   through the page's own buttons, fields and keyboard or pointer events.
-- The firmware update check waits for each new image to confirm itself (a 10 s
-  health window) before the next step, as the real flow does.
+- The firmware update check waits for the console to run its checks and confirm
+  each new image before the next step, as the real flow does. The unconfirmed
+  image is rolled back by the simulator's 120 s deadline, which the default
+  speed factor of 4 brings down to about 30 s.

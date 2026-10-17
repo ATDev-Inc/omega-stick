@@ -1,6 +1,6 @@
-// FirmwareHealthCheck: confirms a pending OTA image once it has been healthy
-// long enough, rolls it back past the deadline, and stands down when the
-// image is confirmed by someone else (console MARK_VALID).
+// FirmwareHealthCheck: never confirms a pending OTA image itself (the host does,
+// with the console's MARK_VALID), rolls it back past the deadline, and stands
+// down once the host has confirmed it.
 
 #include <chrono>
 #include <vector>
@@ -12,7 +12,7 @@
 
 namespace {
 
-// Manually advanced clock so the 10 s / 90 s thresholds run instantly.
+// Manually advanced clock so the 120 s deadline runs instantly.
 struct FakeClock {
   using duration = std::chrono::steady_clock::duration;
   using time_point = std::chrono::time_point<FakeClock>;
@@ -31,68 +31,63 @@ struct Fixture {
 
 } // namespace
 
-TEST(health_pending_and_healthy_is_confirmed) {
+TEST(health_pending_image_is_not_confirmed_by_the_firmware) {
   Fixture ota_fx(true);
   auto &ota = ota_fx.ota;
   Health health(ota);
-  for (int i = 0; i < 12; i++) {
+  // Well past the old 10 s self-confirm point, up to just before the deadline.
+  const int before_deadline = static_cast<int>(Health::ROLLBACK_DEADLINE.count()) - 1;
+  for (int i = 0; i < before_deadline; i++) {
     FakeClock::advance(std::chrono::seconds(1));
-    health.tick(true, [] { return true; });
+    health.tick();
   }
-  CHECK_EQ(ota.mark_valid_calls, 1);
+  CHECK_EQ(ota.mark_valid_calls, 0);
   CHECK_EQ(ota.rollback_calls, 0);
-  CHECK(!ota.pending_verify);
-  // Done: further ticks do nothing.
-  FakeClock::advance(std::chrono::seconds(100));
-  health.tick(false, [] { return false; });
-  CHECK_EQ(ota.mark_valid_calls, 1);
-  CHECK_EQ(ota.rollback_calls, 0);
+  CHECK(ota.pending_verify);
 }
 
-TEST(health_pending_and_unhealthy_rolls_back_once) {
+TEST(health_unconfirmed_image_rolls_back_once_at_the_deadline) {
   Fixture ota_fx(true);
   auto &ota = ota_fx.ota;
   Health health(ota);
-  for (int i = 0; i < 120; i++) {
+  for (int i = 0; i < 300; i++) {
     FakeClock::advance(std::chrono::seconds(1));
-    health.tick(true, [] { return false; });
+    health.tick();
+    if (i + 1 < Health::ROLLBACK_DEADLINE.count()) {
+      CHECK_EQ(ota.rollback_calls, 0);
+    }
   }
   CHECK_EQ(ota.rollback_calls, 1);
   CHECK_EQ(ota.mark_valid_calls, 0);
 }
 
-TEST(health_manual_confirm_is_not_undone) {
+TEST(health_host_confirm_is_not_undone) {
   Fixture ota_fx(true);
   auto &ota = ota_fx.ota;
   Health health(ota);
   FakeClock::advance(std::chrono::seconds(2));
-  health.tick(true, [] { return true; });
-  // Console MARK_VALID confirms the image behind the check's back.
+  health.tick();
+  // The console's MARK_VALID confirms the image behind the check's back.
   std::error_code ec;
   CHECK(ota.mark_app_valid(ec));
   const int manual_calls = ota.mark_valid_calls;
-  // The sensor then fails all the way past the deadline.
-  for (int i = 0; i < 120; i++) {
+  // Time runs well past the deadline: the check has stood down.
+  for (int i = 0; i < 300; i++) {
     FakeClock::advance(std::chrono::seconds(1));
-    health.tick(true, [] { return false; });
+    health.tick();
   }
   CHECK_EQ(ota.rollback_calls, 0);
   CHECK_EQ(ota.mark_valid_calls, manual_calls);
 }
 
-TEST(health_not_pending_never_touches_sensor_or_ota) {
+TEST(health_not_pending_never_touches_ota) {
   Fixture ota_fx(false);
   auto &ota = ota_fx.ota;
   Health health(ota);
-  int sensor_calls = 0;
-  for (int i = 0; i < 120; i++) {
+  for (int i = 0; i < 300; i++) {
     FakeClock::advance(std::chrono::seconds(1));
-    health.tick(false, [&] {
-      ++sensor_calls;
-      return false;
-    });
+    health.tick();
   }
-  CHECK_EQ(sensor_calls, 0);
   CHECK_EQ(ota.mark_valid_calls, 0);
   CHECK_EQ(ota.rollback_calls, 0);
 }
