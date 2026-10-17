@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "calibration_service.hpp"
@@ -303,12 +304,31 @@ std::string boot(Host &host, int reset_reason) {
                              reset_reason_is_abnormal(reset_reason) ? " (abnormal)" : ""));
   }
 
-  espp::Ota &ota = make_ota();
+  // --no-ota mirrors a CONFIG_OMEGA_STICK_OTA=n build (D25): no OTA engine, no health
+  // check, no crash-loop revert.
+  const bool no_ota = host.options().no_ota;
+  espp::Ota *const ota = no_ota ? nullptr : &make_ota();
+  auto reject_if_pending = [ota](const char *reason) {
+    if (ota) {
+      Health::reject_if_pending(*ota, reason);
+    }
+  };
+  if (!ota) {
+    host.console_text("Firmware updates over USB are off in this build; install new firmware from "
+                      "the first-flash page.");
+    // An image that arrived by update boots pending verification and nothing here can
+    // confirm it, so it accepts itself before anything else runs (as main.cpp does).
+    if (sim::flash().pending_verify()) {
+      sim::flash().mark_valid();
+      host.console_text("This image arrived by update and cannot be confirmed by the console, so "
+                        "it accepted itself.");
+    }
+  }
 
   // A confirmed image that has crashed on its last few boots hands the device to
   // the other slot (D18 amendment).
-  if (Health::revert_if_crash_looping(ota,
-                                      Health::crashes_while_running(boots, running_slot_label))) {
+  if (ota && Health::revert_if_crash_looping(
+                 *ota, Health::crashes_while_running(boots, running_slot_label))) {
     sim::flash().take_restart_reason();
     return "revert";
   }
@@ -316,8 +336,8 @@ std::string boot(Host &host, int reset_reason) {
     const esp_app_desc_t *app = esp_app_get_description();
     host.console_text(format("Firmware %s %s (built %s %s, idf %s) running from %s%s",
                              app->project_name, app->version, app->date, app->time, app->idf_ver,
-                             ota.running_partition_label().c_str(),
-                             ota.is_pending_verify() ? " [PENDING VERIFY]" : ""));
+                             running_slot_label.c_str(),
+                             ota && sim::flash().pending_verify() ? " [PENDING VERIFY]" : ""));
   }
   // sim: an image flashed with next_image=crash_loop crashes right after the reset log
   // records the boot, before the application starts.
@@ -363,7 +383,7 @@ std::string boot(Host &host, int reset_reason) {
   host.console_text("Initializing TMAG5273...");
   if (!tmag.initialize(ec)) {
     host.console_text("ERROR: TMAG5273 initialization failed: " + ec.message());
-    Health::reject_if_pending(ota, "TMAG5273 init failed");
+    reject_if_pending("TMAG5273 init failed");
     while (!host.should_exit()) { // halts like the firmware; a restart ends it
       host.sleep(1s);
     }
@@ -442,7 +462,7 @@ std::string boot(Host &host, int reset_reason) {
             return recalibration_gate.request(start_ec);
           },
       .restart = [&host]() { host.request_restart("restart"); },
-      .ota = &ota,
+      .ota = ota,
       .diagnostics = make_diagnostics,
       .output_hold =
           [&output_holds](bool hold) {
@@ -490,7 +510,7 @@ std::string boot(Host &host, int reset_reason) {
     if (!calibration_run.center_calibration(center, cal_ec)) {
       host.console_text("ERROR: Center calibration failed: " + cal_ec.message());
       host.live.last_sweep = 0;
-      Health::reject_if_pending(ota, "center calibration failed");
+      reject_if_pending("center calibration failed");
       while (!host.should_exit()) {
         host.sleep(1s);
       }
@@ -504,7 +524,7 @@ std::string boot(Host &host, int reset_reason) {
     if (!calibration_run.range_calibration(center, range, cal_ec)) {
       host.console_text("ERROR: Range calibration failed: " + cal_ec.message());
       host.live.last_sweep = 0;
-      Health::reject_if_pending(ota, "range calibration failed");
+      reject_if_pending("range calibration failed");
       while (!host.should_exit()) {
         host.sleep(1s);
       }
@@ -567,7 +587,10 @@ std::string boot(Host &host, int reset_reason) {
   xac_state.common.center = center;
   xac_state.common.range = range;
 
-  Health fw_health(ota);
+  std::optional<Health> fw_health;
+  if (ota) {
+    fw_health.emplace(*ota);
+  }
   // sim: an image flashed with next_image=fail_self_test boots and calibrates, then its sensor
   // stops answering, so SensorFaultMonitor trips and the console sees sensor_fault in
   // GET_DIAGNOSTICS and refuses to confirm. The fault is lifted again when this boot ends.
@@ -610,7 +633,9 @@ std::string boot(Host &host, int reset_reason) {
     if (host.restart_requested()) {
       return host.take_restart_reason();
     }
-    fw_health.tick();
+    if (fw_health) {
+      fw_health->tick();
+    }
     calibration.expire_stale_update(OTA_IDLE_TIMEOUT);
 
     const bool hold = output_holds.load() > 0;

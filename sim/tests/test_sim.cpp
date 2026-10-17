@@ -41,6 +41,7 @@ TEST(script_accepts_every_step_kind) {
     {"at_ms":50,"next_image":"crash_loop"},
     {"at_ms":60,"action":"set_mode","value":"xac"},
     {"at_ms":70,"action":"flash","version":"1.2.3"},
+    {"at_ms":75,"action":"fw_info","expect_reply":"unsupported"},
     {"at_ms":80,"expect":{"calibrated":true,"center_max":0.05,"mouse_moved":"right","mode":"xac"}}
   )"));
 }

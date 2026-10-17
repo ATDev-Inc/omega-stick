@@ -24,18 +24,20 @@ namespace {
 namespace fs = std::filesystem;
 
 void usage() {
-  std::puts("usage: omega_sim [--port 8765] [--data DIR] [--fresh] [--mode mouse|xac]\n"
-            "                 [--script FILE] [--headless] [--speed N]\n"
-            "\n"
-            "  --port N       WebSocket port on 127.0.0.1 (default 8765)\n"
-            "  --data DIR     simulated flash (calibration, settings, reset log, OTA slots);\n"
-            "                 default ./omega_sim_data\n"
-            "  --fresh        erase --data first, like a brand-new board\n"
-            "  --mode M       input mode when no setting is saved yet\n"
-            "  --script FILE  play a script from boot\n"
-            "  --headless     no WebSocket: run --script on simulated time, print a report,\n"
-            "                 exit 0 when every check passed\n"
-            "  --speed N      interactive only: simulated time runs N times faster (default 1)");
+  std::puts(
+      "usage: omega_sim [--port 8765] [--data DIR] [--fresh] [--mode mouse|xac]\n"
+      "                 [--script FILE] [--headless] [--speed N] [--no-ota]\n"
+      "\n"
+      "  --port N       WebSocket port on 127.0.0.1 (default 8765)\n"
+      "  --data DIR     simulated flash (calibration, settings, reset log, OTA slots);\n"
+      "                 default ./omega_sim_data\n"
+      "  --fresh        erase --data first, like a brand-new board\n"
+      "  --mode M       input mode when no setting is saved yet\n"
+      "  --script FILE  play a script from boot\n"
+      "  --headless     no WebSocket: run --script on simulated time, print a report,\n"
+      "                 exit 0 when every check passed\n"
+      "  --speed N      interactive only: simulated time runs N times faster (default 1)\n"
+      "  --no-ota       firmware updates off, like a CONFIG_OMEGA_STICK_OTA=n build (v0.1.0)");
 }
 
 bool parse_args(int argc, char **argv, sim::Options &o, std::string &error) {
@@ -89,6 +91,8 @@ bool parse_args(int argc, char **argv, sim::Options &o, std::string &error) {
       o.script_path = v;
     } else if (a == "--headless") {
       o.headless = true;
+    } else if (a == "--no-ota") {
+      o.no_ota = true;
     } else if (a == "--speed") {
       const char *v = value("--speed");
       if (!v) {

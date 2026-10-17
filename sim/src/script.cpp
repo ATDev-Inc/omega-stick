@@ -12,9 +12,10 @@ namespace {
 
 constexpr std::array<const char *, 8> kPatterns = {
     "rest", "circle", "calibrate", "nudge_right", "nudge_left", "nudge_up", "nudge_down", "wander"};
-constexpr std::array<const char *, 8> kActions = {"recalibrate",  "save",  "restart", "set_mode",
-                                                  "set_deadzone", "flash", "revert",  "mark_valid"};
-constexpr std::array<const char *, 4> kReplies = {"ok", "busy", "invalid", "error"};
+constexpr std::array<const char *, 9> kActions = {"recalibrate", "save",         "restart",
+                                                  "set_mode",    "set_deadzone", "flash",
+                                                  "revert",      "mark_valid",   "fw_info"};
+constexpr std::array<const char *, 5> kReplies = {"ok", "busy", "invalid", "unsupported", "error"};
 
 template <typename Arr> bool contains(const Arr &arr, const std::string &s) {
   for (const char *item : arr) {
@@ -186,7 +187,7 @@ Step parse_step(const json::Value &s, size_t index) {
     st.name = body->as_string();
     if (const json::Value *r = s.find("expect_reply")) {
       if (!r->is_string() || !contains(kReplies, r->as_string())) {
-        fail(index, "expect_reply must be ok, busy, invalid or error");
+        fail(index, "expect_reply must be ok, busy, invalid, unsupported or error");
       }
       st.expect_reply = r->as_string();
     }
