@@ -312,6 +312,21 @@ async function main() {
     verWhilePending === "0.3.0" && verAfterRollback === startVer,
     "start " + startVer + "; after flash " + verNew + " (" + msgNew + "); after revert " + verReverted + " (" + msgRevert.slice(0, 80) + "); rollback: " + msgRollback + " -> version " + verAfterRollback + ", reconnects " + connF + " -> " + (await connectedCount()));
 
+  // ---- i. a sensor that is not polled yet is waited for, then the image is confirmed ----
+  // slow_sensor_start answers GET_DIAGNOSTICS with "not observed" (3) for the first seconds of
+  // the boot; the console must wait for real readings, not read that as healthy.
+  await setValue("simNextImage", "slow_sensor_start");
+  await click("simApplyBtn");
+  await sleep(300);
+  await flash(imgOf("0.4.0"));
+  await waitFor("the slow-sensor update to be confirmed", async () => /Update confirmed/.test(await text("updateMessage")), 90000);
+  await settled();
+  const logI = await logText();
+  const verSlow = await fwVersion();
+  check("i", "an image whose sensor starts late is waited for, then confirmed (not confirmed on the startup zero)",
+    verSlow === "0.4.0" && /has not produced its first readings yet/.test(logI) && /New firmware confirmed/.test(logI),
+    "version " + verSlow + "; waited: " + /has not produced its first readings yet/.test(logI));
+
   // ---- h. no page errors, no simulator errors ----
   const errs = await ev("JSON.stringify(__errs)");
   const simBad = simOut.split(/\r?\n/).filter((l) => /AddressSanitizer|runtime error|Assertion|ASSERT|SEGV|segfault|terminate called|abort|exception/i.test(l));

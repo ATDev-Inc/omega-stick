@@ -570,7 +570,21 @@
     { id: "protocol", label: "Checking the connection" },
     { id: "sensor", label: "Checking the sensor" },
   ];
+  // DIAGNOSTICS sensor_fault codes. 3 is not a fault: the firmware has not yet
+  // seen the sensor answer since boot (D22), which is different from healthy.
+  const SENSOR_NOT_OBSERVED = 3;
   const SENSOR_FAULT_LABEL = { 1: "read failed", 2: "reading stuck" };
+  const SENSOR_STATE_NAMES = { 0: "none", 1: "read failed", 2: "reading stuck", 3: "waiting for first readings" };
+  function describeSensorState(code) {
+    return SENSOR_STATE_NAMES[code] || ("code " + code);
+  }
+  // How the sensor check waits: poll GET_DIAGNOSTICS this often, for up to this
+  // long while the firmware still says "not observed"; then, once it says
+  // healthy, ask again at least SENSOR_DWELL_MS later and require healthy again
+  // (so firmware that cannot say "not observed" is still given time to fail).
+  const SENSOR_POLL_MS = 500;
+  const SENSOR_WAIT_MS = 10000;
+  const SENSOR_DWELL_MS = 1500;
 
   // Judges one check from the input the page gathered. Returns
   // { ok, skipped, message }; message explains a failure or a skip.
@@ -579,12 +593,17 @@
   //   sensor:   { diagnostics, error }  decoded DIAGNOSTICS (decodeDiagnostics)
   //             or the error text of a failed GET_DIAGNOSTICS. A device that
   //             replies function_not_supported has older firmware: skipped.
+  //             Code 3 (not observed yet) gives { ok: false, wait: true }: not a
+  //             failure, ask again (see awaitSensorHealthy).
+  // A firmware check that finds the expected image already confirmed gives
+  // { ok: true, alreadyConfirmed: true }: nothing is left to confirm.
   function judgeConfirmCheck(id, input) {
     input = input || {};
     if (id === "firmware") {
       const o = decideOutcome(input.expected || {}, input.after || null);
-      return o.state === "confirming" ? { ok: true, skipped: false, message: "" }
-                                      : { ok: false, skipped: false, message: o.message };
+      if (o.state === "confirming") return { ok: true, skipped: false, message: "" };
+      if (o.state === "confirmed") return { ok: true, skipped: false, alreadyConfirmed: true, message: o.message };
+      return { ok: false, skipped: false, message: o.message };
     }
     if (id === "protocol") {
       return input.error
@@ -601,6 +620,10 @@
       }
       const code = input.diagnostics ? input.diagnostics.sensorFault : undefined;
       if (code === undefined) return { ok: false, skipped: false, message: "The sensor status could not be read." };
+      if (code === SENSOR_NOT_OBSERVED) {
+        return { ok: false, skipped: false, wait: true,
+                 message: "The sensor has not produced its first readings yet." };
+      }
       if (code !== 0) {
         return { ok: false, skipped: false,
                  message: "The sensor reported a fault (" + (SENSOR_FAULT_LABEL[code] || ("code " + code)) + ")." };
@@ -608,6 +631,46 @@
       return { ok: true, skipped: false, message: "" };
     }
     return { ok: false, skipped: false, message: "Unknown check: " + id + "." };
+  }
+
+  // The sensor check over time. read() gathers one input for judgeConfirmCheck
+  // ("sensor"); sleep(ms) and now() are injected so tests need no real time;
+  // opts.abort() stops early; opts.onWait(message) reports a wait. Returns the
+  // final judgement { ok, skipped, message }.
+  //   not observed  -> ask again every SENSOR_POLL_MS up to SENSOR_WAIT_MS, then
+  //                    fail ("not producing readings"): no MARK_VALID
+  //   fault / error -> fail at once
+  //   unsupported   -> skipped at once (older firmware)
+  //   healthy       -> must still be healthy SENSOR_DWELL_MS later
+  async function awaitSensorHealthy(read, sleep, now, opts) {
+    opts = opts || {};
+    const started = now();
+    let healthySince = null;
+    for (;;) {
+      if (opts.abort && opts.abort()) return { ok: false, skipped: false, aborted: true, message: "" };
+      const r = judgeConfirmCheck("sensor", await read());
+      if (r.skipped || (!r.ok && !r.wait)) return r;
+      if (r.ok) {
+        if (healthySince === null) healthySince = now();
+        else if (now() - healthySince >= SENSOR_DWELL_MS) return r;
+      } else {
+        healthySince = null;
+        if (now() - started >= SENSOR_WAIT_MS) {
+          return { ok: false, skipped: false,
+                   message: "The sensor was still not producing readings after " + Math.round(SENSOR_WAIT_MS / 1000) + " seconds." };
+        }
+        if (opts.onWait) opts.onWait(r.message);
+      }
+      await sleep(SENSOR_POLL_MS);
+    }
+  }
+
+  // Runs one confirm check: the sensor check waits (awaitSensorHealthy), the
+  // others are judged once from what gather() returns.
+  async function runConfirmCheck(id, gather, env) {
+    env = env || {};
+    if (id === "sensor") return awaitSensorHealthy(gather, env.sleep, env.now, env);
+    return judgeConfirmCheck(id, await gather());
   }
 
   // Wording shown when a check failed and MARK_VALID was not sent.
@@ -830,14 +893,14 @@
   // validate uploaded scripts, and accumulate HID output for the output view.
   const SIM_PATTERNS = ["rest", "circle", "calibrate", "nudge_right", "nudge_left", "nudge_up", "nudge_down", "wander"];
   const SIM_FAULTS = ["ok", "no_response", "stuck_counter", "weak_magnet"];
-  const SIM_NEXT_IMAGE = ["ok", "fail_self_test", "crash_loop"];
+  const SIM_NEXT_IMAGE = ["ok", "fail_self_test", "crash_loop", "slow_sensor_start", "slow_sensor_fail"];
   const SIM_SOURCE_KINDS = ["manual", "pattern", "script"];
   const SIM_REPLIES = ["ok", "busy", "invalid", "error"];
   const SIM_ACTIONS = ["recalibrate", "save", "restart", "set_mode", "set_deadzone", "flash", "revert", "mark_valid"];
   const SIM_SCRIPT_MAX_BYTES = 262144, SIM_SCRIPT_MAX_STEPS = 5000;
   const SIM_MAX_AT_MS = 86400000; // a day
   const SIM_STEP_KEYS = ["stick", "pattern", "fault", "drift", "noise", "next_image", "action", "expect"];
-  const SIM_EXPECT_KEYS = ["calibrated", "center_max", "mouse_moved", "clicked", "mode", "sensor_fault", "neutral", "fw_slot", "fw_pending", "fw_version", "xac_x", "xac_y"];
+  const SIM_EXPECT_KEYS = ["calibrated", "center_max", "mouse_moved", "clicked", "mode", "sensor_fault", "sensor_observed", "neutral", "fw_slot", "fw_pending", "fw_version", "xac_x", "xac_y"];
 
   const isNum = (v) => typeof v === "number" && Number.isFinite(v);
   const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -1073,7 +1136,7 @@
     const oneOf = (k, list) => { if (!list.includes(e[k])) add(at + "expect." + k + " must be one of " + list.join(", ") + "."); };
     for (const k of Object.keys(e)) {
       switch (k) {
-        case "calibrated": case "sensor_fault": case "fw_pending": case "neutral": bool(k); break;
+        case "calibrated": case "sensor_fault": case "sensor_observed": case "fw_pending": case "neutral": bool(k); break;
         case "center_max": if (!isNum(e[k]) || e[k] < 0 || e[k] > 10) add(at + "expect.center_max must be a number from 0 to 10."); break;
         case "fw_version": if (typeof e[k] !== "string" || e[k].length === 0) add(at + "expect.fw_version must be text."); break;
         case "xac_x": case "xac_y": if (!isNum(e[k]) || e[k] < -1 || e[k] > 1) add(at + "expect." + k + " must be a number from -1 to 1."); break;
@@ -1128,7 +1191,8 @@
     FEED_URL, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
     OTA_SLOT_SIZE, CHIP_ID_ESP32S3, DEFAULT_PROJECT, KIND_LABEL,
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
-    decideOutcome, CONFIRM_CHECKS, judgeConfirmCheck, confirmFailureNotice,
+    decideOutcome, CONFIRM_CHECKS, judgeConfirmCheck, awaitSensorHealthy, runConfirmCheck, confirmFailureNotice,
+    SENSOR_NOT_OBSERVED, SENSOR_POLL_MS, SENSOR_WAIT_MS, SENSOR_DWELL_MS, describeSensorState,
     describeUpdateError, formatProgress, formatBytes,
     FIRST_FLASH_URL, NO_USB_UPDATES_NOTE, usbUpdatesUnavailable, decideOutcomeNoUpdates,
     HEADER_SIZE, CRC_SIZE, MAX_PAYLOAD, MAX_FRAME,

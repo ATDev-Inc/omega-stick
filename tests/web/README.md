@@ -25,7 +25,8 @@ node --test "tests/web/*.test.js"
 - `update.test.js`: the pure firmware-update logic in `omega_protocol.js`
   (`inspectImage`, `compareFirmware`, `buildFlashPlan`, `buildRevertPlan`,
   `decideOutcome`, `describeUpdateError`, `formatProgress`), the post-update
-  confirm checks (`CONFIRM_CHECKS`, `judgeConfirmCheck`,
+  confirm checks (`CONFIRM_CHECKS`, `judgeConfirmCheck`, the sensor wait
+  `awaitSensorHealthy` with a fake clock,
   `confirmFailureNotice`: a version or build mismatch, a failed GET_STATE or
   a sensor fault must stop MARK_VALID, and a device without diagnostics skips
   the sensor check), and

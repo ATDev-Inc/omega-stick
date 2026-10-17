@@ -103,8 +103,10 @@ in `version.txt`.
 - **The console confirms a new firmware image, not the firmware.** After an
   update or a revert the console reconnects, checks that the stick is running
   the image it flashed, answers requests and reports no sensor fault, then
-  confirms it; if a check fails it says which one and the stick goes back to
-  the previous firmware by itself. The firmware only rolls back an image still
+  confirms it; the sensor must have been read successfully, not just be
+  free of a fault, so an image whose sensor fails right after boot is not
+  confirmed. If a check fails it says which one and the stick goes back to
+  the previous firmware by itself, and the console reconnects to report it. The firmware only rolls back an image still
   unconfirmed after 120 s (was 90 s), and the "Mark valid" button still
   confirms without the checks. Reload the console before updating so an old
   copy of the page does not leave the new image to roll back. Not yet tested

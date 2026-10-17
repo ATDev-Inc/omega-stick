@@ -434,8 +434,12 @@ sibling projects; see
 2. **A new image is confirmed by the console, not by itself.** After a reboot
    into a pending image the console reconnects and checks it: the running
    image's version and SHA match what it flashed and it is pending, a
-   GET_STATE round trip succeeds, and GET_DIAGNOSTICS reports no sensor fault
-   (skipped if the device does not support diagnostics). Only then does it send
+   GET_STATE round trip succeeds, and GET_DIAGNOSTICS reports a sensor that is
+   healthy and has been observed (skipped if the device does not support
+   diagnostics). The sensor status byte is 3 ("not observed") from boot until
+   the polling loop has read the sensor 10 times in a row, so the boot-time
+   zero cannot be mistaken for health; the console waits up to 10 s for that
+   and needs a healthy reply twice, 1.5 s apart. Only then does it send
    MARK_VALID. The same applies after REVERT. If a check fails the console does
    not confirm, says which one failed and that the stick will go back to the
    previous firmware by itself. The firmware keeps one backstop: an image still

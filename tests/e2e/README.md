@@ -11,7 +11,8 @@ nudge click, re-running calibration from the console, a deadzone override
 automatic reconnect, a `no_response` sensor fault and recovery, a firmware
 update that the console checks and confirms, a revert, and an image whose
 sensor fails, which the console refuses to confirm and the simulator rolls back
-at the deadline. It also fails on any script error in the page or any crash line
+at the deadline, and an image whose sensor starts polling late, which the console
+waits for before confirming. It also fails on any script error in the page or any crash line
 in the simulator output.
 
 ## Running it
