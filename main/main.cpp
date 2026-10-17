@@ -849,13 +849,13 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
         .task_config = {.name = "cal_vendor_rx", .stack_size_bytes = 8192},
     });
     vendor_link.register_module(calibration_vendor);
-    vendor_link.serve_discovery("omega-stick");
+    vendor_link.serve_discovery("omega-stick", esp_app_get_description()->version);
     espp::DispatcherWorker cdc_link({
         .send = send_cdc,
         .task_config = {.name = "cal_cdc_rx", .stack_size_bytes = 8192},
     });
     cdc_link.register_module(calibration_cdc);
-    cdc_link.serve_discovery("omega-stick");
+    cdc_link.serve_discovery("omega-stick", esp_app_get_description()->version);
 
     espp::UsbDevice::VendorFunction vendor_fn;
     vendor_fn.interface_name = "omega-stick vendor";
@@ -1016,13 +1016,13 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
         .task_config = {.name = "cal_vendor_rx", .stack_size_bytes = 8192},
     });
     vendor_link.register_module(calibration_vendor);
-    vendor_link.serve_discovery("omega-stick");
+    vendor_link.serve_discovery("omega-stick", esp_app_get_description()->version);
     espp::DispatcherWorker cdc_link({
         .send = send_cdc,
         .task_config = {.name = "cal_cdc_rx", .stack_size_bytes = 8192},
     });
     cdc_link.register_module(calibration_cdc);
-    cdc_link.serve_discovery("omega-stick");
+    cdc_link.serve_discovery("omega-stick", esp_app_get_description()->version);
     espp::UsbDevice::VendorFunction vendor_fn;
     vendor_fn.interface_name = "omega-stick vendor";
     vendor_fn.on_receive = [&vendor_link](std::span<const uint8_t> data) {
