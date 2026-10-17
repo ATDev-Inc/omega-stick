@@ -138,7 +138,7 @@ in `version.txt`.
 - **The console shows the running firmware version when updates are off.** The
   firmware now reports its version in the discovery reply, which is the only
   place the console can read it from in a build without updates over USB.
-  ([#TBD])
+  ([#40](https://github.com/ATDev-Inc/omega-stick/pull/40))
 - **The console reconnects to the stick it just flashed.** After Flash or
   Revert it used to reconnect to any previously granted device. It now takes
   the exact saved port first, then a single matching USB id (using the USB
