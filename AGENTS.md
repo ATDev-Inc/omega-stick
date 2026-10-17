@@ -54,6 +54,21 @@ release feed written by [scripts/release_feed.mjs](scripts/release_feed.mjs)
 (see [tests/web/README.md](tests/web/README.md)). After an intentional protocol change, regenerate it with
 `OMEGA_WRITE_GOLDEN=1 build-host/omega_host_tests` and review the diff.
 
+Desktop simulator (`omega_sim`, no board; same toolchain as the host tests).
+The host test build above already builds it and runs its unit tests and
+headless scenarios (`OMEGA_HOST_BUILD_SIM`, on by default). To run it on its
+own and connect the console to it:
+
+```console
+cmake -S sim -B build-sim
+cmake --build build-sim
+build-sim/omega_sim --fresh
+```
+
+then choose **Connect Simulator** in the console. Use it to try console and
+calibration flows without hardware; it does not replace hardware testing (see
+[docs/simulator.md](docs/simulator.md) for what it cannot prove).
+
 Formatting is clang-format **14.0.6** via pre-commit
 ([.pre-commit-config.yaml](.pre-commit-config.yaml)). Newer clang-format
 releases wrap lines differently, so do not reformat with whatever version is on
@@ -70,7 +85,7 @@ Every pull request runs:
 | Workflow | Job | Notes |
 | --- | --- | --- |
 | [build.yml](.github/workflows/build.yml) | `build` | `idf.py build` for esp32s3 on IDF v6.0, then again with `sdkconfig.ota` (updates over USB on) in `build-ota`. The merge gate |
-| [host_tests.yml](.github/workflows/host_tests.yml) | `host-tests` | the host unit tests above, on gcc (coverage), clang (ASan/UBSan) and MSVC, all with `-Werror` |
+| [host_tests.yml](.github/workflows/host_tests.yml) | `host-tests` | the host unit tests above, plus the simulator's unit tests and scenarios, on gcc (coverage), clang (ASan/UBSan) and MSVC, all with `-Werror` |
 | [web_tests.yml](.github/workflows/web_tests.yml) | `web-tests` | the console's protocol tests above |
 | [fuzz.yml](.github/workflows/fuzz.yml) | `frame-fuzz` | libFuzzer on the frame parser, see [tests/fuzz](tests/fuzz/README.md) |
 | [static_analysis.yml](.github/workflows/static_analysis.yml) | `static_analysis` | cppcheck, `--std=c++17`, global suppressions in [suppressions.txt](suppressions.txt) |
@@ -110,6 +125,9 @@ scripts/                      release_feed.mjs: builds latest.json, manifest.jso
 tests/host/                   desktop unit tests against the real espp code (stubs only for the OTA headers)
 tests/web/, tests/protocol/   Node tests for the console, and the golden frames shared with the host tests
 tests/fuzz/                   libFuzzer harness for the frame parser
+tests/e2e/                    manual end-to-end check of the console against omega_sim in headless Chrome (not in CI)
+sim/                          omega_sim, the desktop simulator: src/, OTA stubs, scenarios/ (run by ctest), tests/
+cmake/omega_host.cmake        shared desktop build of espp and the local components, used by tests/host and sim
 docs/                         PRD, requirements, decisions, compliance, status, and research snapshots
 files/                        source directory for the littlefs image flashed with the app
 models/                       STL files for the printed parts
@@ -177,6 +195,13 @@ espp.
   only the default. Change the id only for an incompatible wire format, and
   bump the version otherwise (decision D24).
   See the [component README](components/omega_calibration/README.md).
+- **Simulator:** [sim/src/firmware.cpp](sim/src/firmware.cpp) mirrors
+  `run_omega_stick()` in `main.cpp` (boot sequence, reset-reason helpers,
+  sensor fault status, the `Ports` adapter); the differences are marked
+  `sim:`. When you change that wiring in `main.cpp`, make the same change
+  there and run the scenarios. Its WebSocket protocol, script format and
+  limits are specified in [docs/simulator.md](docs/simulator.md), and the
+  console's simulator transport must stay in step with it.
 - **USB ids:** `OMEGA_USB_VID` / `OMEGA_USB_PID` in `main/main.cpp` must match
   `DEFAULT_VID` / `DEFAULT_PID` in the console page. The current pair is a
   borrowed placeholder; see [docs/compliance.md](docs/compliance.md) before

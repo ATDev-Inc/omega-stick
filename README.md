@@ -118,6 +118,8 @@ Product and planning documents live in [docs/](docs/):
 | [decisions.md](docs/decisions.md) | Product decisions with rationale, and what is still open |
 | [compliance.md](docs/compliance.md) | What the project may and may not claim about itself |
 | [status.md](docs/status.md) | Current working status |
+| [ROADMAP.md](ROADMAP.md) | Planned milestones, in order, and the open decisions behind them |
+| [TODO.md](TODO.md) | The maintainers' working task list |
 | [firmware-updates.md](docs/firmware-updates.md) | USB firmware updates, rollback, and versioning |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each release |
 | [research/](docs/research/) | Background research these were built from |

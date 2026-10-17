@@ -16,6 +16,8 @@ Generated build output (`build/`, `build-host/`, `managed_components/`,
 | [AGENTS.md](AGENTS.md) | Conventions and commands for AI coding agents working in the repo |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute, toolchain setup, tests, pull requests |
 | [CHANGELOG.md](CHANGELOG.md) | User-facing changes per release (Keep a Changelog style) |
+| [ROADMAP.md](ROADMAP.md) | Planned milestones in dependency order, and the decisions that shape them |
+| [TODO.md](TODO.md) | The maintainers' working task list behind the roadmap |
 | [SECURITY.md](SECURITY.md) | How to report a vulnerability, and the security controls in place |
 | [SUPPORT.md](SUPPORT.md) | Where to ask for help |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Community code of conduct |

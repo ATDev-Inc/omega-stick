@@ -27,7 +27,7 @@ It is not part of the ESP-IDF firmware build.
 build-sim/omega_sim --fresh
 ```
 
-Then open the calibration console, choose **Simulator** and connect to
+Then open the calibration console, choose **Connect Simulator** and connect to
 `ws://127.0.0.1:8765`. A fresh board runs its first-boot calibration: in the
 Simulator panel play the `calibrate` pattern while it runs (or start with
 `--script sim/scenarios/fresh_board_calibrates.json`).
