@@ -501,6 +501,35 @@ is replaced. Module id 5 stays the routing default. espp 1.3.6 already ships
 this API, so no dependency version changed. Change the id only for an
 incompatible wire format; otherwise bump the version.
 
+## D25: v0.1.0 ships with firmware updates over USB turned off
+
+The first tagged release is built with `CONFIG_OMEGA_STICK_OTA` off (the
+`OMEGA_STICK_OTA` option in `main/Kconfig.projbuild`, default off). The OTA
+code, the protocol messages and the console's update section all stay in the
+tree, and updates return in a later 0.x release. A build with the option off
+does not construct the update engine or the post-update health check, passes no
+engine to `CalibrationService` (so the update messages reply
+`function_not_supported`), and logs once at boot that updates are off. The
+console treats that reply to GET_FW_INFO as "this device takes no updates over
+USB": it hides the update controls, skips the automatic latest-release check
+and points at the first-flash page. Boards are installed and reinstalled from
+that page, which erases calibration and settings by default.
+
+`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` and `partitions.csv` (two OTA slots)
+do not change. The bootloader cannot be updated over USB, so a board flashed
+without a rollback-capable bootloader could never take a later OTA-on release
+safely; keeping both identical means any later build can be installed over
+this one without reinstalling the bootloader. An image flashed over serial is
+never pending verification, so rollback does not trigger in the meantime. An OTA-off
+image that arrives by update from an OTA-on build boots pending, and since nothing
+in it can confirm it, it marks itself valid at boot; the console then reports it as
+installed and running, without further USB updates.
+Message ids and the wire format are unchanged. CI builds the option on as
+well (`sdkconfig.ota`) so the code keeps compiling.
+
+This narrows D18 and D22 for this release; it does not reverse them. Their
+rules apply unchanged to any build with the option on.
+
 ---
 
 ## Open question: compete with Willow, or collaborate?

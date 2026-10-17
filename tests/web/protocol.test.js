@@ -478,3 +478,34 @@ test("selectCalibrationModule: protocol version mismatch is flagged", () => {
   const info = v2Info({ id: 7, protocol: P.PROTOCOL_ID, protocolVersion: 2 });
   assert.deepEqual(P.selectCalibrationModule(info), { id: 7, how: "protocol", versionMismatch: true });
 });
+
+test("usbUpdatesUnavailable hides the update controls only for function_not_supported", () => {
+  // The build has updates over USB turned off: GET_FW_INFO is refused.
+  assert.equal(
+    P.usbUpdatesUnavailable(new Error("device error (code 88): GET_FW_INFO: Function not implemented")),
+    true);
+  assert.equal(P.usbUpdatesUnavailable("ota not wired on this build"), true);
+  // Transient failures keep the controls.
+  assert.equal(P.usbUpdatesUnavailable(new Error("GET_FW_INFO timed out")), false);
+  assert.equal(P.usbUpdatesUnavailable(new Error("transport lost")), false);
+  assert.equal(P.usbUpdatesUnavailable(new Error("not connected")), false);
+  assert.equal(P.usbUpdatesUnavailable(new Error("something else broke")), false);
+  // Success (no error) keeps the controls.
+  assert.equal(P.usbUpdatesUnavailable(null), false);
+  assert.equal(P.usbUpdatesUnavailable(undefined), false);
+});
+
+test("the no-updates note names the first-flash page and the erase", () => {
+  assert.match(P.NO_USB_UPDATES_NOTE, /first-flash page/);
+  assert.match(P.NO_USB_UPDATES_NOTE, /calibration and the saved settings|saved calibration and settings/);
+  assert.equal(new URL(P.FIRST_FLASH_URL).pathname, "/omega-stick/flash.html");
+});
+
+test("decideOutcomeNoUpdates reports an installed image, not a failure or a rollback", () => {
+  const o = P.decideOutcomeNoUpdates("0.1.0");
+  assert.equal(o.state, "installed_no_updates");
+  assert.match(o.message, /installed and running \(0\.1\.0\)/);
+  assert.match(o.message, /does not take further updates over USB/);
+  assert.doesNotMatch(o.message, /roll|not confirmed|did not come back/i);
+  assert.equal(P.decideOutcomeNoUpdates("").state, "installed_no_updates");
+});

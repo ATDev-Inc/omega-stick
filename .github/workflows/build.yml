@@ -31,3 +31,14 @@ jobs:
         esp_idf_version: ${{ env.IDF_VERSION }}
         path: "."
         target: ${{ env.IDF_TARGET }}
+
+    # Updates over USB are off in the default build (D25), so this second build
+    # keeps that code compiling. It uses its own build directory and sdkconfig
+    # so the two configurations never share cached settings.
+    - name: Build main with firmware updates over USB
+      uses: espressif/esp-idf-ci-action@9d38657f3d789ca759b2b37aaf5ceffbc42c4f0d # v1
+      with:
+        esp_idf_version: ${{ env.IDF_VERSION }}
+        path: "."
+        target: ${{ env.IDF_TARGET }}
+        command: 'idf.py -B build-ota -DSDKCONFIG=build-ota/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ota" build'

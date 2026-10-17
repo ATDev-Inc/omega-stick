@@ -14,4 +14,18 @@ config OMEGA_STICK_BOOT_FLASH_WINDOW_S
       machine. Leave it at 0 for anything users run: they would wait this
       long before the stick responds.
 
+config OMEGA_STICK_OTA
+    bool "Firmware updates over USB"
+    default n
+    help
+      Off for v0.1.0. When off, the calibration console's firmware update
+      messages reply function_not_supported, the update engine and the
+      post-update health check are not built in, and new firmware is
+      installed from the first-flash page.
+
+      The bootloader and partition table are the same either way, so a later
+      build with this turned on can be installed without reinstalling the
+      bootloader. Turn it on for development with the sdkconfig.ota
+      defaults fragment, or in menuconfig.
+
 endmenu

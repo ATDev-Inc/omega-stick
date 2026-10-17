@@ -69,7 +69,7 @@ Every pull request runs:
 
 | Workflow | Job | Notes |
 | --- | --- | --- |
-| [build.yml](.github/workflows/build.yml) | `build` | `idf.py build` for esp32s3 on IDF v6.0. The merge gate |
+| [build.yml](.github/workflows/build.yml) | `build` | `idf.py build` for esp32s3 on IDF v6.0, then again with `sdkconfig.ota` (updates over USB on) in `build-ota`. The merge gate |
 | [host_tests.yml](.github/workflows/host_tests.yml) | `host-tests` | the host unit tests above, on gcc (coverage), clang (ASan/UBSan) and MSVC, all with `-Werror` |
 | [web_tests.yml](.github/workflows/web_tests.yml) | `web-tests` | the console's protocol tests above |
 | [fuzz.yml](.github/workflows/fuzz.yml) | `frame-fuzz` | libFuzzer on the frame parser, see [tests/fuzz](tests/fuzz/README.md) |
@@ -95,7 +95,8 @@ would run untrusted PR code with write access.
 
 ```
 main/main.cpp                 sensor bring-up, calibration, USB setup, and thin adapters that drive the control core
-main/Kconfig.projbuild        OMEGA_STICK_BOOT_FLASH_WINDOW_S (boot delay before USB starts, so idf.py flash works without BOOT)
+main/Kconfig.projbuild        OMEGA_STICK_BOOT_FLASH_WINDOW_S (boot delay before USB starts, so idf.py flash works without BOOT) and
+                              OMEGA_STICK_OTA (updates over USB, off by default, D25; sdkconfig.ota turns it on)
 main/idf_component.yml        registry dependencies (espp/*, espressif/tinyusb); resolved set pinned in dependencies.lock
 components/tmag5273/          Hall-effect sensor driver
 components/hid-rp-mouse/      HID mouse report descriptor and input report
@@ -134,7 +135,11 @@ espp.
 - **Sensor faults.** A failed or frozen TMAG5273 read trips
   `SensorFaultMonitor`; the control core then sends a neutral report instead
   of the last deflection until the sensor recovers (decision D21).
-- **Firmware updates** go over the same console protocol into the inactive
+- **Firmware updates** are off in v0.1.0 builds (`OMEGA_STICK_OTA`, decision D25):
+  no `espp::Ota`, `.ota = nullptr`, no health check, and the console hides its
+  update section when GET_FW_INFO replies function_not_supported. Bootloader
+  rollback and the partition table stay as they are. With the option on, they
+  go over the same console protocol into the inactive
   OTA slot. A new image boots pending verification and never confirms itself:
   the console reconnects, checks the version and SHA, a GET_STATE round trip and
   GET_DIAGNOSTICS, then sends MARK_VALID. `FirmwareHealthCheck` only rolls back
