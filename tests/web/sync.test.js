@@ -49,3 +49,33 @@ test("the page no longer defines its own copies of the protocol functions", () =
     assert.equal(defs.length, 1, fn + " should be defined once (the inline module copy)");
   }
 });
+
+// setUsbUpdates(false) hides #fwControls. The result of an update that just
+// finished (#updateStatus) must not sit under it, nor the running version.
+test("the hidden update controls do not contain the update result or the version", () => {
+  const tagRe = /<(\/?)(\w+)([^>]*)>/g;
+  const voids = new Set(["input", "br", "hr", "img", "meta", "link"]);
+  const stack = [];
+  const ancestors = {};
+  let m;
+  const body = html.slice(html.indexOf("<body"), html.indexOf("<script"));
+  while ((m = tagRe.exec(body))) {
+    const [, close, name, attrs] = m;
+    if (close) {
+      while (stack.length && stack.pop().name !== name) { /* unwind */ }
+      continue;
+    }
+    const id = (/\bid="([^"]+)"/.exec(attrs) || [])[1];
+    if (id) ancestors[id] = stack.map((s) => s.id).filter(Boolean);
+    if (!voids.has(name) && !attrs.endsWith("/")) stack.push({ name, id });
+  }
+  assert.ok(ancestors.fwControls, "#fwControls not found");
+  for (const id of ["updateStatus", "updateMessage", "updateError", "fwProgress", "fwReconnectBtn",
+                    "fwRunning", "fwVersion", "fwNoUpdates"]) {
+    assert.ok(ancestors[id], "#" + id + " not found");
+    assert.ok(!ancestors[id].includes("fwControls"), "#" + id + " is inside #fwControls");
+  }
+  for (const id of ["fwDrop", "fwFile", "flashBtn", "latestCheckBtn", "latestInstallBtn", "fwRevertBtn"]) {
+    assert.ok(ancestors[id].includes("fwControls"), "#" + id + " should be inside #fwControls");
+  }
+});
