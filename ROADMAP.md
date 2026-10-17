@@ -17,7 +17,8 @@ Last reviewed: 2026-10-12.
 
 The firmware has a working mouse mode, an XAC gamepad mode that has not been
 tried on a real Xbox Adaptive Controller, calibration persisted to flash, a
-browser console, firmware updates over USB with rollback, and a simulator for
+browser console, firmware updates over USB with rollback (built, but off in
+the first release, D25), and a simulator for
 working without a board. All of it is covered by host, web and fuzz tests in
 CI, and none of the recent work has run on hardware. There is no tagged release
 yet. See [README.md](README.md#project-status) for the short version.
@@ -26,15 +27,17 @@ yet. See [README.md](README.md#project-status) for the short version.
 
 ### M0: first tagged release, v0.1.0 (October 2026)
 
-The goal is a build a tester can install from the browser and update from the
-console, and a `main` branch that reflects it.
+The goal is a build a tester can install, and reinstall, from the browser, and
+a `main` branch that reflects it. Firmware updates over USB stay in the code
+but are off in this release (D25); new versions go on from the first-flash
+page.
 
 - Land the `owen-updates` integration branch on `main`, including the
-  host-confirmed update flow (D22) and the simulator.
+  simulator and the `OMEGA_STICK_OTA` build switch.
 - Run the first hardware pass on everything that has only been host-tested:
   mouse mode under slow movement, held positions and rapid reversals; the
-  console over WebUSB and Web Serial; an update, its confirmation, and a forced
-  rollback; the first-flash page's BOOT and RESET steps.
+  console over WebUSB and Web Serial; the first-flash page's BOOT and RESET
+  steps, on a new board and over an existing install.
 - Tag `v0.1.0`, which publishes the Pages site, the release feed and the
   first-flash page. Closes issue #5.
 
@@ -65,6 +68,9 @@ The tuning layer that goal G4 promises. Each item is body-dependent, so each
 is configurable from the console and persisted on the device, with the defaults
 chosen so the stick works untouched.
 
+- Turn firmware updates over USB back on (D25), once an update, its
+  confirmation by the console (D22) and both rollback paths have passed on
+  hardware. Boards on v0.1.0 move to it once through the first-flash page.
 - Response curves, and displacement versus isometric response modes (D9).
 - Per-axis gain and inversion.
 - Tremor filter, available and default off (D8).

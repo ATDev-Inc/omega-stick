@@ -5,12 +5,14 @@ Working task list for the maintainers. The milestone view is
 GitHub issues. Tick items here in the pull request that does them, and move
 anything that stops being true.
 
-Last reviewed: 2026-10-12.
+Last reviewed: 2026-10-17.
 
 ## Now: get to v0.1.0
 
 - [ ] Merge the open pull requests into `owen-updates`: #36 (simulator in
-      AGENTS.md and CONTRIBUTING.md) and #37 (console confirms the new image).
+      AGENTS.md and CONTRIBUTING.md), #37 (console confirms the new image) and
+      the `OMEGA_STICK_OTA` build switch that ships v0.1.0 with USB updates off
+      (D25).
 - [ ] Decide #12 (`marshall-updates` to `main`) and #15 (`fix/xac-descriptor`
       to `main`). Both predate `owen-updates`; #15 is probably covered by the
       espp 1.3.6 adoption (D20). Check before merging or closing.
@@ -21,21 +23,16 @@ Last reviewed: 2026-10-12.
         sensor unplugged mid-session (expect a centered stick, then recovery).
   - [ ] Console over WebUSB and over Web Serial: state, diagnostics,
         recalibration, deadzone overrides, mode switch and reconnect.
-  - [ ] Update flow, happy path: upload, the console's checks, MARK_VALID, and
-        the image stays confirmed across a power cycle.
-  - [ ] Bootloader rollback: unplug and replug before MARK_VALID. The board
-        should come back on the previous image.
-  - [ ] Deadline rollback: keep the board powered and withhold MARK_VALID (close
-        the console before it confirms). The board should reboot into the
-        previous image at about 120 s (90 s before #37). An unplug does not test
-        this; it takes the bootloader path above.
+  - [ ] Release build with updates off: the console shows the first-flash note
+        in place of the update controls, and the first-flash page reinstalls
+        over an existing install.
   - [ ] Gamepad mode plugged straight into a Windows PC, no XAC: it appears in
         the Game Controllers panel (`joy.cpl`), X/Y track the stick, and it
         rests at center.
   - [ ] First-flash page: the BOOT and RESET steps are unverified on the board.
   - [ ] Loop timing after the stack protector was enabled.
 - [ ] Tag `v0.1.0` on a clean tree, confirm the Pages site, the release feed and
-      the "Check for latest firmware" button against the live feed. Closes #5.
+      that the first-flash page installs the tagged build. Closes #5.
 - [ ] Delete the merged and superseded local branches, and drop the leftover
       `stash@{0}` ("WIP on feat/update-ux") in the main checkout.
 
@@ -63,6 +60,24 @@ Last reviewed: 2026-10-12.
       the reason text.
 - [ ] D22 rule 2: whether the reset log should judge a pending image's first
       boots, now that the console does the confirming.
+
+## Firmware updates over USB (M2, v0.2.0)
+
+The code is in the tree but off in v0.1.0 builds (D25). Build with
+`-DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ota"` to test it.
+
+- [ ] Update flow, happy path: upload, the console's checks, MARK_VALID, and
+      the image stays confirmed across a power cycle.
+- [ ] Bootloader rollback: unplug and replug before MARK_VALID. The board
+      should come back on the previous image.
+- [ ] Deadline rollback: keep the board powered and withhold MARK_VALID (close
+      the console before it confirms). The board should reboot into the
+      previous image at about 120 s. An unplug does not test this; it takes the
+      bootloader path above.
+- [ ] Update from a v0.1.0 board: install the first OTA-on release from the
+      first-flash page, then update over USB from there.
+- [ ] Turn `OMEGA_STICK_OTA` on by default and check the "Check for latest
+      firmware" button against the live feed.
 
 ## Features (M2, v0.2.0)
 
