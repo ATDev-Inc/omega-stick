@@ -1435,6 +1435,17 @@
     return describeUpdateError(error).category === "unsupported";
   }
 
+  // Outcome of an update whose new image turned out to have no USB updates
+  // (GET_FW_INFO now replies function_not_supported). Such an image accepts
+  // itself at boot, so there is nothing to confirm and no rollback to warn of.
+  // `fw` is the firmware string from the discovery reply, or "" if unknown.
+  function decideOutcomeNoUpdates(fw) {
+    const running = fw ? " (" + fw + ")" : "";
+    return { state: "installed_no_updates",
+             message: "The new firmware is installed and running" + running +
+                      ". It does not take further updates over USB, so new versions are installed from the first-flash page." };
+  }
+
   // The plain-language note shown in place of the update controls. The
   // first-flash installer erases calibration and settings by default
   // (new_install_prompt_erase in the manifest), so the note says so.
@@ -1924,7 +1935,7 @@
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
     decideOutcome, CONFIRM_CHECKS, judgeConfirmCheck, confirmFailureNotice,
     describeUpdateError, formatProgress, formatBytes,
-    FIRST_FLASH_URL, NO_USB_UPDATES_NOTE, usbUpdatesUnavailable,
+    FIRST_FLASH_URL, NO_USB_UPDATES_NOTE, usbUpdatesUnavailable, decideOutcomeNoUpdates,
     HEADER_SIZE, CRC_SIZE, MAX_PAYLOAD, MAX_FRAME,
     MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, PROTOCOL_ID, PROTOCOL_VERSION,
     FLAGS_REQUEST, FLAGS_REPLY_BIT, FLAG_CORRELATION,
@@ -1954,7 +1965,7 @@
       encodeSetManualOffset, encodeSetDeadzoneOverride, encodeSetNudgeSettings, encodeSetInputMode,
       inspectImage, buildFlashPlan, buildRevertPlan, decideOutcome, CONFIRM_CHECKS, judgeConfirmCheck, confirmFailureNotice,
       describeUpdateError, formatProgress, formatBytes,
-      FIRST_FLASH_URL, NO_USB_UPDATES_NOTE, usbUpdatesUnavailable,
+      FIRST_FLASH_URL, NO_USB_UPDATES_NOTE, usbUpdatesUnavailable, decideOutcomeNoUpdates,
       DEFAULT_PROJECT, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
       SIM_PATTERNS, encodeSimMessage, parseSimMessage, validateSimScript, createHidAccumulator,
     } = globalThis.OmegaProtocol;
@@ -3603,13 +3614,16 @@
       let runChecks = false;
       try {
         let ok = infoOk;
-        for (let i = 0; !ok && i < 3 && transport; i++) {
+        for (let i = 0; !ok && usbUpdates && i < 3 && transport; i++) {
           await sleepMs(1500);
           ok = await refreshFwInfo();
         }
         els.fwReconnectBtn.hidden = true;
         const after = ok ? { version: fwInfo.version, sha: fwInfo.sha, pending: fwInfo.pending } : null;
-        const o = decideOutcome(upd.expected, after);
+        // An image built without USB updates accepts itself at boot and answers
+        // GET_FW_INFO with function_not_supported: installed, nothing to confirm.
+        const o = (!ok && transport && !usbUpdates) ? decideOutcomeNoUpdates(discoveryFw)
+                                                    : decideOutcome(upd.expected, after);
         logLine("sys", "Update outcome: " + o.state + ". " + o.message);
         switch (o.state) {
           case "confirming":
@@ -3619,6 +3633,7 @@
             runChecks = true;
             break;
           case "confirmed":
+          case "installed_no_updates":
             upd.phase = "done";
             finishStatus("ok", o.message);
             break;

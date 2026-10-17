@@ -520,7 +520,10 @@ do not change. The bootloader cannot be updated over USB, so a board flashed
 without a rollback-capable bootloader could never take a later OTA-on release
 safely; keeping both identical means any later build can be installed over
 this one without reinstalling the bootloader. An image flashed over serial is
-never pending verification, so rollback does not trigger in the meantime.
+never pending verification, so rollback does not trigger in the meantime. An OTA-off
+image that arrives by update from an OTA-on build boots pending, and since nothing
+in it can confirm it, it marks itself valid at boot; the console then reports it as
+installed and running, without further USB updates.
 Message ids and the wire format are unchanged. CI builds the option on as
 well (`sdkconfig.ota`) so the code keeps compiling.
 

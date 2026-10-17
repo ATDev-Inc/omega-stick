@@ -412,9 +412,24 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   espp::Ota *const ota_engine = nullptr;
   printf("Firmware updates over USB are off in this build; install new firmware from the "
          "first-flash page.\n");
+  // This image can still arrive by update (from an OTA-on build), which boots it
+  // pending verification. Nothing here can confirm it (the console's MARK_VALID
+  // is refused and there is no health check), so the bootloader would roll it
+  // back at the next reset. Accept it now, before any peripheral bring-up.
+  {
+    esp_ota_img_states_t img_state;
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    if (running && esp_ota_get_state_partition(running, &img_state) == ESP_OK &&
+        img_state == ESP_OTA_IMG_PENDING_VERIFY) {
+      esp_ota_mark_app_valid_cancel_rollback();
+      printf("This image arrived by update and cannot be confirmed by the console, so it "
+             "accepted itself.\n");
+    }
+  }
 #endif
   // Tells the bootloader to roll back a pending image that cannot work. A no-op
-  // when updates are off, since an image flashed over serial is never pending.
+  // when updates are off: an image flashed over serial is never pending, and one that
+  // arrived by update accepted itself at boot (above).
   auto reject_if_pending = [&](const char *reason) {
 #if CONFIG_OMEGA_STICK_OTA
     espp::FirmwareHealthCheck<>::reject_if_pending(ota, reason);

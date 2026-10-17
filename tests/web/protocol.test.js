@@ -500,3 +500,12 @@ test("the no-updates note names the first-flash page and the erase", () => {
   assert.match(P.NO_USB_UPDATES_NOTE, /calibration and the saved settings|saved calibration and settings/);
   assert.equal(new URL(P.FIRST_FLASH_URL).pathname, "/omega-stick/flash.html");
 });
+
+test("decideOutcomeNoUpdates reports an installed image, not a failure or a rollback", () => {
+  const o = P.decideOutcomeNoUpdates("0.1.0");
+  assert.equal(o.state, "installed_no_updates");
+  assert.match(o.message, /installed and running \(0\.1\.0\)/);
+  assert.match(o.message, /does not take further updates over USB/);
+  assert.doesNotMatch(o.message, /roll|not confirmed|did not come back/i);
+  assert.equal(P.decideOutcomeNoUpdates("").state, "installed_no_updates");
+});

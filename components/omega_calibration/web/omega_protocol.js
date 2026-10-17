@@ -630,6 +630,17 @@
     return describeUpdateError(error).category === "unsupported";
   }
 
+  // Outcome of an update whose new image turned out to have no USB updates
+  // (GET_FW_INFO now replies function_not_supported). Such an image accepts
+  // itself at boot, so there is nothing to confirm and no rollback to warn of.
+  // `fw` is the firmware string from the discovery reply, or "" if unknown.
+  function decideOutcomeNoUpdates(fw) {
+    const running = fw ? " (" + fw + ")" : "";
+    return { state: "installed_no_updates",
+             message: "The new firmware is installed and running" + running +
+                      ". It does not take further updates over USB, so new versions are installed from the first-flash page." };
+  }
+
   // The plain-language note shown in place of the update controls. The
   // first-flash installer erases calibration and settings by default
   // (new_install_prompt_erase in the manifest), so the note says so.
@@ -1119,7 +1130,7 @@
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
     decideOutcome, CONFIRM_CHECKS, judgeConfirmCheck, confirmFailureNotice,
     describeUpdateError, formatProgress, formatBytes,
-    FIRST_FLASH_URL, NO_USB_UPDATES_NOTE, usbUpdatesUnavailable,
+    FIRST_FLASH_URL, NO_USB_UPDATES_NOTE, usbUpdatesUnavailable, decideOutcomeNoUpdates,
     HEADER_SIZE, CRC_SIZE, MAX_PAYLOAD, MAX_FRAME,
     MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, PROTOCOL_ID, PROTOCOL_VERSION,
     FLAGS_REQUEST, FLAGS_REPLY_BIT, FLAG_CORRELATION,
