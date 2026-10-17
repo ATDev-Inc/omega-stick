@@ -3,6 +3,16 @@
 How to update an Omega Stick over USB, how a bad update is rolled back, how
 firmware versions are named, and what to include in a bug report.
 
+> **v0.1.0 builds have updates over USB turned off** (decision D25). The
+> console then reports that the firmware takes no updates over USB, and new
+> firmware is installed from the [flash page](#first-flash-and-recovery), which
+> erases saved calibration and settings. Everything below describes a build
+> with `CONFIG_OMEGA_STICK_OTA=y`. To turn it on for development, add
+> `sdkconfig.ota` to the defaults, for example
+> `idf.py -B build-ota -DSDKCONFIG=build-ota/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ota" build`,
+> or enable "Firmware updates over USB" in menuconfig. The bootloader and
+> partition table are the same either way.
+
 ## Contents
 
 - [Overview](#overview)
