@@ -574,6 +574,13 @@ public:
       }
     }
 
+    if (static_cast<int>(valid_sector_maxima.size()) < MIN_COVERED_SECTORS) {
+      logger_.error("Range sweep covered only {} of {} sectors (need {})!",
+                    valid_sector_maxima.size(), RANGE_SECTORS, MIN_COVERED_SECTORS);
+      ec = make_error_code(Error::no_range_samples);
+      return false;
+    }
+
     std::sort(valid_sector_maxima.begin(), valid_sector_maxima.end());
     const size_t percentile_index =
         static_cast<size_t>((valid_sector_maxima.size() - 1) * RANGE_PERCENTILE);

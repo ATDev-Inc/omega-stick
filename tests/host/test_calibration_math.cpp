@@ -465,9 +465,7 @@ TEST(range_calibration_accepts_exactly_half_the_sectors) {
   CHECK(cal.range_calibration(center_at(0.0f, 0.0f), range, ec));
 }
 
-XFAIL_TEST(range_calibration_rejects_insufficient_sector_coverage,
-           "MIN_COVERED_SECTORS is declared and documented but never checked, so a sweep of "
-           "only 8 of 32 sectors is accepted instead of failing with no_range_samples") {
+TEST(range_calibration_rejects_insufficient_sector_coverage) {
   Recorder rec;
   Cal cal(make_config(rec, replay(sector_sweep(0.0f, 0.0f, constant_radii(8, 30.0f)))));
   Cal::RangeResult range;
