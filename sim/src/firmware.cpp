@@ -313,6 +313,7 @@ std::string boot(Host &host, int reset_reason) {
       Health::reject_if_pending(*ota, reason);
     }
   };
+  // cppcheck-suppress knownConditionTrueFalse ; null under --no-ota, set in another file
   if (!ota) {
     host.console_text("Firmware updates over USB are off in this build; install new firmware from "
                       "the first-flash page.");
@@ -327,6 +328,7 @@ std::string boot(Host &host, int reset_reason) {
 
   // A confirmed image that has crashed on its last few boots hands the device to
   // the other slot (D18 amendment).
+  // cppcheck-suppress knownConditionTrueFalse ; null under --no-ota, set in another file
   if (ota && Health::revert_if_crash_looping(
                  *ota, Health::crashes_while_running(boots, running_slot_label))) {
     sim::flash().take_restart_reason();
@@ -334,10 +336,11 @@ std::string boot(Host &host, int reset_reason) {
   }
   {
     const esp_app_desc_t *app = esp_app_get_description();
+    // cppcheck-suppress knownConditionTrueFalse ; null under --no-ota, set in another file
+    const char *pending = ota && sim::flash().pending_verify() ? " [PENDING VERIFY]" : "";
     host.console_text(format("Firmware %s %s (built %s %s, idf %s) running from %s%s",
                              app->project_name, app->version, app->date, app->time, app->idf_ver,
-                             running_slot_label.c_str(),
-                             ota && sim::flash().pending_verify() ? " [PENDING VERIFY]" : ""));
+                             running_slot_label.c_str(), pending));
   }
   // sim: an image flashed with next_image=crash_loop crashes right after the reset log
   // records the boot, before the application starts.
