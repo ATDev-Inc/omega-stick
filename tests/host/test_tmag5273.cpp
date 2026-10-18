@@ -314,14 +314,16 @@ TEST(tmag_set_angle_conversion_replaces_only_bits_3_2) {
   CHECK_EQ(reg(bus, Tmag::SENSOR_CONFIG_2), 0x0C);
 }
 
-XFAIL_TEST(tmag_angle_conversion_getter_reads_back_what_the_setter_wrote,
-           "set_angle_conversion writes SENSOR_CONFIG_2 bits 3:2 but angle_conversion() reads "
-           "bits 7:6, so the value never round-trips") {
+TEST(tmag_angle_conversion_getter_reads_back_what_the_setter_wrote) {
   FakeBus bus;
   Tmag dev(bus.config());
   std::error_code ec;
   CHECK(dev.set_angle_conversion(Tmag::AngleConversion::ANGLE_YZ, ec));
   CHECK(dev.angle_conversion(ec) == Tmag::AngleConversion::ANGLE_YZ);
+  // Bits 7:6 are not part of the field.
+  // cppcheck-suppress unreadVariable ; read back through the fake bus callbacks
+  bus.regs[Tmag::SENSOR_CONFIG_2] = 0xC0;
+  CHECK(dev.angle_conversion(ec) == Tmag::AngleConversion::OFF);
 }
 
 TEST(tmag_setters_do_not_write_when_the_read_fails) {
