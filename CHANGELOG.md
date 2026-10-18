@@ -142,7 +142,7 @@ in `version.txt`.
   range calibration never checked that the stick was moved around at least half
   of the circle, so a short back-and-forth sweep could be saved and leave the
   range wrong. It now fails with the no-range-samples error and the console
-  reports it, so you can sweep a full slow circle and try again.
+  reports it, so you can sweep a full slow circle and try again. ([#44](https://github.com/ATDev-Inc/omega-stick/pull/44))
 - **The console shows the running firmware version when updates are off.** The
   firmware now reports its version in the discovery reply, which is the only
   place the console can read it from in a build without updates over USB.
