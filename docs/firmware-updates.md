@@ -368,6 +368,13 @@ repo root (currently `0.1.0`). It is bumped by hand in the PR that warrants it:
 - **MINOR:** a new user-visible feature (OTA, revert).
 - **PATCH:** fixes only.
 
+Both saved files carry a `schema=N` key (currently 1). A schema bump that old
+firmware cannot read is a MAJOR bump, because rolling back would leave the older
+firmware unable to load the user's calibration or settings (it falls back to
+recalibrating or to defaults). A key added under the same schema is not: older
+firmware ignores keys it does not know. Migration code is written when the
+first schema bump happens.
+
 The top-level [CMakeLists.txt](../CMakeLists.txt) reads it and sets `PROJECT_VER`
 before `project()`. What a build embeds and reports:
 
