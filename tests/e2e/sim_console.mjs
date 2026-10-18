@@ -305,7 +305,7 @@ async function main() {
   await sleep(1500);
   const msgRollback = await text("updateError");
   const verWhilePending = await fwVersion();
-  await waitFor("the deadline rollback", async () => (await fwVersion()) === startVer, 120000);
+  await waitFor("the deadline rollback", async () => (await fwVersion()) === startVer, 180000);
   const verAfterRollback = await fwVersion();
   check("g", "flash 0.2.0 confirmed, revert, then a fail_self_test image is refused and rolled back at the deadline",
     verNew === "0.2.0" && reconnectedG && /Update confirmed/.test(msgNew) &&

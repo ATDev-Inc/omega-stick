@@ -28,13 +28,15 @@ jobs:
           cmake -S sim -B build-sim -DCMAKE_BUILD_TYPE=Release
           cmake --build build-sim
 
+      # --speed 1: the late-sensor check needs the console to reconnect inside the
+      # simulator's 3 s window, which a loaded runner misses at speed 4.
       # The runner's Chrome sandbox can be refused (user namespaces are restricted on
       # recent Ubuntu images), so the check runs Chrome with --no-sandbox. It only
       # loads a local copy of the console and talks to the local simulator.
       - name: Run the console against the simulator
         run: |
           node tests/e2e/sim_console.mjs --sim build-sim/omega_sim \
-            --chrome "$(command -v google-chrome)" --no-sandbox --verbose 2>&1 | tee e2e.log
+            --chrome "$(command -v google-chrome)" --no-sandbox --speed 1 --verbose 2>&1 | tee e2e.log
           exit "${PIPESTATUS[0]}"
 
       - name: Upload the log

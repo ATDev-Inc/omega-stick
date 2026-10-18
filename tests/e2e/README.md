@@ -45,7 +45,9 @@ check, and exits 1 if any check fails.
 Notes:
 
 - In CI the job uses the runner's `google-chrome`, Node 24 and the simulator
-  built as above, and uploads the output (`--verbose`) as the `e2e-log`
+  built as above, at `--speed 1` (the late-sensor check needs the console to
+  reconnect inside the simulator's 3 s window, which a loaded runner can miss
+  at speed 4; the run takes a few minutes), and uploads the output (`--verbose`) as the `e2e-log`
   artifact on failure. The page is loaded from a local file, so no web server
   is needed.
 
