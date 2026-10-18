@@ -13,12 +13,12 @@ export function freePort() {
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function launchChrome(chromePath, userDataDir, url) {
+export async function launchChrome(chromePath, userDataDir, url, extraArgs = []) {
   const port = await freePort();
   const proc = spawn(chromePath, [
     "--headless=new", "--remote-debugging-port=" + port, "--user-data-dir=" + userDataDir,
     "--no-first-run", "--no-default-browser-check", "--disable-extensions", "--window-size=1280,1800",
-    url,
+    ...extraArgs, url,
   ], { stdio: "ignore" });
   let target = null;
   for (let i = 0; i < 100 && !target; i++) {

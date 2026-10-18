@@ -118,8 +118,6 @@ Check `build-ota/sdkconfig` reads `CONFIG_OMEGA_STICK_OTA=y`. See
       worth it before M3's enumeration changes.
 - [ ] Host tests do not cover the concurrent `save_to_flash` writers or the
       recalibration race against the control loop; both need a scheduler.
-- [ ] Run the simulator end-to-end check (`tests/e2e/`) in CI, or document why
-      it stays manual.
 
 ## Decisions needed (maintainers, not pull requests)
 
