@@ -141,6 +141,7 @@ in `version.txt`.
 - **TMAG5273 angle-conversion setting now reads back correctly.** The getter
   read the wrong register bits, so it never returned what had been set. The
   stick does not use it, so nothing changes in use.
+  ([#47](https://github.com/ATDev-Inc/omega-stick/pull/47))
 - **TMAG5273 field readings are now correct for either part variant.** The
   driver assumed the A2 full-scale values, so an A1 (x1) would have reported
   readings about 3.3x too high. It now reads the version from the sensor's
