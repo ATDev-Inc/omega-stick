@@ -143,6 +143,10 @@ in `version.txt`.
 
 ### Fixed
 
+- **Out-of-range mouse button numbers are ignored.** A button index far outside
+  1 to 3 (such as 65537) used to wrap around and press the left button; it is
+  now rejected. The stick's own nudge clicks only use buttons 1 and 2, so
+  normal use is unchanged. ([#46](https://github.com/ATDev-Inc/omega-stick/pull/46))
 - **The console shows the running firmware version when updates are off.** The
   firmware now reports its version in the discovery reply, which is the only
   place the console can read it from in a build without updates over USB.

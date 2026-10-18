@@ -129,11 +129,12 @@ Current XFAIL entries:
 - `tmag_angle_conversion_getter_reads_back_what_the_setter_wrote`:
   `set_angle_conversion` writes `SENSOR_CONFIG_2` bits 3:2 but
   `angle_conversion()` reads bits 7:6.
-- `mouse_set_button_rejects_indices_that_wrap_into_range`: the button index is
-  narrowed from `int` to `uint16_t`, so 65537 acts as button 1.
 
 Fixed, now plain tests:
 
+- `mouse_set_button_rejects_indices_that_wrap_into_range`: the button index was
+  narrowed from `int` to `uint16_t`, so 65537 acted as button 1. `set_button` and
+  `get_button` now range-check the `int` first.
 - `store_set_measured_calibration_preserves_live_manual_offset`: a drift
   nudge or recalibration pushed from the control loop's stale local
   `CenterResult` reverted a manual offset the console set. The loop now
@@ -180,9 +181,6 @@ Fixed, now plain tests:
   register file. The header relies on `printf` being reachable transitively
   (no `<cstdio>` include), and `is_connected()` prints the device ID on every
   call.
-- `hid-rp-mouse.hpp` narrows `int` to `uint16_t` in `set_button`/`get_button`;
-  MSVC flags it (C4244). The two test files that include it silence that one
-  warning (`/wd4244` in `CMakeLists.txt`) until the header is fixed.
 - `range_calibration()` indexes an empty vector (undefined behaviour) when
   samples read fine but every one sits exactly on the center, because no
   sector then has a positive radius. Not tested, since it cannot be run safely.
