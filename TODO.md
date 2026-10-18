@@ -90,8 +90,8 @@ Check `build-ota/sdkconfig` reads `CONFIG_OMEGA_STICK_OTA=y`. See
 - [ ] Per-axis gain and inversion.
 - [ ] Tremor filter, default off (D8).
 - [ ] Profiles.
-- [ ] Settings schema version with migration (PER-3). Do this before the first
-      field that changes meaning, or it is a MAJOR bump.
+- [ ] Migration code for the settings schema (PER-3) when the first schema bump
+      happens. The `schema=1` key is already written; a bump is a MAJOR bump.
 - [ ] On-device calibration gesture (CAL-2).
 - [ ] Wire the unused TMAG5273 registers that the driver already models:
       `INT_CONFIG_1` (data-ready interrupt, SEN-4), `MAG_OFFSET_CONFIG_1/2`,

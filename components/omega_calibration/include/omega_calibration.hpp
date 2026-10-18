@@ -250,6 +250,7 @@ public:
         return false;
       }
 
+      out << "schema=" << SCHEMA_VERSION << "\n";
       if (settings.manual_center_deadzone) {
         out << "manual_center_deadzone=" << *settings.manual_center_deadzone << "\n";
       }
@@ -305,6 +306,9 @@ public:
         }
         values[key] = value;
       }
+      if (!check_schema(values, ec)) {
+        return false;
+      }
 
       settings.manual_center_deadzone = values.count("manual_center_deadzone")
                                             ? std::optional<float>(values["manual_center_deadzone"])
@@ -336,7 +340,34 @@ public:
     file_write_failed,
     file_parse_failed,
     file_missing_field,
+    unsupported_schema, ///< file written by newer firmware (schema above SCHEMA_VERSION)
   };
+
+  /// Schema version written to both persisted files as `schema=N` and the
+  /// highest one this firmware can read. A file without the key is schema 1
+  /// (every file written before the key existed). Bumping this is a MAJOR
+  /// firmware bump if older firmware cannot read the result (PER-3).
+  static constexpr int SCHEMA_VERSION = 1;
+
+  /// Checks the optional `schema` value parsed from a file. Returns false
+  /// with ec set when it is malformed or newer than SCHEMA_VERSION.
+  static bool check_schema(const std::unordered_map<std::string, float> &values,
+                           std::error_code &ec) {
+    const auto it = values.find("schema");
+    if (it == values.end()) {
+      return true; // schema 1
+    }
+    const float v = it->second;
+    if (!std::isfinite(v) || v < 1.0f || v != std::floor(v)) {
+      ec = make_error_code(Error::file_parse_failed);
+      return false;
+    }
+    if (v > static_cast<float>(SCHEMA_VERSION)) {
+      ec = make_error_code(Error::unsupported_schema);
+      return false;
+    }
+    return true;
+  }
 
   static const std::error_category &error_category() {
     static const struct Category : std::error_category {
@@ -359,6 +390,8 @@ public:
           return "failed to parse file";
         case Error::file_missing_field:
           return "file is missing a required field";
+        case Error::unsupported_schema:
+          return "file was written by newer firmware (unsupported schema)";
         default:
           return "unknown error";
         }
@@ -1025,6 +1058,7 @@ public:
       return false;
     }
 
+    out << "schema=" << SCHEMA_VERSION << "\n";
     out << "center_x=" << center.center_x << "\n";
     out << "center_y=" << center.center_y << "\n";
     out << "center_noise_radius=" << center.noise_radius << "\n";
@@ -1082,6 +1116,9 @@ public:
         return false;
       }
       values[key] = value;
+    }
+    if (!check_schema(values, ec)) {
+      return false;
     }
 
     static const std::vector<std::string> required = {

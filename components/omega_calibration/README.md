@@ -11,6 +11,19 @@ Omega Stick.
 | `web/calibration_console.html` | the browser console, a single self-contained page |
 | `web/omega_protocol.js` | the console's framing, CRC and payload code, DOM-free so Node can test it (`tests/web`). The page carries an identical inline copy; a test fails if the two differ |
 
+## Saved file format
+
+Both files are plain `key=value` text, one pair per line, and stay separate on
+purpose (see D11 in [docs/decisions.md](../../docs/decisions.md)). Each starts
+with `schema=1`, written on every save, which is
+`OmegaCalibration::SCHEMA_VERSION`. A file without the key is schema 1, so every
+file written before the key existed still loads. A file whose schema is higher
+than the firmware knows fails to load with `Error::unsupported_schema`, and
+`OmegaStore` then falls back as it does for a corrupt file: it runs
+calibration, or uses the default settings. Adding a key under the same schema
+does not change the number; only a change that old firmware cannot read does (a
+MAJOR bump, see [docs/firmware-updates.md](../../docs/firmware-updates.md#firmware-versioning)).
+
 ## Calibration console
 
 `web/calibration_console.html` lets you view and change the stick's live
