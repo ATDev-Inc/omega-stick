@@ -205,6 +205,11 @@ idf.py -p PORT flash monitor
 Replace `PORT` with your serial port (`COM7` on Windows, `/dev/ttyACM0` on
 Linux, `/dev/cu.usbmodem*` on macOS). Exit the monitor with `Ctrl-]`.
 
+A board already running the firmware does not reset into the bootloader by
+itself: once TinyUSB starts, the mouse owns the USB port. Hold `BOOT` while
+plugging the board in before flashing, or set the boot window described under
+[Build options](#build-options).
+
 ### Run the host tests
 
 Most of the firmware logic has unit tests that run on your desktop without a
@@ -253,10 +258,16 @@ TMAG5273 initialized successfully!
 ```
 
 On a board with no saved calibration, the firmware then runs an interactive
-center calibration followed by a range calibration, prints the results, and
-starts USB (`Waiting for USB host...`, `HID ready: yes`). The calibration is
-saved to the `littlefs` partition and loaded on later boots
-(`Loaded existing calibration.`).
+center calibration followed by a range calibration and prints the results.
+Follow its prompts: leave the stick alone while the center is measured, then
+move it slowly through a complete circle. The calibration is saved to the
+`littlefs` partition and loaded on later boots (`Loaded existing calibration.`).
+
+That is the last the monitor shows. The firmware's log goes to the built-in USB
+Serial/JTAG port, which disappears as soon as TinyUSB takes over the USB
+connection, so the lines printed after that (`Waiting for USB host...`,
+`HID ready: yes`) are not visible and the monitor loses its port. The stick is
+working when the cursor moves.
 
 If you see `ERROR: TMAG5273 initialization failed`, check the Qwiic cable (with USB
 unplugged) and confirm the sensor's address strap (the firmware expects `0x35`).
@@ -282,12 +293,14 @@ file in a Chromium-based browser (Chrome, Edge, Opera) from `file://`,
 
 ### Build options
 
-`idf.py menuconfig`, under "Omega Stick Configuration", has one option:
+`idf.py menuconfig`, under "Omega Stick Configuration", has two options.
 `OMEGA_STICK_BOOT_FLASH_WINDOW_S` (default 0, range 0 to 60) is how many
 seconds the firmware waits at boot before starting USB. While it waits, the
 built-in USB Serial/JTAG still owns the port, so `idf.py flash` works without
 holding BOOT. As a developer, set it locally in `idf.py menuconfig` (your
-`sdkconfig` is gitignored); leave it at 0 for anything users run. The flash layout is in
+`sdkconfig` is gitignored); leave it at 0 for anything users run.
+`OMEGA_STICK_OTA` (default off) builds in firmware updates over USB; see
+[docs/firmware-updates.md](docs/firmware-updates.md). The flash layout is in
 [partitions.csv](partitions.csv) and assumes the 8 MB QT Py ESP32-S3.
 
 ## Repository layout

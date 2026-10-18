@@ -243,9 +243,14 @@ settings.** Normal updates go through the console and keep them.
    then release `BOOT`. With no `RESET` button, unplug, hold `BOOT`, plug in,
    then release. The board looks inactive in this mode and shows up as a serial
    device.
-2. Choose "Connect and install", pick the serial port, and leave the erase
-   option ticked. It takes about a minute.
-3. Unplug and replug the board. It starts normally.
+2. Choose "Connect and install", pick the serial port (in download mode the
+   board appears under a different port name from the console's), then
+   "Install Omega Stick". The installer erases the board, then writes the
+   firmware. It takes about a minute.
+3. Unplug and replug the board, leaving the stick alone for the first few
+   seconds. The firmware calibrates by itself on that first start, with
+   prompts nobody can see, so open the console over Web Serial afterwards and
+   choose "Re-run calibration", following its prompts.
 
 These download-mode steps are the standard ESP32-S3 procedure. They still need
 confirming on the Omega Stick hardware.
