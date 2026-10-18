@@ -40,8 +40,6 @@ Last reviewed: 2026-10-17.
 
 - [ ] XFAIL: `MIN_COVERED_SECTORS` is never checked, so a sweep covering 8 of
       32 sectors is accepted.
-- [ ] XFAIL: `set_angle_conversion` writes `SENSOR_CONFIG_2` bits 3:2 but the
-      getter reads bits 7:6.
 - [ ] XFAIL: the mouse button index narrows from `int` to `uint16_t`, so 65537
       acts as button 1.
 - [ ] Flip each `XFAIL_TEST` to `TEST` in the pull request that fixes it, and

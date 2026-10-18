@@ -126,14 +126,14 @@ Current XFAIL entries:
 - `range_calibration_rejects_insufficient_sector_coverage`:
   `MIN_COVERED_SECTORS` is never checked, so a sweep of 8 of 32 sectors is
   accepted instead of failing with `no_range_samples`.
-- `tmag_angle_conversion_getter_reads_back_what_the_setter_wrote`:
-  `set_angle_conversion` writes `SENSOR_CONFIG_2` bits 3:2 but
-  `angle_conversion()` reads bits 7:6.
 - `mouse_set_button_rejects_indices_that_wrap_into_range`: the button index is
   narrowed from `int` to `uint16_t`, so 65537 acts as button 1.
 
 Fixed, now plain tests:
 
+- `tmag_angle_conversion_getter_reads_back_what_the_setter_wrote`:
+  `angle_conversion()` read `SENSOR_CONFIG_2` bits 7:6 while
+  `set_angle_conversion` writes bits 3:2 (ANGLE_EN). The getter now reads 3:2.
 - `store_set_measured_calibration_preserves_live_manual_offset`: a drift
   nudge or recalibration pushed from the control loop's stale local
   `CenterResult` reverted a manual offset the console set. The loop now

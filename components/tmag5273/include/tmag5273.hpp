@@ -725,7 +725,8 @@ public:
       return AngleConversion::OFF;
     }
 
-    return static_cast<AngleConversion>((reg >> 6) & 0x03);
+    // ANGLE_EN = bits 3:2, the same field set_angle_conversion writes
+    return static_cast<AngleConversion>((reg >> 2) & 0x03);
   }
 
   float read_angle(std::error_code &ec) const {
