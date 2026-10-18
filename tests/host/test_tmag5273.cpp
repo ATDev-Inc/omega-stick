@@ -321,6 +321,7 @@ TEST(tmag_angle_conversion_getter_reads_back_what_the_setter_wrote) {
   CHECK(dev.set_angle_conversion(Tmag::AngleConversion::ANGLE_YZ, ec));
   CHECK(dev.angle_conversion(ec) == Tmag::AngleConversion::ANGLE_YZ);
   // Bits 7:6 are not part of the field.
+  // cppcheck-suppress unreadVariable ; read back through the fake bus callbacks
   bus.regs[Tmag::SENSOR_CONFIG_2] = 0xC0;
   CHECK(dev.angle_conversion(ec) == Tmag::AngleConversion::OFF);
 }
