@@ -1,9 +1,12 @@
 // OmegaCalibration::save/load and DeviceSettings::save/load round-trips.
 
 #include <fstream>
+#include <iterator>
+#include <string>
 
 #include "file_system.hpp"
 #include "omega_calibration.hpp"
+#include "omega_store.hpp"
 #include "test_harness.hpp"
 #include "test_support.hpp"
 
@@ -205,4 +208,114 @@ TEST(apply_calibration_pushes_effective_center_and_deadzones) {
   // (0.5 - 0.3) / (1 - 0.3 - range.deadzone).
   js.update(cx + 0.5f * range.max_x, cy);
   CHECK_NEAR(js.x(), 0.2f / (1.0f - 0.3f - range.deadzone), 1e-4);
+}
+
+namespace {
+const char *kCalibrationBody =
+    "center_x=1\ncenter_y=2\ncenter_deadzone=0.1\nrange_min_x=-1\n"
+    "range_max_x=1\nrange_min_y=-1\nrange_max_y=1\nrange_deadzone=0.05\n";
+
+bool load_calibration(const std::filesystem::path &path, std::error_code &ec) {
+  OmegaCalibration::CenterResult center;
+  OmegaCalibration::RangeResult range;
+  return OmegaCalibration::load(center, range, path, ec);
+}
+
+bool load_settings(const std::filesystem::path &path, std::error_code &ec) {
+  OmegaCalibration::DeviceSettings out;
+  return OmegaCalibration::DeviceSettings::load(out, path, ec);
+}
+
+std::string read_all(const std::filesystem::path &path) {
+  std::ifstream in(path);
+  return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+} // namespace
+
+TEST(save_writes_schema_key_to_both_files) {
+  TempDir dir("schema_write");
+  std::error_code ec;
+  CHECK(OmegaCalibration::save(support::sample_center(), support::sample_range(),
+                               dir.file("omega_calibration.cfg"), ec));
+  CHECK(OmegaCalibration::DeviceSettings::save({}, dir.file("omega_settings.cfg"), ec));
+  CHECK(read_all(dir.file("omega_calibration.cfg")).find("schema=1\n") != std::string::npos);
+  CHECK(read_all(dir.file("omega_settings.cfg")).find("schema=1\n") != std::string::npos);
+}
+
+TEST(calibration_without_schema_key_loads_as_schema_1) {
+  TempDir dir("schema_cal_none");
+  const auto path = dir.file("omega_calibration.cfg");
+  { std::ofstream(path) << kCalibrationBody; }
+  std::error_code ec;
+  CHECK(load_calibration(path, ec));
+  CHECK(!ec);
+}
+
+TEST(calibration_with_schema_1_loads) {
+  TempDir dir("schema_cal_1");
+  const auto path = dir.file("omega_calibration.cfg");
+  { std::ofstream(path) << "schema=1\n" << kCalibrationBody; }
+  std::error_code ec;
+  CHECK(load_calibration(path, ec));
+  CHECK(!ec);
+}
+
+TEST(calibration_with_newer_schema_is_rejected) {
+  TempDir dir("schema_cal_2");
+  const auto path = dir.file("omega_calibration.cfg");
+  { std::ofstream(path) << "schema=2\n" << kCalibrationBody; }
+  std::error_code ec;
+  CHECK(!load_calibration(path, ec));
+  CHECK(support::is_error(ec, OmegaCalibration::Error::unsupported_schema));
+}
+
+TEST(calibration_with_malformed_schema_is_rejected) {
+  TempDir dir("schema_cal_bad");
+  const auto path = dir.file("omega_calibration.cfg");
+  { std::ofstream(path) << "schema=0\n" << kCalibrationBody; }
+  std::error_code ec;
+  CHECK(!load_calibration(path, ec));
+  CHECK(support::is_error(ec, OmegaCalibration::Error::file_parse_failed));
+}
+
+TEST(settings_without_schema_key_loads_as_schema_1) {
+  TempDir dir("schema_set_none");
+  const auto path = dir.file("omega_settings.cfg");
+  { std::ofstream(path) << "nudge_hold_time_ms=250\ninput_mode=1\n"; }
+  OmegaCalibration::DeviceSettings out;
+  std::error_code ec;
+  CHECK(OmegaCalibration::DeviceSettings::load(out, path, ec));
+  CHECK(!ec);
+  CHECK_EQ(out.nudge_hold_time.count(), 250);
+  CHECK(out.input_mode == OmegaCalibration::InputMode::XAC);
+}
+
+TEST(settings_with_schema_1_loads) {
+  TempDir dir("schema_set_1");
+  const auto path = dir.file("omega_settings.cfg");
+  { std::ofstream(path) << "schema=1\nnudge_hold_time_ms=250\n"; }
+  std::error_code ec;
+  CHECK(load_settings(path, ec));
+  CHECK(!ec);
+}
+
+TEST(settings_with_newer_schema_is_rejected) {
+  TempDir dir("schema_set_2");
+  const auto path = dir.file("omega_settings.cfg");
+  { std::ofstream(path) << "schema=2\ninput_mode=1\n"; }
+  std::error_code ec;
+  CHECK(!load_settings(path, ec));
+  CHECK(support::is_error(ec, OmegaCalibration::Error::unsupported_schema));
+}
+
+TEST(store_falls_back_to_defaults_on_newer_schema) {
+  TempDir dir("schema_store");
+  const auto cal = dir.file("omega_calibration.cfg");
+  const auto set = dir.file("omega_settings.cfg");
+  { std::ofstream(cal) << "schema=2\n" << kCalibrationBody; }
+  { std::ofstream(set) << "schema=2\ninput_mode=1\nnudge_hold_time_ms=250\n"; }
+  espp::OmegaStore store({.calibration_path = cal, .settings_path = set});
+  CHECK(store.settings().input_mode == OmegaCalibration::InputMode::MOUSE);
+  CHECK_EQ(store.settings().nudge_hold_time.count(), 100);
+  CHECK_NEAR(store.center().center_x, OmegaCalibration::CenterResult{}.center_x, 1e-9);
 }

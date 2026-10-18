@@ -81,9 +81,7 @@ TEST(mouse_set_button_accepts_only_indices_1_through_button_count) {
   CHECK(!r.set_button(1000, true));
 }
 
-XFAIL_TEST(mouse_set_button_rejects_indices_that_wrap_into_range,
-           "set_button/get_button narrow the int index to uint16_t, so 65537 (or -65535) is "
-           "treated as button 1 (MSVC flags the same narrowing as C4244)") {
+TEST(mouse_set_button_rejects_indices_that_wrap_into_range) {
   Boot r;
   CHECK(!r.set_button(65536 + 1, true));
   CHECK(!r.get_button(1));

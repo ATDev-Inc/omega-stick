@@ -243,9 +243,14 @@ settings.** Normal updates go through the console and keep them.
    then release `BOOT`. With no `RESET` button, unplug, hold `BOOT`, plug in,
    then release. The board looks inactive in this mode and shows up as a serial
    device.
-2. Choose "Connect and install", pick the serial port, and leave the erase
-   option ticked. It takes about a minute.
-3. Unplug and replug the board. It starts normally.
+2. Choose "Connect and install", pick the serial port (in download mode the
+   board appears under a different port name from the console's), then
+   "Install Omega Stick". The installer erases the board, then writes the
+   firmware. It takes about a minute.
+3. Unplug and replug the board, leaving the stick alone for the first few
+   seconds. The firmware calibrates by itself on that first start, with
+   prompts nobody can see, so open the console over Web Serial afterwards and
+   choose "Re-run calibration", following its prompts.
 
 These download-mode steps are the standard ESP32-S3 procedure. They still need
 confirming on the Omega Stick hardware.
@@ -362,6 +367,13 @@ repo root (currently `0.1.0`). It is bumped by hand in the PR that warrants it:
   become incompatible with older consoles or firmware.
 - **MINOR:** a new user-visible feature (OTA, revert).
 - **PATCH:** fixes only.
+
+Both saved files carry a `schema=N` key (currently 1). A schema bump that old
+firmware cannot read is a MAJOR bump, because rolling back would leave the older
+firmware unable to load the user's calibration or settings (it falls back to
+recalibrating or to defaults). A key added under the same schema is not: older
+firmware ignores keys it does not know. Migration code is written when the
+first schema bump happens.
 
 The top-level [CMakeLists.txt](../CMakeLists.txt) reads it and sets `PROJECT_VER`
 before `project()`. What a build embeds and reports:

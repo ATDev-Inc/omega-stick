@@ -28,7 +28,7 @@ Generated build output (`build/`, `build-host/`, `managed_components/`,
 | [partitions.csv](partitions.csv) | Flash layout: nvs, otadata, phy_init, two 1920 KB OTA app slots, 2 MB littlefs, 64 KB coredump |
 | [sdkconfig.defaults](sdkconfig.defaults) | Project-wide ESP-IDF configuration (target ESP32-S3, rollback enabled, and so on) |
 | [sdkconfig.ota](sdkconfig.ota) | Defaults fragment that turns on firmware updates over USB (`OMEGA_STICK_OTA`), used by the second CI build |
-| [dependencies.lock](dependencies.lock) | Exact versions of the registry components (espp pinned at 1.3.6) |
+| [dependencies.lock](dependencies.lock) | Exact versions of the registry components (espp pinned at 1.3.8) |
 | [suppressions.txt](suppressions.txt) | cppcheck suppressions used by the static analysis job |
 | [.clang-format](.clang-format) | C++ formatting rules (format with clang-format 14) |
 | [.clangd](.clangd) | Editor language-server settings |

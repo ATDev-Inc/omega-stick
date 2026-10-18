@@ -61,12 +61,14 @@ export function buildLatest({ version, tag, publishedAt, notesUrl, app, full }) 
 }
 
 // esp-web-tools manifest: one build, the merged image written at offset 0.
-// Paths are relative to the manifest file.
+// Paths are relative to the manifest file. No `new_install_prompt_erase`: its
+// "Erase device" checkbox starts unticked, and without the prompt ESP Web
+// Tools erases a device that does not speak Improv before writing, which is
+// what a first flash wants.
 export function buildManifest({ version }) {
   return {
     name: "Omega Stick",
     version,
-    new_install_prompt_erase: true,
     builds: [
       {
         chipFamily: CHIP_FAMILY,

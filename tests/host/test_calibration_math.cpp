@@ -185,6 +185,8 @@ TEST(error_category_messages) {
   CHECK_EQ(msg(E::file_write_failed), std::string("failed to write file"));
   CHECK_EQ(msg(E::file_parse_failed), std::string("failed to parse file"));
   CHECK_EQ(msg(E::file_missing_field), std::string("file is missing a required field"));
+  CHECK_EQ(msg(E::unsupported_schema),
+           std::string("file was written by newer firmware (unsupported schema)"));
   CHECK_EQ(msg(static_cast<E>(99)), std::string("unknown error"));
   CHECK_EQ(std::string(Cal::make_error_code(E::read_failure).category().name()),
            std::string("OmegaCalibration"));
