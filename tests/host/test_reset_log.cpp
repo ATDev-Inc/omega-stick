@@ -238,7 +238,7 @@ TEST(reset_log_loads_entries_written_before_the_slot_field_with_the_slot_unknown
     out << "boot_count=3\n"
         << "entry=1,1,0,power-on\n"
         << "entry=2,4,1,panic (ota_0)\n"
-        << "entry2=3,9,1,ota_1,brownout\n"
+        << "entry2=3,9,1,ota_1,brownout (x y)\n"
         << "entry2=4,9\n";
   }
   ResetLog log({.path = path});
@@ -246,10 +246,11 @@ TEST(reset_log_loads_entries_written_before_the_slot_field_with_the_slot_unknown
   CHECK(log.load(ec));
   CHECK_EQ(log.entries().size(), std::size_t{3});
   CHECK(log.entries()[0].slot.empty());
-  CHECK(log.entries()[1].slot.empty());
-  CHECK(log.entries()[1].name == "panic (ota_0)");
+  // A legacy "reason (slot)" name is split; one without the suffix stays unknown.
+  CHECK(log.entries()[1].slot == "ota_0");
+  CHECK(log.entries()[1].name == "panic");
   CHECK(log.entries()[2].slot == "ota_1");
-  CHECK(log.entries()[2].name == "brownout");
+  CHECK(log.entries()[2].name == "brownout (x y)");
 
   // Saving rewrites the old entries in the new form without losing them.
   log.record(1, "power-on", false, "ota_1");
@@ -257,7 +258,7 @@ TEST(reset_log_loads_entries_written_before_the_slot_field_with_the_slot_unknown
   ResetLog reloaded({.path = path});
   CHECK(reloaded.load(ec));
   CHECK_EQ(reloaded.entries().size(), std::size_t{4});
-  CHECK(reloaded.entries()[1].name == "panic (ota_0)");
-  CHECK(reloaded.entries()[1].slot.empty());
+  CHECK(reloaded.entries()[1].name == "panic");
+  CHECK(reloaded.entries()[1].slot == "ota_0");
   CHECK(reloaded.entries()[3].slot == "ota_1");
 }

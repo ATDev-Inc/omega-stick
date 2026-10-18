@@ -41,9 +41,11 @@ namespace espp {
 ///
 /// An entry2 line is boot,reason,abnormal,slot,name (slot empty when unknown;
 /// a slot label never contains a comma). The older form, entry=boot,reason,
-/// abnormal,name, is still read, with the slot unknown, so a log written
-/// before the slot field existed keeps loading. Entries are always written as
-/// entry2.
+/// abnormal,name, is still read, so a log written before the slot field
+/// existed keeps loading. That form carried the slot as a trailing " (label)"
+/// in the name ("panic (ota_0)"); load moves the label into the slot and
+/// strips the suffix. A name without such a suffix has an unknown slot.
+/// Entries are always written as entry2.
 ///
 /// Unknown or damaged lines are skipped on load, so an older or hand-edited
 /// file still loads and a corrupt one degrades to an empty log.
@@ -302,7 +304,19 @@ private:
       entry.name = std::string(value.substr(c4 + 1));
     } else {
       entry.slot.clear();
-      entry.name = std::string(value.substr(c3 + 1));
+      std::string_view name = value.substr(c3 + 1);
+      // Legacy "reason (slot)": the label has no spaces, commas or parentheses.
+      if (name.size() > 3 && name.back() == ')') {
+        const auto open = name.rfind(" (");
+        if (open != std::string_view::npos) {
+          const std::string_view label = name.substr(open + 2, name.size() - open - 3);
+          if (!label.empty() && label.find_first_of(" ,()") == std::string_view::npos) {
+            entry.slot = std::string(label);
+            name = name.substr(0, open);
+          }
+        }
+      }
+      entry.name = std::string(name);
     }
     return true;
   }
