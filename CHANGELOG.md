@@ -147,6 +147,12 @@ in `version.txt`.
 
 ### Fixed
 
+- **TMAG5273 field readings are now correct for either part variant.** The
+  driver assumed the A2 full-scale values, so an A1 (x1) would have reported
+  readings about 3.3x too high. It now reads the version from the sensor's
+  DEVICE_ID register at start-up, so no configuration is needed (a setting can
+  still force a variant). Stick feel is unchanged, since the joystick runs on
+  raw counts. ([#45](https://github.com/ATDev-Inc/omega-stick/pull/45))
 - **A calibration sweep that covers only a small arc is now refused.** The
   range calibration never checked that the stick was moved around at least half
   of the circle, so a short back-and-forth sweep could be saved and leave the
