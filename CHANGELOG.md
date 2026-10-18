@@ -183,6 +183,12 @@ in `version.txt`.
 
 ### Documentation
 
+- **Flashing instructions corrected.** The first-flash page and docs no longer
+  tell you to leave an erase box ticked that starts unticked: the installer now
+  erases without asking. They say what the first start does (the board
+  calibrates by itself, with prompts nobody can see) and to run calibration
+  from the console afterwards, and the README says the serial monitor loses the
+  board once USB starts and that a running board needs `BOOT` held to flash.
 - **Hardware handling.** The README now warns never to plug or unplug Qwiic
   or similar connectors while the board is powered.
 - **Update docs match the two-slot layout.** Removed the stale "factory app"
