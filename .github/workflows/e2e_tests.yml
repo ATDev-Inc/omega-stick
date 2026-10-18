@@ -1,0 +1,47 @@
+name: E2E tests
+
+on:
+  pull_request:
+  # Also on the default branch, so the README badge reflects it.
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  sim-console-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Build omega_sim
+        run: |
+          cmake -S sim -B build-sim -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-sim
+
+      # --speed 1: the late-sensor check needs the console to reconnect inside the
+      # simulator's 3 s window, which a loaded runner misses at speed 4.
+      # The runner's Chrome sandbox can be refused (user namespaces are restricted on
+      # recent Ubuntu images), so the check runs Chrome with --no-sandbox. It only
+      # loads a local copy of the console and talks to the local simulator.
+      - name: Run the console against the simulator
+        run: |
+          node tests/e2e/sim_console.mjs --sim build-sim/omega_sim \
+            --chrome "$(command -v google-chrome)" --no-sandbox --speed 1 --verbose 2>&1 | tee e2e.log
+          exit "${PIPESTATUS[0]}"
+
+      - name: Upload the log
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-log
+          path: e2e.log

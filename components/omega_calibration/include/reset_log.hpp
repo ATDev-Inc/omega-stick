@@ -22,19 +22,30 @@ namespace espp {
 /// host tests can drive it. The caller also says whether the reason counts
 /// as abnormal (panic, watchdog, brownout), which lets a later health check
 /// ask "has this image been crashing?" without decoding reasons itself.
+/// Each entry also carries the app slot that boot ran in ("ota_0"), as a
+/// field of its own rather than text inside the name. An empty slot means
+/// unknown.
 ///
 /// Usage at boot:
 ///
 ///   espp::ResetLog log({.path = espp::ResetLog::default_path()});
 ///   log.load(ec);                                  // tolerant of a missing file
-///   log.record(reason, name, abnormal);            // bumps the boot counter
+///   log.record(reason, name, abnormal, slot);      // bumps the boot counter
 ///   log.save(ec);
 ///
 /// File format, one entry per line, newest last:
 ///
 ///   boot_count=42
-///   entry=40,9,1,brownout
-///   entry=41,1,0,power-on
+///   entry2=40,9,1,ota_0,brownout
+///   entry2=41,1,0,,power-on
+///
+/// An entry2 line is boot,reason,abnormal,slot,name (slot empty when unknown;
+/// a slot label never contains a comma). The older form, entry=boot,reason,
+/// abnormal,name, is still read, so a log written before the slot field
+/// existed keeps loading. That form carried the slot as a trailing " (label)"
+/// in the name ("panic (ota_0)"); load moves the label into the slot and
+/// strips the suffix. A name without such a suffix has an unknown slot.
+/// Entries are always written as entry2.
 ///
 /// Unknown or damaged lines are skipped on load, so an older or hand-edited
 /// file still loads and a corrupt one degrades to an empty log.
@@ -45,6 +56,7 @@ public:
     int reason{0};    ///< Platform reset-reason code, verbatim
     bool abnormal{false};
     std::string name; ///< Human-readable reason, as the caller named it
+    std::string slot; ///< App slot that boot ran in ("ota_0"); empty when unknown
   };
 
   struct Config {
@@ -114,7 +126,12 @@ public:
         }
       } else if (key == "entry") {
         Entry entry;
-        if (parse_entry(value, entry)) {
+        if (parse_entry(value, entry, false)) {
+          entries_.push_back(std::move(entry));
+        }
+      } else if (key == "entry2") {
+        Entry entry;
+        if (parse_entry(value, entry, true)) {
           entries_.push_back(std::move(entry));
         }
       }
@@ -124,10 +141,13 @@ public:
   }
 
   /// Appends this boot's reset reason and bumps the boot counter.
-  void record(int reason, std::string_view name, bool abnormal) {
+  void record(int reason, std::string_view name, bool abnormal, std::string_view slot = {}) {
     boot_count_++;
-    entries_.push_back(Entry{
-        .boot = boot_count_, .reason = reason, .abnormal = abnormal, .name = std::string(name)});
+    entries_.push_back(Entry{.boot = boot_count_,
+                             .reason = reason,
+                             .abnormal = abnormal,
+                             .name = std::string(name),
+                             .slot = std::string(slot)});
     trim();
   }
 
@@ -147,9 +167,12 @@ public:
       }
       out << "boot_count=" << boot_count_ << '\n';
       for (const auto &entry : entries_) {
-        // The name is last so a comma in it cannot break the fixed fields.
-        out << "entry=" << entry.boot << ',' << entry.reason << ',' << (entry.abnormal ? 1 : 0)
-            << ',' << entry.name << '\n';
+        // The name is last so a comma in it cannot break the fixed fields. A
+        // comma or newline in the slot would, so those are not written.
+        std::string slot = entry.slot;
+        std::erase_if(slot, [](char c) { return c == ',' || c == '\n' || c == '\r'; });
+        out << "entry2=" << entry.boot << ',' << entry.reason << ',' << (entry.abnormal ? 1 : 0)
+            << ',' << slot << ',' << entry.name << '\n';
       }
       out.flush();
       if (!out) {
@@ -251,8 +274,8 @@ private:
     return true;
   }
 
-  static bool parse_entry(std::string_view value, Entry &entry) {
-    // boot,reason,abnormal,name
+  static bool parse_entry(std::string_view value, Entry &entry, bool has_slot) {
+    // boot,reason,abnormal,name  (legacy)  or  boot,reason,abnormal,slot,name
     const auto c1 = value.find(',');
     if (c1 == std::string_view::npos) {
       return false;
@@ -272,7 +295,29 @@ private:
       return false;
     }
     entry.abnormal = abnormal != 0;
-    entry.name = std::string(value.substr(c3 + 1));
+    if (has_slot) {
+      const auto c4 = value.find(',', c3 + 1);
+      if (c4 == std::string_view::npos) {
+        return false;
+      }
+      entry.slot = std::string(value.substr(c3 + 1, c4 - c3 - 1));
+      entry.name = std::string(value.substr(c4 + 1));
+    } else {
+      entry.slot.clear();
+      std::string_view name = value.substr(c3 + 1);
+      // Legacy "reason (slot)": the label has no spaces, commas or parentheses.
+      if (name.size() > 3 && name.back() == ')') {
+        const auto open = name.rfind(" (");
+        if (open != std::string_view::npos) {
+          const std::string_view label = name.substr(open + 2, name.size() - open - 3);
+          if (!label.empty() && label.find_first_of(" ,()") == std::string_view::npos) {
+            entry.slot = std::string(label);
+            name = name.substr(0, open);
+          }
+        }
+      }
+      entry.name = std::string(name);
+    }
     return true;
   }
 

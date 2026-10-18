@@ -1,7 +1,7 @@
-// Manual end-to-end check: the real omega_sim driven through the real
-// calibration console in headless Chrome. Not part of CI. See README.md.
+// End-to-end check: the real omega_sim driven through the real
+// calibration console in headless Chrome. Runs in CI (e2e_tests.yml). See README.md.
 //
-//   node tests/e2e/sim_console.mjs [--sim path/to/omega_sim] [--chrome path/to/chrome] [--speed 4] [--verbose]
+//   node tests/e2e/sim_console.mjs [--sim path/to/omega_sim] [--chrome path/to/chrome] [--speed 4] [--no-sandbox] [--verbose]
 //
 // Needs only Node 24 (global WebSocket and fetch) and Chrome.
 
@@ -16,6 +16,7 @@ const root = path.resolve(import.meta.dirname, "..", "..");
 const args = process.argv.slice(2);
 const opt = (name, def) => { const i = args.indexOf("--" + name); return i >= 0 ? args[i + 1] : def; };
 const verbose = args.includes("--verbose");
+const noSandbox = args.includes("--no-sandbox");
 const exe = process.platform === "win32" ? ".exe" : "";
 const simPath = opt("sim", path.join(root, "build-host", "sim", "omega_sim" + exe));
 const chromePath = opt("chrome", process.platform === "win32"
@@ -59,7 +60,7 @@ async function main() {
     .replace("<head>", () => inject);
   fs.writeFileSync(path.join(tmp, "page.html"), html);
 
-  chrome = await launchChrome(chromePath, path.join(tmp, "chrome"), "about:blank");
+  chrome = await launchChrome(chromePath, path.join(tmp, "chrome"), "about:blank", noSandbox ? ["--no-sandbox"] : []);
   cdp = await connectCdp(chrome.wsUrl, (m) => {
     if (m.method === "Page.javascriptDialogOpening") {
       if (verbose) console.log("  dialog accepted: " + m.params.message.split("\n")[0]);
@@ -304,7 +305,7 @@ async function main() {
   await sleep(1500);
   const msgRollback = await text("updateError");
   const verWhilePending = await fwVersion();
-  await waitFor("the deadline rollback", async () => (await fwVersion()) === startVer, 120000);
+  await waitFor("the deadline rollback", async () => (await fwVersion()) === startVer, 180000);
   const verAfterRollback = await fwVersion();
   check("g", "flash 0.2.0 confirmed, revert, then a fail_self_test image is refused and rolled back at the deadline",
     verNew === "0.2.0" && reconnectedG && /Update confirmed/.test(msgNew) &&

@@ -57,12 +57,11 @@ test("buildLatest has exactly the documented schema", async () => {
   });
 });
 
-test("buildManifest writes the merged image at offset 0 and prompts to erase", async () => {
+test("buildManifest writes the merged image at offset 0 without an erase prompt", async () => {
   const m = await load();
   assert.deepEqual(m.buildManifest({ version: "0.2.0" }), {
     name: "Omega Stick",
     version: "0.2.0",
-    new_install_prompt_erase: true,
     builds: [
       {
         chipFamily: "ESP32-S3",

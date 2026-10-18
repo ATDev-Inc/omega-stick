@@ -38,12 +38,8 @@ Last reviewed: 2026-10-17.
 
 ## Firmware defects
 
-- [ ] XFAIL: `MIN_COVERED_SECTORS` is never checked, so a sweep covering 8 of
-      32 sectors is accepted.
 - [ ] XFAIL: `set_angle_conversion` writes `SENSOR_CONFIG_2` bits 3:2 but the
       getter reads bits 7:6.
-- [ ] XFAIL: the mouse button index narrows from `int` to `uint16_t`, so 65537
-      acts as button 1.
 - [ ] Flip each `XFAIL_TEST` to `TEST` in the pull request that fixes it, and
       update the list in [tests/host/README.md](tests/host/README.md).
 - [ ] XAC: confirm the port-to-axis mapping on a real Xbox Adaptive Controller,
@@ -52,8 +48,6 @@ Last reviewed: 2026-10-17.
       right stick option. Lands with the mapping fix or in M2.
 - [ ] Status LED for sensor fault and update states (STA-1, STA-2). Still open
       under D21.
-- [ ] Give `ResetLog::Entry` a proper slot field instead of encoding the slot in
-      the reason text.
 - [ ] D22 rule 2: whether the reset log should judge a pending image's first
       boots, now that the console does the confirming.
 
@@ -86,8 +80,8 @@ Check `build-ota/sdkconfig` reads `CONFIG_OMEGA_STICK_OTA=y`. See
 - [ ] Per-axis gain and inversion.
 - [ ] Tremor filter, default off (D8).
 - [ ] Profiles.
-- [ ] Settings schema version with migration (PER-3). Do this before the first
-      field that changes meaning, or it is a MAJOR bump.
+- [ ] Migration code for the settings schema (PER-3) when the first schema bump
+      happens. The `schema=1` key is already written; a bump is a MAJOR bump.
 - [ ] On-device calibration gesture (CAL-2).
 - [ ] Wire the unused TMAG5273 registers that the driver already models:
       `INT_CONFIG_1` (data-ready interrupt, SEN-4), `MAG_OFFSET_CONFIG_1/2`,
@@ -100,9 +94,6 @@ Check `build-ota/sdkconfig` reads `CONFIG_OMEGA_STICK_OTA=y`. See
 - [ ] 1 ms poll interval (OUT-5), after the loop-timing measurement above.
 - [ ] Own USB PID; the current pair is borrowed. Read
       [compliance.md](docs/compliance.md) first.
-- [ ] Bump espp past 1.3.6 and adopt the dispatcher `protocol` field, its own
-      pull request. Drop the `<bit>` include workaround once hid-rp ships the
-      fix.
 
 ## Hardware and documentation (M1 and M4)
 
@@ -119,8 +110,6 @@ Check `build-ota/sdkconfig` reads `CONFIG_OMEGA_STICK_OTA=y`. See
       worth it before M3's enumeration changes.
 - [ ] Host tests do not cover the concurrent `save_to_flash` writers or the
       recalibration race against the control loop; both need a scheduler.
-- [ ] Run the simulator end-to-end check (`tests/e2e/`) in CI, or document why
-      it stays manual.
 
 ## Decisions needed (maintainers, not pull requests)
 

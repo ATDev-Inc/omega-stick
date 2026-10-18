@@ -92,14 +92,14 @@ are stand-ins (last two rows):
 | Header | Source |
 |---|---|
 | `omega_calibration.hpp`, `omega_store.hpp`, `calibration_service.hpp`, `xac.hpp`, `firmware_health_check.hpp` | the components under test |
-| `stream_frame.hpp`, `dispatcher.hpp` | real espp 1.3.6 |
-| `base_component.hpp`, `logger.hpp` (+ `logger.cpp`) | real espp 1.3.6 |
-| `format.hpp` and the vendored fmt | real espp `format` 1.3.6, header-only (`FMT_HEADER_ONLY`, set by `format.hpp`) |
-| `range_mapper.hpp`, `vector2d.hpp` | real espp `math` 1.3.6 |
-| `joystick.hpp` (+ `joystick.cpp`) | real espp 1.3.6 |
-| `file_system.hpp` (+ `file_system.cpp`) | real espp 1.3.6 |
-| `base_peripheral.hpp` | real espp 1.3.6 |
-| `hid-rp-*.hpp`, `hid/` and the `*-formatters.hpp` headers | real espp `hid-rp` 1.3.6 archive |
+| `stream_frame.hpp`, `dispatcher.hpp` | real espp 1.3.8 |
+| `base_component.hpp`, `logger.hpp` (+ `logger.cpp`) | real espp 1.3.8 |
+| `format.hpp` and the vendored fmt | real espp `format` 1.3.8, header-only (`FMT_HEADER_ONLY`, set by `format.hpp`) |
+| `range_mapper.hpp`, `vector2d.hpp` | real espp `math` 1.3.8 |
+| `joystick.hpp` (+ `joystick.cpp`) | real espp 1.3.8 |
+| `file_system.hpp` (+ `file_system.cpp`) | real espp 1.3.8 |
+| `base_peripheral.hpp` | real espp 1.3.8 |
+| `hid-rp-*.hpp`, `hid/` and the `*-formatters.hpp` headers | real espp `hid-rp` 1.3.8 archive |
 | `ota.hpp`, `esp_app_desc.h` | `stubs/`, controllable `espp::Ota` fake and a fixed `esp_app_desc_t` |
 | `esp_ota_ops.h` | `stubs/`, fake of the ESP-IDF OTA partition calls (other slot, image state, `esp_ota_set_boot_partition`), driven through `esp_ota_fake()` |
 
@@ -123,17 +123,15 @@ That keeps the fix and its regression test tied together.
 
 Current XFAIL entries:
 
-- `range_calibration_rejects_insufficient_sector_coverage`:
-  `MIN_COVERED_SECTORS` is never checked, so a sweep of 8 of 32 sectors is
-  accepted instead of failing with `no_range_samples`.
 - `tmag_angle_conversion_getter_reads_back_what_the_setter_wrote`:
   `set_angle_conversion` writes `SENSOR_CONFIG_2` bits 3:2 but
   `angle_conversion()` reads bits 7:6.
-- `mouse_set_button_rejects_indices_that_wrap_into_range`: the button index is
-  narrowed from `int` to `uint16_t`, so 65537 acts as button 1.
 
 Fixed, now plain tests:
 
+- `mouse_set_button_rejects_indices_that_wrap_into_range`: the button index was
+  narrowed from `int` to `uint16_t`, so 65537 acted as button 1. `set_button` and
+  `get_button` now range-check the `int` first.
 - `store_set_measured_calibration_preserves_live_manual_offset`: a drift
   nudge or recalibration pushed from the control loop's stale local
   `CenterResult` reverted a manual offset the console set. The loop now
@@ -180,9 +178,6 @@ Fixed, now plain tests:
   register file. The header relies on `printf` being reachable transitively
   (no `<cstdio>` include), and `is_connected()` prints the device ID on every
   call.
-- `hid-rp-mouse.hpp` narrows `int` to `uint16_t` in `set_button`/`get_button`;
-  MSVC flags it (C4244). The two test files that include it silence that one
-  warning (`/wd4244` in `CMakeLists.txt`) until the header is fixed.
 - `range_calibration()` indexes an empty vector (undefined behaviour) when
   samples read fine but every one sits exactly on the center, because no
   sector then has a positive radius. Not tested, since it cannot be run safely.
