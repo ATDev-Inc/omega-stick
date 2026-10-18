@@ -31,7 +31,7 @@ project(omega_stick_host_tests CXX)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/omega_host.cmake)
 
 set(OMEGA_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
-set(ESPP_HID_RP_VERSION "1.3.6") # espp/hid-rp in dependencies.lock
+set(ESPP_HID_RP_VERSION "1.3.8") # espp/hid-rp in dependencies.lock
 
 # ---- espp hid-rp (XAC report) ----------------------------------------------
 # The pinned component archive from the ESP component registry, the same one
@@ -43,7 +43,7 @@ set(HID_RP_DIR "${CMAKE_CURRENT_BINARY_DIR}/espp__hid-rp-v${ESPP_HID_RP_VERSION}
 fetch_pinned(
   "https://components-file.espressif.com/components/espp/hid-rp/${ESPP_HID_RP_VERSION}/espp__hid-rp-v${ESPP_HID_RP_VERSION}.zip"
   "${HID_RP_ARCHIVE}"
-  11ad7ca6a4d2030f3af76d771ba8857d32db7c94a48d42770c2256da6c667007)
+  3f05699b70435c4e0ce6a1deb659e8d679f8a29a316739c8c7e29fb186e65382)
 if(NOT EXISTS "${HID_RP_DIR}/include/hid-rp-gamepad.hpp")
   file(ARCHIVE_EXTRACT INPUT "${HID_RP_ARCHIVE}" DESTINATION "${HID_RP_DIR}")
 endif()
@@ -89,13 +89,6 @@ target_link_libraries(omega_host_tests PRIVATE espp_host)
 
 # ---- compiler flags ---------------------------------------------------------
 omega_host_apply_flags(omega_host_tests)
-if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-  # hid-rp-mouse.hpp narrows the int button index to uint16_t (C4244); this is
-  # the known bug mouse_set_button_rejects_indices_that_wrap_into_range. Only
-  # the translation units that include that header are exempted.
-  set_source_files_properties(test_mouse_report.cpp test_hid_descriptor.cpp
-                              PROPERTIES COMPILE_OPTIONS "/wd4244")
-endif()
 
 # ---- libFuzzer harness (tests/fuzz) ------------------------------------------
 # Clang only; needs OMEGA_HOST_SANITIZE so espp_host carries the same

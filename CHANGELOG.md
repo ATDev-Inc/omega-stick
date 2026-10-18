@@ -14,6 +14,10 @@ in `version.txt`.
 
 ### Added
 
+- **Schema version in the saved files.** Calibration and settings now each
+  carry `schema=1`, so future firmware can migrate them or refuse a file it
+  cannot read and fall back to recalibrating or defaults. Existing boards keep
+  their calibration and settings, since a file without the key counts as schema 1. ([#49](https://github.com/ATDev-Inc/omega-stick/pull/49))
 - **Simulator `--no-ota` option.** `omega_sim --no-ota` behaves like the v0.1.0
   firmware, built with updates over USB off, so the console's no-updates view
   can be tried and tested without a board. ([#41](https://github.com/ATDev-Inc/omega-stick/pull/41))
@@ -95,6 +99,11 @@ in `version.txt`.
 
 ### Changed
 
+- **espp 1.3.8 throughout.** Every espp component moves from 1.3.6 to 1.3.8,
+  still one release across the board (D20). For this firmware the only code
+  change is in the bundled hid-rp headers, which now include what they use, so
+  the host test workaround for that is gone. Nothing changes for the user of
+  the stick. ([#42](https://github.com/ATDev-Inc/omega-stick/pull/42))
 - **v0.1.0 ships with firmware updates over USB turned off.** The release is
   built without the update engine (`OMEGA_STICK_OTA` off), so the console shows
   that this firmware takes no updates over USB and links to the first-flash
@@ -148,6 +157,15 @@ in `version.txt`.
   DEVICE_ID register at start-up, so no configuration is needed (a setting can
   still force a variant). Stick feel is unchanged, since the joystick runs on
   raw counts. ([#45](https://github.com/ATDev-Inc/omega-stick/pull/45))
+- **A calibration sweep that covers only a small arc is now refused.** The
+  range calibration never checked that the stick was moved around at least half
+  of the circle, so a short back-and-forth sweep could be saved and leave the
+  range wrong. It now fails with the no-range-samples error and the console
+  reports it, so you can sweep a full slow circle and try again. ([#44](https://github.com/ATDev-Inc/omega-stick/pull/44))
+- **Out-of-range mouse button numbers are ignored.** A button index far outside
+  1 to 3 (such as 65537) used to wrap around and press the left button; it is
+  now rejected. The stick's own nudge clicks only use buttons 1 and 2, so
+  normal use is unchanged. ([#46](https://github.com/ATDev-Inc/omega-stick/pull/46))
 - **The console shows the running firmware version when updates are off.** The
   firmware now reports its version in the discovery reply, which is the only
   place the console can read it from in a build without updates over USB.
@@ -193,6 +211,13 @@ in `version.txt`.
 
 ### Documentation
 
+- **Flashing instructions corrected.** The first-flash page and docs no longer
+  tell you to leave an erase box ticked that starts unticked: the installer now
+  erases without asking. They say what the first start does (the board
+  calibrates by itself, with prompts nobody can see) and to run calibration
+  from the console afterwards, and the README says the serial monitor loses the
+  board once USB starts and that a running board needs `BOOT` held to flash.
+  ([#43](https://github.com/ATDev-Inc/omega-stick/pull/43))
 - **Hardware handling.** The README now warns never to plug or unplug Qwiic
   or similar connectors while the board is powered.
 - **Update docs match the two-slot layout.** Removed the stale "factory app"
