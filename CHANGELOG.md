@@ -220,6 +220,7 @@ in `version.txt`.
   by replugging and connecting within the window, that `BOOT` is the button
   nearer the USB-C connector on the QT Py ESP32-S3, and that a full serial
   flash replaces the saved calibration while `idf.py app-flash` keeps it.
+  ([#53](https://github.com/ATDev-Inc/omega-stick/pull/53))
 - **Status, roadmap and task list reconciled with the code.** [docs/status.md](docs/status.md)
   records the fixed driver defects, the cleared known-bug tests, the saved-file
   schema key, the simulator and the end-to-end CI job, and lists the open
