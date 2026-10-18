@@ -39,6 +39,7 @@ struct Options {
   std::string script_path;
   bool headless{false};
   double speed{1.0};
+  bool no_ota{false}; ///< mirror CONFIG_OMEGA_STICK_OTA=n: no update engine
 };
 
 class Host {

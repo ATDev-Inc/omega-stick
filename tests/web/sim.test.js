@@ -121,6 +121,14 @@ test("the spec example script is valid", () => {
   assert.deepEqual(r, { ok: true, errors: [] });
 });
 
+test("fw_info and the unsupported reply are valid and encode", () => {
+  const step = { at_ms: 1, action: "fw_info", expect_reply: "unsupported" };
+  ok(withSteps(step));
+  const enc = JSON.parse(P.encodeSimMessage({ type: "script", script: withSteps(step) }));
+  assert.equal(enc.script.steps[0].action, "fw_info");
+  assert.equal(enc.script.steps[0].expect_reply, "unsupported");
+});
+
 test("a script with every kind of step is valid", () => {
   const r = P.validateSimScript(withSteps(
     { at_ms: 0, stick: [-1, 1] },

@@ -68,8 +68,13 @@ set_tests_properties(sim_unit_tests PROPERTIES TIMEOUT 60)
 file(GLOB OMEGA_SIM_SCENARIOS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/scenarios/*.json")
 foreach(scenario ${OMEGA_SIM_SCENARIOS})
   get_filename_component(scenario_name "${scenario}" NAME_WE)
+  # A scenario named no_ota_* runs as a firmware built with updates off.
+  set(scenario_flags "")
+  if(scenario_name MATCHES "^no_ota_")
+    set(scenario_flags --no-ota)
+  endif()
   add_test(NAME sim_scenario_${scenario_name}
-           COMMAND omega_sim --headless --fresh
+           COMMAND omega_sim --headless --fresh ${scenario_flags}
                    --data "${CMAKE_CURRENT_BINARY_DIR}/scenario_data/${scenario_name}"
                    --script "${scenario}")
   set_tests_properties(sim_scenario_${scenario_name} PROPERTIES TIMEOUT 120)

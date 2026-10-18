@@ -506,6 +506,9 @@ std::string Host::request(uint8_t type, const std::vector<uint8_t> &payload) {
       if (code == static_cast<uint32_t>(std::errc::invalid_argument)) {
         return "invalid";
       }
+      if (code == static_cast<uint32_t>(std::errc::function_not_supported)) {
+        return "unsupported";
+      }
       return "error";
     }
     return "ok";
@@ -529,6 +532,9 @@ std::string Host::action_reply(const Step &step) {
   }
   if (step.name == "mark_valid") {
     return request(type(Msg::MarkValid), {});
+  }
+  if (step.name == "fw_info") {
+    return request(type(Msg::GetFwInfo), {});
   }
   if (step.name == "set_mode") {
     return request(type(Msg::SetInputMode), {static_cast<uint8_t>(step.text == "xac" ? 1 : 0)});

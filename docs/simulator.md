@@ -20,7 +20,7 @@ console; see [docs/status.md](status.md) for what has been tried on a device.
 
 ```
 omega_sim [--port 8765] [--data DIR] [--fresh] [--mode mouse|xac]
-          [--script FILE] [--headless] [--speed N]
+          [--script FILE] [--headless] [--speed N] [--no-ota]
 ```
 
 | Option | Meaning |
@@ -32,6 +32,7 @@ omega_sim [--port 8765] [--data DIR] [--fresh] [--mode mouse|xac]
 | `--script FILE` | Play a script (format below) from boot |
 | `--headless` | No WebSocket; run `--script` on simulated time as fast as possible, print a report, exit 0 if every `expect` passed, 1 otherwise |
 | `--speed N` | Interactive mode only: run simulated time N times faster than real time (default 1) |
+| `--no-ota` | Behave like a firmware built with `CONFIG_OMEGA_STICK_OTA=n` (the v0.1.0 default): no update engine, so GET_FW_INFO, the OTA messages, REVERT and MARK_VALID reply `function_not_supported`, no health check and no crash-loop revert, and an image that boots pending verification accepts itself at boot. The console then hides its update controls. Applies to every restart. Scenarios named `no_ota_*.json` run with it |
 
 In the calibration console choose **Connect Simulator**. The page connects to
 `ws://127.0.0.1:8765` and from then on behaves as with a real stick, plus a
@@ -183,7 +184,7 @@ Each step has `at_ms` and exactly one of:
 | `stick: [x, y]` | Keyframe. The stick moves linearly between consecutive keyframes |
 | `pattern: name` | Play a built-in pattern from this time (optional `duration_ms`) |
 | `fault`, `drift`, `noise`, `next_image` | Same values as the WebSocket messages |
-| `action` | A console request sent through the real protocol: `recalibrate`, `save`, `restart`, `set_mode` (with `value`: `mouse` or `xac`), `set_deadzone` (with `value`: `{"center": 0.1, "range": 0.05}`, either may be omitted), `flash` (uploads a generated firmware image through OTA_BEGIN/DATA/FINISH; optional `version`, default `9.9.9-sim`), `revert`, `mark_valid`. Optional `expect_reply`: `ok`, `busy`, `invalid`, `error`; without it the reply must be `ok`. For `flash` the reply checked is the first failure, else OTA_FINISH's |
+| `action` | A console request sent through the real protocol: `recalibrate`, `save`, `restart`, `set_mode` (with `value`: `mouse` or `xac`), `set_deadzone` (with `value`: `{"center": 0.1, "range": 0.05}`, either may be omitted), `flash` (uploads a generated firmware image through OTA_BEGIN/DATA/FINISH; optional `version`, default `9.9.9-sim`), `revert`, `mark_valid`, `fw_info` (GET_FW_INFO). Optional `expect_reply`: `ok`, `busy`, `invalid`, `unsupported` (function_not_supported), `error`; without it the reply must be `ok`. For `flash` the reply checked is the first failure, else OTA_FINISH's |
 | `expect` | Assertions, checked at that time (headless mode reports them; interactive mode logs them) |
 
 `expect` keys:

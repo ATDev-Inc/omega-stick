@@ -41,6 +41,7 @@ Simulator panel play the `calibrate` pattern while it runs (or start with
 | `--script FILE` | Play a script from boot |
 | `--headless` | No WebSocket: run `--script` on simulated time, print a report, exit 0 if every check passed |
 | `--speed N` | Interactive: simulated time N times faster than real time |
+| `--no-ota` | Mirror a `CONFIG_OMEGA_STICK_OTA=n` build (v0.1.0): no update engine, the console hides its update controls |
 
 Only pages from `file://`, `localhost`, `127.0.0.1` and the published console
 may connect, and only on the loopback interface.
