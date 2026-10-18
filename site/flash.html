@@ -46,11 +46,19 @@
         <p>A blank board usually enters download mode by itself, but doing these steps does no harm.
           A board that already has firmware needs them: its USB port is busy acting as a mouse,
           so you have to ask the chip to wait for new firmware.</p>
+        <p><strong>No buttons needed if the board waits at start-up.</strong> Firmware built with the
+          flashing window (a developer setting, off in releases) keeps the serial port open for the
+          first seconds after plug-in, and the installer can take the board into download mode by
+          itself. If you know the board has it: unplug, plug back in, and choose
+          <strong>Connect and install</strong> within that window. If the mouse comes back first,
+          use the buttons below.</p>
         <p><strong>Never plug or unplug the sensor cable (the small Qwiic connector) while the board
           has power.</strong> Those connectors do not connect power in a safe order and can damage
           the board. Unplug USB first, change cables, then plug USB back in.</p>
-        <p>The board has two small buttons, labelled <kbd>BOOT</kbd> and <kbd>RESET</kbd>.
-          Their positions depend on the board.</p>
+        <p>The board has two small buttons, labelled <kbd>BOOT</kbd> and <kbd>RESET</kbd>. On the
+          QT Py ESP32-S3 they sit side by side on the top of the board next to the USB-C connector:
+          <kbd>BOOT</kbd> is the one nearer the USB-C connector, <kbd>RESET</kbd> the one nearer the
+          small LED and the sensor connector.</p>
         <ol class="steps">
           <li>Plug the board into your computer with a USB cable that carries data (some cables only charge).</li>
           <li>Press and hold <kbd>BOOT</kbd>.</li>
