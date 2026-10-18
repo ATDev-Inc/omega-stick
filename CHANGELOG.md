@@ -189,6 +189,7 @@ in `version.txt`.
   calibrates by itself, with prompts nobody can see) and to run calibration
   from the console afterwards, and the README says the serial monitor loses the
   board once USB starts and that a running board needs `BOOT` held to flash.
+  ([#43](https://github.com/ATDev-Inc/omega-stick/pull/43))
 - **Hardware handling.** The README now warns never to plug or unplug Qwiic
   or similar connectors while the board is powered.
 - **Update docs match the two-slot layout.** Removed the stale "factory app"
