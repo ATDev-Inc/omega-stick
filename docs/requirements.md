@@ -266,7 +266,7 @@ Full analysis: [research/03](research/03-hid-platform-compatibility.md).
 
 ## 11. Known defects to fix first
 
-Found while surveying the existing driver. DEF-1 and DEF-2 blocked milestone M-A; DEF-3 was found while fixing them.
+Found while surveying the existing driver. DEF-1 and DEF-2 blocked milestone M-A; DEF-3 was found while fixing them. All three are fixed in the code (host-tested against a fake bus) and await confirmation on hardware; the entries stay as the record of what was wrong.
 
 ### DEF-1: magnetic range conversion is wrong for the A1 variant
 

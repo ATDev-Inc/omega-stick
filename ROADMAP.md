@@ -49,13 +49,12 @@ beside it.
 - Verify XAC mode on a real Xbox Adaptive Controller and pin down the
   port-to-axis mapping, which today writes X/Y to all four axes. Closes
   issue #2.
-- Fix the two coupled TMAG5273 driver defects (DEF-1 and DEF-2 in
-  [requirements.md](docs/requirements.md#11-known-defects-to-fix-first))
-  together, so published field measurements are correct for both part variants.
-- Clear the three known-bug tests marked `XFAIL_TEST` in
-  [tests/host/README.md](tests/host/README.md#known-bug-tests-xfail_test):
-  sector-coverage check on range calibration, the angle-conversion getter, and
-  mouse button index narrowing.
+- Done: the TMAG5273 driver defects (DEF-1 to DEF-3 in
+  [requirements.md](docs/requirements.md#11-known-defects-to-fix-first)) and
+  the three known-bug tests are fixed; what remains is confirming them on the
+  board in the hardware pass.
+- Decide what a failed first-boot calibration does instead of halting the
+  firmware before USB starts (see [TODO.md](TODO.md)).
 - Status LED for sensor fault and update states (STA-1, STA-2), so a user can
   tell what is wrong without a console attached (goal G5, decision D21).
 - Measure and publish the prototype's actuation force and throw. This is the
@@ -75,7 +74,8 @@ chosen so the stick works untouched.
 - Per-axis gain and inversion.
 - Tremor filter, available and default off (D8).
 - Named profiles, so one stick can serve more than one person or task.
-- Settings schema version, so later firmware can migrate saved files (PER-3).
+- Migration code for the saved-file schema when the first bump happens; the
+  `schema=1` key is already written (PER-3).
 - On-device calibration gesture, for users who cannot reach the console (CAL-2).
 - XAC port selection (left or right stick) instead of the current fixed mapping.
 

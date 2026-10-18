@@ -215,6 +215,11 @@ in `version.txt`.
 
 ### Documentation
 
+- **Status, roadmap and task list reconciled with the code.** [docs/status.md](docs/status.md)
+  records the fixed driver defects, the cleared known-bug tests, the saved-file
+  schema key, the simulator and the end-to-end CI job, and lists the open
+  first-boot calibration decision; TODO.md carries that decision and the
+  non-atomic save as new items. ([#52](https://github.com/ATDev-Inc/omega-stick/pull/52))
 - **Flashing instructions corrected.** The first-flash page and docs no longer
   tell you to leave an erase box ticked that starts unticked: the installer now
   erases without asking. They say what the first start does (the board

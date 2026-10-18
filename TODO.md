@@ -5,24 +5,28 @@ Working task list for the maintainers. The milestone view is
 GitHub issues. Tick items here in the pull request that does them, and move
 anything that stops being true.
 
-Last reviewed: 2026-10-17.
+Last reviewed: 2026-10-18.
 
 ## Now: get to v0.1.0
 
-- [ ] Merge the open pull requests into `owen-updates`: #36 (simulator in
-      AGENTS.md and CONTRIBUTING.md), #37 (console confirms the new image) and
-      #39 (the `OMEGA_STICK_OTA` build switch that ships v0.1.0 with USB
-      updates off, D25; stacked on #37).
 - [ ] Decide #12 (`marshall-updates` to `main`) and #15 (`fix/xac-descriptor`
       to `main`). Both predate `owen-updates`; #15 is probably covered by the
-      espp 1.3.6 adoption (D20). Check before merging or closing.
+      espp adoption (D20, now 1.3.8). Check before merging or closing.
 - [ ] Promote `owen-updates` to `main`.
 - [ ] First hardware pass. Nothing since the sibling-firmware survey has run on
       a board. Never hot-plug the Qwiic connector while powered.
   - [ ] Mouse mode: slow movements, held positions, rapid direction changes,
         sensor unplugged mid-session (expect a centered stick, then recovery).
   - [ ] Console over WebUSB and over Web Serial: state, diagnostics,
-        recalibration, deadzone overrides, mode switch and reconnect.
+        recalibration, deadzone overrides, mode switch and reconnect. A sweep
+        that covers only a small arc must be refused and reported; a full slow
+        circle must still be accepted.
+  - [ ] Sensor driver after DEF-1 to DEF-3: the boot log names the detected
+        variant (x1 or x2; record which part the stick has), and `SENSOR_CONFIG_2`
+        reads back with bits 1:0 both set.
+  - [ ] A board with an existing calibration boots with it intact after the
+        schema key and the reset-log slot field (PR #49, #50), and the console
+        shows the same values and reset history as before.
   - [ ] Release build with updates off: the console shows the first-flash note
         in place of the update controls, and the first-flash page reinstalls
         over an existing install.
@@ -38,8 +42,15 @@ Last reviewed: 2026-10-17.
 
 ## Firmware defects
 
-- [ ] Flip each `XFAIL_TEST` to `TEST` in the pull request that fixes it, and
-      update the list in [tests/host/README.md](tests/host/README.md).
+- [ ] A failed calibration at first boot halts the firmware before USB starts
+      (`main.cpp`), so a partial first sweep leaves a board that never
+      enumerates until a full circle is swept at boot, with prompts nobody can
+      see. Decide between starting USB with output held neutral so the console
+      can recalibrate, retrying the sweep, or keeping the halt (raised on
+      #44).
+- [ ] `OmegaStore` saves in place (truncate, write), with no temporary file
+      and rename, so a power loss mid-save can lose the file. Make the save
+      atomic (noticed in #49).
 - [ ] XAC: confirm the port-to-axis mapping on a real Xbox Adaptive Controller,
       then stop writing X/Y to all four axes. Closes #2.
 - [ ] XAC: the `TODO` in `components/xac/include/xac.hpp` asks for a left or
