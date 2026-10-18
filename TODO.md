@@ -104,9 +104,6 @@ Check `build-ota/sdkconfig` reads `CONFIG_OMEGA_STICK_OTA=y`. See
 - [ ] 1 ms poll interval (OUT-5), after the loop-timing measurement above.
 - [ ] Own USB PID; the current pair is borrowed. Read
       [compliance.md](docs/compliance.md) first.
-- [ ] Bump espp past 1.3.6 and adopt the dispatcher `protocol` field, its own
-      pull request. Drop the `<bit>` include workaround once hid-rp ships the
-      fix.
 
 ## Hardware and documentation (M1 and M4)
 

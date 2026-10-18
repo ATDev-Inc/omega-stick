@@ -89,7 +89,7 @@ re-enumerates and is best shipped once.
 - 1 ms poll interval (OUT-5), after measuring the loop timing on hardware.
 - A USB PID of the project's own, replacing the borrowed placeholder (D10,
   [compliance.md](docs/compliance.md)).
-- Move to the newer espp dispatcher protocol and drop the `==1.3.6` pin, as
+- Move to the newer espp dispatcher protocol and drop the `==1.3.8` pin, as
   its author recommends; the pin is temporary.
 
 ### M4: reproducible by others, v1.0.0

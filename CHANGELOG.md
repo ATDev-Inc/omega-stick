@@ -95,6 +95,11 @@ in `version.txt`.
 
 ### Changed
 
+- **espp 1.3.8 throughout.** Every espp component moves from 1.3.6 to 1.3.8,
+  still one release across the board (D20). For this firmware the only code
+  change is in the bundled hid-rp headers, which now include what they use, so
+  the host test workaround for that is gone. Nothing changes for the user of
+  the stick. ([#42](https://github.com/ATDev-Inc/omega-stick/pull/42))
 - **v0.1.0 ships with firmware updates over USB turned off.** The release is
   built without the update engine (`OMEGA_STICK_OTA` off), so the console shows
   that this firmware takes no updates over USB and links to the first-flash

@@ -354,6 +354,13 @@ smaller jump and had already run on hardware, so that is the one adopted. The
 The host tests pin the same release (see [tests/host](../tests/host/README.md));
 the XAC report-layout tests give identical results on hid-rp 1.3.3 and 1.3.6.
 
+Moved to 1.3.8 on 2026-10-18, one release across the board as before. Between
+1.3.6 and 1.3.8 the components this firmware uses changed only in `hid-rp`
+(the bundled hid-rp headers gained their missing `<bit>` and `<cstdint>`
+includes, so the host test no longer has to include `<bit>` first) and in
+comments; `dispatcher.hpp` is byte-identical. tinyusb and esp_tinyusb stay
+pinned at the same versions.
+
 ## D21: A sensor fault centers the stick, after three failures, not one
 
 When the TMAG5273 stops answering, the firmware reports a centered stick with

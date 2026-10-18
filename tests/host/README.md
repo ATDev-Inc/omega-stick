@@ -92,14 +92,14 @@ are stand-ins (last two rows):
 | Header | Source |
 |---|---|
 | `omega_calibration.hpp`, `omega_store.hpp`, `calibration_service.hpp`, `xac.hpp`, `firmware_health_check.hpp` | the components under test |
-| `stream_frame.hpp`, `dispatcher.hpp` | real espp 1.3.6 |
-| `base_component.hpp`, `logger.hpp` (+ `logger.cpp`) | real espp 1.3.6 |
-| `format.hpp` and the vendored fmt | real espp `format` 1.3.6, header-only (`FMT_HEADER_ONLY`, set by `format.hpp`) |
-| `range_mapper.hpp`, `vector2d.hpp` | real espp `math` 1.3.6 |
-| `joystick.hpp` (+ `joystick.cpp`) | real espp 1.3.6 |
-| `file_system.hpp` (+ `file_system.cpp`) | real espp 1.3.6 |
-| `base_peripheral.hpp` | real espp 1.3.6 |
-| `hid-rp-*.hpp`, `hid/` and the `*-formatters.hpp` headers | real espp `hid-rp` 1.3.6 archive |
+| `stream_frame.hpp`, `dispatcher.hpp` | real espp 1.3.8 |
+| `base_component.hpp`, `logger.hpp` (+ `logger.cpp`) | real espp 1.3.8 |
+| `format.hpp` and the vendored fmt | real espp `format` 1.3.8, header-only (`FMT_HEADER_ONLY`, set by `format.hpp`) |
+| `range_mapper.hpp`, `vector2d.hpp` | real espp `math` 1.3.8 |
+| `joystick.hpp` (+ `joystick.cpp`) | real espp 1.3.8 |
+| `file_system.hpp` (+ `file_system.cpp`) | real espp 1.3.8 |
+| `base_peripheral.hpp` | real espp 1.3.8 |
+| `hid-rp-*.hpp`, `hid/` and the `*-formatters.hpp` headers | real espp `hid-rp` 1.3.8 archive |
 | `ota.hpp`, `esp_app_desc.h` | `stubs/`, controllable `espp::Ota` fake and a fixed `esp_app_desc_t` |
 | `esp_ota_ops.h` | `stubs/`, fake of the ESP-IDF OTA partition calls (other slot, image state, `esp_ota_set_boot_partition`), driven through `esp_ota_fake()` |
 
