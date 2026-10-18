@@ -570,6 +570,7 @@ TEST(tmag_explicit_variant_overrides_the_device_id) {
   CHECK(dev.variant() == Tmag::Variant::A1);
   CHECK_NEAR(dev.range_xy_mT(), 80.0f, 0.0);
 
+  // cppcheck-suppress unreadVariable ; read back through the fake bus callbacks
   bus.regs[Tmag::DEVICE_ID] = 0x01; // an x1 part, forced to A2
   cfg.variant = Tmag::Variant::A2;
   Tmag forced(cfg);
