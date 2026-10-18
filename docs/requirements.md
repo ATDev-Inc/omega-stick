@@ -308,7 +308,7 @@ fixing DEF-1 means wiring the part variant into one place rather than two.
 
 ### DEF-3: the range fields use swapped bits of `SENSOR_CONFIG_2`
 
-**Fixed in [#PR3](https://github.com/ATDev-Inc/omega-stick/pull/PR3).** The text below describes
+**Fixed in [#51](https://github.com/ATDev-Inc/omega-stick/pull/51).** The text below describes
 the defect as found.
 
 `set_xy_range`, `set_z_range` and their getters used X_Y_RANGE = bit 0 and
