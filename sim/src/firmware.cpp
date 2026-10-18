@@ -457,7 +457,7 @@ std::string boot(Host &host, int reset_reason) {
   espp::CalibrationService calibration(calibration_cfg);
   espp::Dispatcher dispatcher; // sim: DispatcherWorker needs espp::Task; same Dispatcher inside
   dispatcher.register_module(calibration);
-  dispatcher.set_device_info("omega-stick");
+  dispatcher.set_device_info("omega-stick", esp_app_get_description()->version);
   dispatcher.serve_discovery(transmit);
   LinkGuard link(host, [&dispatcher](std::span<const uint8_t> data) { dispatcher.feed(data); });
 
