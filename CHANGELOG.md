@@ -17,7 +17,7 @@ in `version.txt`.
 - **Schema version in the saved files.** Calibration and settings now each
   carry `schema=1`, so future firmware can migrate them or refuse a file it
   cannot read and fall back to recalibrating or defaults. Existing boards keep
-  their calibration and settings, since a file without the key counts as schema 1.
+  their calibration and settings, since a file without the key counts as schema 1. ([#49](https://github.com/ATDev-Inc/omega-stick/pull/49))
 - **Simulator `--no-ota` option.** `omega_sim --no-ota` behaves like the v0.1.0
   firmware, built with updates over USB off, so the console's no-updates view
   can be tried and tested without a board. ([#41](https://github.com/ATDev-Inc/omega-stick/pull/41))
