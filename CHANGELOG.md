@@ -142,6 +142,7 @@ in `version.txt`.
   the A2 full-scale values, so an A1 would have reported readings about 3.3x
   too high. The variant is now a driver setting (default A2). Stick feel is
   unchanged, since the joystick runs on raw counts.
+  ([#45](https://github.com/ATDev-Inc/omega-stick/pull/45))
 - **The console shows the running firmware version when updates are off.** The
   firmware now reports its version in the discovery reply, which is the only
   place the console can read it from in a build without updates over USB.

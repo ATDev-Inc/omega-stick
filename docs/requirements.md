@@ -270,7 +270,7 @@ Found while surveying the existing driver. Both block milestone M-A.
 
 ### DEF-1: magnetic range conversion is wrong for the A1 variant
 
-**Fixed in [#PRNUM](https://github.com/ATDev-Inc/omega-stick/pull/PRNUM).** The driver now
+**Fixed in [#45](https://github.com/ATDev-Inc/omega-stick/pull/45).** The driver now
 takes the part variant (`Config::variant`, default A2) and converts through one helper.
 The text below describes the defect as found.
 
@@ -291,7 +291,7 @@ still returns `266.0f` unconditionally.
 
 ### DEF-2: `range_z_mT()` is dead code
 
-**Fixed in [#PRNUM](https://github.com/ATDev-Inc/omega-stick/pull/PRNUM).** `range_xy_mT()`,
+**Fixed in [#45](https://github.com/ATDev-Inc/omega-stick/pull/45).** `range_xy_mT()`,
 `range_z_mT()` and `convert_raw_to_mT` all use the same variant-aware full-scale helper.
 The text below describes the defect as found.
 
