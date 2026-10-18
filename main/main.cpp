@@ -310,14 +310,11 @@ static bool reset_reason_is_crash(esp_reset_reason_t reason) {
   }
 }
 
-// The slot a reset-log entry was tagged with ("panic (ota_0)" -> "ota_0"), or
-// "" for entries written before slots were recorded.
-static std::string slot_from_reset_name(const std::string &name) {
-  const auto open = name.rfind(" (");
-  if (open == std::string::npos || name.back() != ')') {
-    return "";
-  }
-  return name.substr(open + 2, name.size() - open - 3);
+// The reset name as the console shows it: the slot is appended in
+// parentheses ("panic (ota_0)"), the wire text older consoles already read.
+// The slot itself lives in its own field in the log.
+static std::string reset_log_display_name(const espp::ResetLog::Entry &entry) {
+  return entry.slot.empty() ? entry.name : entry.name + " (" + entry.slot + ")";
 }
 
 // A reset nobody asked for: the firmware crashed, hung, or lost power
@@ -360,12 +357,11 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   // ResetLog::default_path() is the first use of espp::FileSystem, which
   // mounts the filesystem, so this has to come before the I2C and sensor
   // setup below.
-  // Each entry's name carries the slot that boot ran in ("panic (ota_0)"), so
+  // Each entry records the slot that boot ran in (Entry::slot), so
   // the crash-loop check below can tell this image's crashes from the other
   // image's (see FirmwareHealthCheck::crashes_while_running).
   const esp_partition_t *running_slot = esp_ota_get_running_partition();
   const std::string running_slot_label = running_slot ? running_slot->label : "factory";
-  const std::string slot_tag = " (" + running_slot_label + ")";
   std::vector<espp::FirmwareHealthCheck<>::BootRecord> boots; // oldest first, filled below
   // Lives for the whole run (read-only after this block) so the calibration
   // console's GET_DIAGNOSTICS can report it.
@@ -377,11 +373,11 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
       printf("WARNING: could not read the reset log: %s\n", log_ec.message().c_str());
     }
     const esp_reset_reason_t reason = esp_reset_reason();
-    reset_log.record(static_cast<int>(reason), reset_reason_name(reason) + slot_tag,
-                     reset_reason_is_abnormal(reason));
+    reset_log.record(static_cast<int>(reason), reset_reason_name(reason),
+                     reset_reason_is_abnormal(reason), running_slot_label);
     for (const auto &entry : reset_log.entries()) {
       boots.push_back(
-          {.slot = slot_from_reset_name(entry.name),
+          {.slot = entry.slot,
            .crash = reset_reason_is_crash(static_cast<esp_reset_reason_t>(entry.reason))});
     }
     if (!reset_log.save(log_ec)) {
@@ -395,7 +391,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
              static_cast<unsigned>(reset_log.entries().size()));
       for (const auto &entry : reset_log.entries()) {
         if (entry.abnormal) {
-          printf("  boot %u: %s\n", static_cast<unsigned>(entry.boot), entry.name.c_str());
+          printf("  boot %u: %s\n", static_cast<unsigned>(entry.boot),
+                 reset_log_display_name(entry).c_str());
         }
       }
     }
@@ -475,7 +472,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
       d.resets.push_back({.boot = entry.boot,
                           .reason = static_cast<uint8_t>(std::clamp(entry.reason, 0, 255)),
                           .abnormal = entry.abnormal,
-                          .name = entry.name});
+                          .name = reset_log_display_name(entry)});
     }
     return d;
   };
