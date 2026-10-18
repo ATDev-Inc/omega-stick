@@ -87,6 +87,7 @@ Every pull request runs:
 | [build.yml](.github/workflows/build.yml) | `build` | `idf.py build` for esp32s3 on IDF v6.0, then again with `sdkconfig.ota` (updates over USB on) in `build-ota`. The merge gate |
 | [host_tests.yml](.github/workflows/host_tests.yml) | `host-tests` | the host unit tests above, plus the simulator's unit tests and scenarios, on gcc (coverage), clang (ASan/UBSan) and MSVC, all with `-Werror` |
 | [web_tests.yml](.github/workflows/web_tests.yml) | `web-tests` | the console's protocol tests above |
+| [e2e_tests.yml](.github/workflows/e2e_tests.yml) | `sim-console-e2e` | builds `omega_sim` and drives the console against it in headless Chrome (`tests/e2e/`) |
 | [fuzz.yml](.github/workflows/fuzz.yml) | `frame-fuzz` | libFuzzer on the frame parser, see [tests/fuzz](tests/fuzz/README.md) |
 | [static_analysis.yml](.github/workflows/static_analysis.yml) | `static_analysis` | cppcheck, `--std=c++17`, global suppressions in [suppressions.txt](suppressions.txt) |
 | [security.yml](.github/workflows/security.yml) | `gitleaks`, `zizmor` | secret scan of the history and a lint of the workflows; also runs daily |
@@ -125,7 +126,7 @@ scripts/                      release_feed.mjs: builds latest.json, manifest.jso
 tests/host/                   desktop unit tests against the real espp code (stubs only for the OTA headers)
 tests/web/, tests/protocol/   Node tests for the console, and the golden frames shared with the host tests
 tests/fuzz/                   libFuzzer harness for the frame parser
-tests/e2e/                    manual end-to-end check of the console against omega_sim in headless Chrome (not in CI)
+tests/e2e/                    manual end-to-end check of the console against omega_sim in headless Chrome (run by e2e_tests.yml)
 sim/                          omega_sim, the desktop simulator: src/, OTA stubs, scenarios/ (run by ctest), tests/
 cmake/omega_host.cmake        shared desktop build of espp and the local components, used by tests/host and sim
 docs/                         PRD, requirements, decisions, compliance, status, and research snapshots

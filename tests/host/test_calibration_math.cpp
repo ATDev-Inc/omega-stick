@@ -185,6 +185,8 @@ TEST(error_category_messages) {
   CHECK_EQ(msg(E::file_write_failed), std::string("failed to write file"));
   CHECK_EQ(msg(E::file_parse_failed), std::string("failed to parse file"));
   CHECK_EQ(msg(E::file_missing_field), std::string("file is missing a required field"));
+  CHECK_EQ(msg(E::unsupported_schema),
+           std::string("file was written by newer firmware (unsupported schema)"));
   CHECK_EQ(msg(static_cast<E>(99)), std::string("unknown error"));
   CHECK_EQ(std::string(Cal::make_error_code(E::read_failure).category().name()),
            std::string("OmegaCalibration"));
@@ -465,9 +467,7 @@ TEST(range_calibration_accepts_exactly_half_the_sectors) {
   CHECK(cal.range_calibration(center_at(0.0f, 0.0f), range, ec));
 }
 
-XFAIL_TEST(range_calibration_rejects_insufficient_sector_coverage,
-           "MIN_COVERED_SECTORS is declared and documented but never checked, so a sweep of "
-           "only 8 of 32 sectors is accepted instead of failing with no_range_samples") {
+TEST(range_calibration_rejects_insufficient_sector_coverage) {
   Recorder rec;
   Cal cal(make_config(rec, replay(sector_sweep(0.0f, 0.0f, constant_radii(8, 30.0f)))));
   Cal::RangeResult range;

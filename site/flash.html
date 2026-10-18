@@ -31,7 +31,7 @@
           <li>If the <a href="console/">console</a> offers a firmware update for your stick, use that
             instead. It keeps your calibration and settings.</li>
           <li><strong>This erases everything on the board</strong>, including calibration and saved
-            settings. You will calibrate again after the first start.</li>
+            settings. Calibrate again from the console afterwards (step 3).</li>
         </ul>
       </section>
 
@@ -75,10 +75,24 @@
         </esp-web-install-button>
         <ol class="steps">
           <li>Choose <strong>Connect and install</strong>. Your browser shows a list of serial ports.</li>
-          <li>Pick the one for your board (see below if the list is empty), then choose Connect.</li>
-          <li>The installer offers to erase the device first. Leave that ticked for a first flash.</li>
+          <li>Pick the one for your board (see below if the list is empty), then choose Connect. In download
+            mode the board appears under a different port name from the one the console uses.</li>
+          <li>Choose <strong>Install Omega Stick</strong>. The installer erases the board, then writes the firmware.</li>
           <li>Wait for it to finish. It takes about a minute. Do not unplug the board.</li>
-          <li>Unplug the board and plug it back in. It now starts normally.</li>
+          <li>Unplug the board and plug it back in, and leave the stick alone for the first few seconds:
+            the firmware measures the stick's center as it starts.</li>
+        </ol>
+      </section>
+
+      <section class="panel" aria-labelledby="h-calibrate">
+        <h2 id="h-calibrate">Step 3: calibrate</h2>
+        <p>On its first start the board calibrates by itself, with prompts you cannot see, so the range it
+          records is whatever the stick happened to do. Set it properly now:</p>
+        <ol class="steps">
+          <li>Open the <a href="console/">console</a> and connect with Web Serial, which shows the prompts.</li>
+          <li>Choose <strong>Re-run calibration</strong> and follow them: leave the stick untouched while the
+            center is measured, then move it slowly through a complete circle, reaching its limit in every
+            direction.</li>
         </ol>
       </section>
 
