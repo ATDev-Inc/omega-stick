@@ -401,9 +401,9 @@ public:
       return false;
     }
 
-    // X_Y_RANGE = bit 0
-    reg &= ~(1U << 0);
-    reg |= (static_cast<uint8_t>(range) & 0x01) << 0;
+    // X_Y_RANGE = bit 1
+    reg &= ~(1U << 1);
+    reg |= (static_cast<uint8_t>(range) & 0x01) << 1;
 
     write_u8_to_register(SENSOR_CONFIG_2, reg, ec);
 
@@ -422,9 +422,9 @@ public:
       return false;
     }
 
-    // Z_RANGE = bit 1
-    reg &= ~(1U << 1);
-    reg |= (static_cast<uint8_t>(range) & 0x01) << 1;
+    // Z_RANGE = bit 0
+    reg &= ~(1U << 0);
+    reg |= (static_cast<uint8_t>(range) & 0x01) << 0;
 
     write_u8_to_register(SENSOR_CONFIG_2, reg, ec);
 
@@ -442,7 +442,7 @@ public:
       return MagneticRange::HIGH;
     }
 
-    return static_cast<MagneticRange>((reg >> 0) & 0x01);
+    return static_cast<MagneticRange>((reg >> 1) & 0x01); // X_Y_RANGE = bit 1
   }
   MagneticRange z_range(std::error_code &ec) const {
 
@@ -452,7 +452,7 @@ public:
       return MagneticRange::HIGH;
     }
 
-    return static_cast<MagneticRange>((reg >> 1) & 0x01);
+    return static_cast<MagneticRange>((reg >> 0) & 0x01); // Z_RANGE = bit 0
   }
 
   // ==========================================================================

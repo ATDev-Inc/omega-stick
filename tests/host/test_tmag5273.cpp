@@ -91,8 +91,8 @@ TEST(tmag_initialize_writes_the_configured_registers_in_order) {
   FakeBus bus;
   Tmag::Config cfg = bus.config();
   cfg.channels = Tmag::MagneticChannels::XYZ;              // 0x7 -> SENSOR_CONFIG_1 bits 7:4
-  cfg.xy_range = Tmag::MagneticRange::HIGH;                // SENSOR_CONFIG_2 bit 0
-  cfg.z_range = Tmag::MagneticRange::HIGH;                 // SENSOR_CONFIG_2 bit 1
+  cfg.xy_range = Tmag::MagneticRange::HIGH;                // SENSOR_CONFIG_2 bit 1
+  cfg.z_range = Tmag::MagneticRange::HIGH;                 // SENSOR_CONFIG_2 bit 0
   cfg.conversion_average = Tmag::ConversionAverage::AVG_8; // 3 -> DEVICE_CONFIG_1 bits 6:4
   cfg.low_noise = true;                                    // DEVICE_CONFIG_2 bit 4
   cfg.operating_mode = Tmag::OperatingMode::CONTINUOUS;    // 2 -> DEVICE_CONFIG_2 bits 1:0
@@ -107,7 +107,7 @@ TEST(tmag_initialize_writes_the_configured_registers_in_order) {
     std::uint8_t value;
   };
   const Expect expected[] = {
-      {Tmag::SENSOR_CONFIG_1, 0x70}, {Tmag::SENSOR_CONFIG_2, 0x01}, {Tmag::SENSOR_CONFIG_2, 0x03},
+      {Tmag::SENSOR_CONFIG_1, 0x70}, {Tmag::SENSOR_CONFIG_2, 0x02}, {Tmag::SENSOR_CONFIG_2, 0x03},
       {Tmag::DEVICE_CONFIG_1, 0x30}, {Tmag::DEVICE_CONFIG_2, 0x10}, {Tmag::DEVICE_CONFIG_2, 0x12},
   };
   CHECK_EQ(bus.writes.size(), std::size_t{6});
@@ -137,7 +137,7 @@ TEST(tmag_initialize_preserves_unrelated_bits_in_the_config_registers) {
   CHECK(dev.initialize(ec));
 
   CHECK_EQ(reg(bus, Tmag::SENSOR_CONFIG_1), 0x3A); // low nibble kept, channels 3 in the high one
-  CHECK_EQ(reg(bus, Tmag::SENSOR_CONFIG_2), 0xFE); // bit 0 cleared (LOW), bit 1 set
+  CHECK_EQ(reg(bus, Tmag::SENSOR_CONFIG_2), 0xFD); // bit 1 cleared (XY LOW), bit 0 set (Z HIGH)
   CHECK_EQ(reg(bus, Tmag::DEVICE_CONFIG_1), 0x9F); // bits 6:4 = 1, bit 7 and 3:0 kept
   CHECK_EQ(reg(bus, Tmag::DEVICE_CONFIG_2), 0xE3); // bit 4 cleared, mode 3, top bits kept
 }
@@ -260,7 +260,7 @@ TEST(tmag_set_xy_and_z_range_each_touch_their_own_bit) {
   std::error_code ec;
   bus.regs[Tmag::SENSOR_CONFIG_2] = 0xFF;
   CHECK(dev.set_xy_range(Tmag::MagneticRange::LOW, ec));
-  CHECK_EQ(reg(bus, Tmag::SENSOR_CONFIG_2), 0xFE);
+  CHECK_EQ(reg(bus, Tmag::SENSOR_CONFIG_2), 0xFD);
   CHECK(dev.set_z_range(Tmag::MagneticRange::LOW, ec));
   CHECK_EQ(reg(bus, Tmag::SENSOR_CONFIG_2), 0xFC);
   CHECK(dev.xy_range(ec) == Tmag::MagneticRange::LOW);
@@ -268,11 +268,29 @@ TEST(tmag_set_xy_and_z_range_each_touch_their_own_bit) {
 
   bus.regs[Tmag::SENSOR_CONFIG_2] = 0x00;
   CHECK(dev.set_z_range(Tmag::MagneticRange::HIGH, ec));
-  CHECK_EQ(reg(bus, Tmag::SENSOR_CONFIG_2), 0x02);
+  CHECK_EQ(reg(bus, Tmag::SENSOR_CONFIG_2), 0x01);
   CHECK(dev.set_xy_range(Tmag::MagneticRange::HIGH, ec));
   CHECK_EQ(reg(bus, Tmag::SENSOR_CONFIG_2), 0x03);
   CHECK(dev.xy_range(ec) == Tmag::MagneticRange::HIGH);
   CHECK(dev.z_range(ec) == Tmag::MagneticRange::HIGH);
+}
+
+TEST(tmag_range_bits_match_the_register_map) {
+  // Register map: X_Y_RANGE = SENSOR_CONFIG_2 bit 1 (0x02), Z_RANGE = bit 0 (0x01).
+  FakeBus bus;
+  Tmag dev(bus.config());
+  std::error_code ec;
+  bus.regs[Tmag::SENSOR_CONFIG_2] = 0x00;
+  CHECK(dev.set_xy_range(Tmag::MagneticRange::HIGH, ec));
+  CHECK_EQ(reg(bus, Tmag::SENSOR_CONFIG_2), 0x02);
+  CHECK(dev.xy_range(ec) == Tmag::MagneticRange::HIGH);
+  CHECK(dev.z_range(ec) == Tmag::MagneticRange::LOW);
+
+  bus.regs[Tmag::SENSOR_CONFIG_2] = 0x00;
+  CHECK(dev.set_z_range(Tmag::MagneticRange::HIGH, ec));
+  CHECK_EQ(reg(bus, Tmag::SENSOR_CONFIG_2), 0x01);
+  CHECK(dev.z_range(ec) == Tmag::MagneticRange::HIGH);
+  CHECK(dev.xy_range(ec) == Tmag::MagneticRange::LOW);
 }
 
 TEST(tmag_set_conversion_average_replaces_only_bits_6_4) {

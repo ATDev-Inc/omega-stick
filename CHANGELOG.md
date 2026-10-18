@@ -147,6 +147,10 @@ in `version.txt`.
 
 ### Fixed
 
+- **TMAG5273 XY and Z range bits were swapped.** The driver wrote the X/Y range
+  to the Z range bit and the reverse. The firmware sets both ranges to HIGH, so
+  the stick's behaviour does not change, but a build that set only one range
+  would have configured the other axis. ([#51](https://github.com/ATDev-Inc/omega-stick/pull/51))
 - **TMAG5273 angle-conversion setting now reads back correctly.** The getter
   read the wrong register bits, so it never returned what had been set. The
   stick does not use it, so nothing changes in use.

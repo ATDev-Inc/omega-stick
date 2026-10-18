@@ -266,7 +266,7 @@ Full analysis: [research/03](research/03-hid-platform-compatibility.md).
 
 ## 11. Known defects to fix first
 
-Found while surveying the existing driver. Both block milestone M-A.
+Found while surveying the existing driver. DEF-1 and DEF-2 blocked milestone M-A; DEF-3 was found while fixing them.
 
 ### DEF-1: magnetic range conversion is wrong for the A1 variant
 
@@ -305,6 +305,17 @@ fixing DEF-1 means wiring the part variant into one place rather than two.
 > device feels. Both corrupt any published measurement and any bench validation,
 > which matters because HW-2 makes a published force protocol part of the
 > product's positioning.
+
+### DEF-3: the range fields use swapped bits of `SENSOR_CONFIG_2`
+
+**Fixed in [#51](https://github.com/ATDev-Inc/omega-stick/pull/51).** The text below describes
+the defect as found.
+
+`set_xy_range`, `set_z_range` and their getters used X_Y_RANGE = bit 0 and
+Z_RANGE = bit 1 of `SENSOR_CONFIG_2`. The register map has them the other way
+round: X_Y_RANGE = bit 1 and Z_RANGE = bit 0. The firmware sets both ranges to
+HIGH, so the register value was the same and the stick behaved correctly, but a
+build that set only one range would have configured the other axis.
 
 ### Also unused, worth wiring
 
