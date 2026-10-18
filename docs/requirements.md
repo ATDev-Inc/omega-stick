@@ -271,7 +271,8 @@ Found while surveying the existing driver. Both block milestone M-A.
 ### DEF-1: magnetic range conversion is wrong for the A1 variant
 
 **Fixed in [#45](https://github.com/ATDev-Inc/omega-stick/pull/45).** The driver now
-takes the part variant (`Config::variant`, default A2) and converts through one helper.
+detects the part variant from the DEVICE_ID version field at init (`Config::variant`
+defaults to auto and can force A1 or A2) and converts through one helper.
 The text below describes the defect as found.
 
 [`components/tmag5273/include/tmag5273.hpp:746`](../components/tmag5273/include/tmag5273.hpp#L746)

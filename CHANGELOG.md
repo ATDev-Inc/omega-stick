@@ -138,11 +138,12 @@ in `version.txt`.
 
 ### Fixed
 
-- **TMAG5273 field readings now follow the part variant.** The driver assumed
-  the A2 full-scale values, so an A1 would have reported readings about 3.3x
-  too high. The variant is now a driver setting (default A2). Stick feel is
-  unchanged, since the joystick runs on raw counts.
-  ([#45](https://github.com/ATDev-Inc/omega-stick/pull/45))
+- **TMAG5273 field readings are now correct for either part variant.** The
+  driver assumed the A2 full-scale values, so an A1 (x1) would have reported
+  readings about 3.3x too high. It now reads the version from the sensor's
+  DEVICE_ID register at start-up, so no configuration is needed (a setting can
+  still force a variant). Stick feel is unchanged, since the joystick runs on
+  raw counts. ([#45](https://github.com/ATDev-Inc/omega-stick/pull/45))
 - **The console shows the running firmware version when updates are off.** The
   firmware now reports its version in the discovery reply, which is the only
   place the console can read it from in a build without updates over USB.

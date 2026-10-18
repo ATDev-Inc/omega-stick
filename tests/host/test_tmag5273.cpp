@@ -39,7 +39,7 @@ struct FakeBus {
   bool fail_reads{false};
   bool fail_writes{false};
 
-  FakeBus() { regs[Tmag::DEVICE_ID] = 0x01; }
+  FakeBus() { regs[Tmag::DEVICE_ID] = 0x02; } // x2 version
   FakeBus(const FakeBus &) = delete;
   FakeBus &operator=(const FakeBus &) = delete;
 
@@ -207,7 +207,7 @@ TEST(tmag_manufacturer_id_is_assembled_lsb_first) {
   std::error_code ec;
   CHECK_EQ(int(dev.manufacturer_id(ec)), 0x5449);
   CHECK(!ec);
-  CHECK_EQ(int(dev.device_id(ec)), 0x01);
+  CHECK_EQ(int(dev.device_id(ec)), 0x02);
 }
 
 TEST(tmag_is_connected_rejects_all_zero_and_all_one_ids) {
@@ -500,10 +500,10 @@ TEST(tmag_a1_variant_uses_the_a1_full_scale_values) {
   }
 }
 
-TEST(tmag_variant_defaults_to_a2_and_does_not_change_raw_counts) {
+TEST(tmag_variant_defaults_to_auto_and_does_not_change_raw_counts) {
   FakeBus bus;
   Tmag::Config cfg = bus.config();
-  CHECK(cfg.variant == Tmag::Variant::A2);
+  CHECK(cfg.variant == Tmag::Variant::AUTO);
   bus.set16(Tmag::X_MSB_RESULT, 1234);
   bus.set16(Tmag::Y_MSB_RESULT, 0xFB2E);
   bus.set16(Tmag::Z_MSB_RESULT, 777);
@@ -517,6 +517,65 @@ TEST(tmag_variant_defaults_to_a2_and_does_not_change_raw_counts) {
   CHECK_EQ(int(r1.y), int(r2.y));
   CHECK_EQ(int(r1.z), int(r2.z));
   CHECK_NEAR(a2.range_xy_mT(), 266.0f, 0.0);
+}
+
+TEST(tmag_auto_variant_is_detected_from_the_device_id_version_field) {
+  struct Case {
+    std::uint8_t id;
+    Tmag::Variant variant;
+    double low;
+    double high;
+  };
+  // Bits 1:0 are the version; the upper bits do not matter.
+  for (const Case c :
+       {Case{0x01, Tmag::Variant::A1, 40.0, 80.0}, Case{0x02, Tmag::Variant::A2, 133.0, 266.0},
+        Case{0x81, Tmag::Variant::A1, 40.0, 80.0}, Case{0x82, Tmag::Variant::A2, 133.0, 266.0}}) {
+    FakeBus bus;
+    bus.regs[Tmag::DEVICE_ID] = c.id;
+    Tmag::Config cfg = bus.config();
+    cfg.xy_range = Tmag::MagneticRange::LOW;
+    cfg.z_range = Tmag::MagneticRange::HIGH;
+    Tmag dev(cfg);
+    std::error_code ec;
+    CHECK(dev.initialize(ec));
+    CHECK(dev.variant() == c.variant);
+    CHECK_NEAR(dev.range_xy_mT(), c.low, 0.0);
+    CHECK_NEAR(dev.range_z_mT(), c.high, 0.0);
+  }
+}
+
+TEST(tmag_auto_variant_falls_back_to_a2_for_an_unknown_version) {
+  for (std::uint8_t id : {std::uint8_t{0x04}, std::uint8_t{0x03}}) {
+    FakeBus bus;
+    bus.regs[Tmag::DEVICE_ID] = id;
+    Tmag dev(bus.config());
+    std::error_code ec;
+    CHECK(dev.initialize(ec));
+    CHECK(dev.variant() == Tmag::Variant::A2);
+  }
+  FakeBus bus;
+  bus.regs[Tmag::DEVICE_ID] = 0x00; // version 0 (reserved)
+  Tmag before_init(bus.config());
+  CHECK(before_init.variant() == Tmag::Variant::A2); // before any detection
+}
+
+TEST(tmag_explicit_variant_overrides_the_device_id) {
+  FakeBus bus;
+  bus.regs[Tmag::DEVICE_ID] = 0x02; // an x2 part
+  Tmag::Config cfg = bus.config();
+  cfg.variant = Tmag::Variant::A1;
+  Tmag dev(cfg);
+  std::error_code ec;
+  CHECK(dev.initialize(ec));
+  CHECK(dev.variant() == Tmag::Variant::A1);
+  CHECK_NEAR(dev.range_xy_mT(), 80.0f, 0.0);
+
+  bus.regs[Tmag::DEVICE_ID] = 0x01; // an x1 part, forced to A2
+  cfg.variant = Tmag::Variant::A2;
+  Tmag forced(cfg);
+  CHECK(forced.initialize(ec));
+  CHECK(forced.variant() == Tmag::Variant::A2);
+  CHECK_NEAR(forced.range_xy_mT(), 266.0f, 0.0);
 }
 
 // ---- temperature, angle, status -------------------------------------------

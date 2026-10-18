@@ -112,7 +112,9 @@ FakeTmagBus::FakeTmagBus(SensorModel &model, Provider provider, FieldHook on_fie
     : model_(model)
     , provider_(std::move(provider))
     , on_field_(std::move(on_field)) {
-  regs_[espp::TMAG5273::DEVICE_ID] = 0x01;
+  // Version field (bits 1:0) = 2, a TMAG5273x2 (+-133 / +-266 mT), which the sensor model scales
+  // for.
+  regs_[espp::TMAG5273::DEVICE_ID] = 0x02;
 }
 
 espp::TMAG5273::Config FakeTmagBus::config(uint8_t address) {
