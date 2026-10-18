@@ -71,8 +71,13 @@ public:
 
   /// Get a button's state
   /// \param button_index The 1-based button index.
-  /// \return The true/false state of that button.
-  bool get_button(int button_index) const { return buttons.test(hid::page::button(button_index)); }
+  /// \return The true/false state of that button, or false if the index is out of range.
+  bool get_button(int button_index) const {
+    if (!valid_button(button_index)) {
+      return false;
+    }
+    return buttons.test(hid::page::button(static_cast<uint16_t>(button_index)));
+  }
 
   /// Set the relative movement for this report
   /// \param x The relative x movement, clamped to [-127, 127].
