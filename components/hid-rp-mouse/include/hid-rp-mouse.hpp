@@ -52,12 +52,21 @@ public:
     wheel_ = 0;
   }
 
+  /// True if \p button_index names a button in this report (1..BUTTON_COUNT). Checked as an int
+  /// so an index outside the uint16_t range cannot wrap into range.
+  static constexpr bool valid_button(int button_index) {
+    return button_index >= 1 && button_index <= static_cast<int>(BUTTON_COUNT);
+  }
+
   /// Set a button's state
   /// \param button_index The 1-based button index (1 = left, 2 = right, 3 = middle).
   /// \param value The true/false value you want to set the button to.
   /// \return true if the button index was in range and was set.
   constexpr bool set_button(int button_index, bool value) {
-    return buttons.set(hid::page::button(button_index), value);
+    if (!valid_button(button_index)) {
+      return false;
+    }
+    return buttons.set(hid::page::button(static_cast<uint16_t>(button_index)), value);
   }
 
   /// Get a button's state

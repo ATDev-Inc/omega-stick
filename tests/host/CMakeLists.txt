@@ -89,13 +89,6 @@ target_link_libraries(omega_host_tests PRIVATE espp_host)
 
 # ---- compiler flags ---------------------------------------------------------
 omega_host_apply_flags(omega_host_tests)
-if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-  # hid-rp-mouse.hpp narrows the int button index to uint16_t (C4244); this is
-  # the known bug mouse_set_button_rejects_indices_that_wrap_into_range. Only
-  # the translation units that include that header are exempted.
-  set_source_files_properties(test_mouse_report.cpp test_hid_descriptor.cpp
-                              PROPERTIES COMPILE_OPTIONS "/wd4244")
-endif()
 
 # ---- libFuzzer harness (tests/fuzz) ------------------------------------------
 # Clang only; needs OMEGA_HOST_SANITIZE so espp_host carries the same
