@@ -96,12 +96,9 @@ bool reset_reason_is_abnormal(int reason) {
   return reset_reason_is_crash(reason) || reason == 9 || reason == 13 || reason == 14;
 }
 
-std::string slot_from_reset_name(const std::string &name) {
-  const auto open = name.rfind(" (");
-  if (open == std::string::npos || name.back() != ')') {
-    return "";
-  }
-  return name.substr(open + 2, name.size() - open - 3);
+// The reset name as the console shows it (mirror of main.cpp).
+std::string reset_log_display_name(const espp::ResetLog::Entry &entry) {
+  return entry.slot.empty() ? entry.name : entry.name + " (" + entry.slot + ")";
 }
 
 // ---- sensor fault status (mirror of main.cpp) ----
@@ -280,7 +277,6 @@ std::string boot(Host &host, int reset_reason) {
   // Reset-reason log (D23)
   // ==========================================================================
   const std::string running_slot_label = esp_ota_get_running_partition()->label;
-  const std::string slot_tag = " (" + running_slot_label + ")";
   std::vector<Health::BootRecord> boots; // oldest first
   espp::ResetLog reset_log(
       {.path = espp::ResetLog::default_path(), .max_entries = RESET_LOG_ENTRIES});
@@ -289,11 +285,10 @@ std::string boot(Host &host, int reset_reason) {
     if (!reset_log.load(log_ec)) {
       host.console_text("WARNING: could not read the reset log: " + log_ec.message());
     }
-    reset_log.record(reset_reason, reset_reason_name(reset_reason) + slot_tag,
-                     reset_reason_is_abnormal(reset_reason));
+    reset_log.record(reset_reason, reset_reason_name(reset_reason),
+                     reset_reason_is_abnormal(reset_reason), running_slot_label);
     for (const auto &entry : reset_log.entries()) {
-      boots.push_back(
-          {.slot = slot_from_reset_name(entry.name), .crash = reset_reason_is_crash(entry.reason)});
+      boots.push_back({.slot = entry.slot, .crash = reset_reason_is_crash(entry.reason)});
     }
     if (!reset_log.save(log_ec)) {
       host.console_text("WARNING: could not save the reset log: " + log_ec.message());
@@ -366,7 +361,7 @@ std::string boot(Host &host, int reset_reason) {
       d.resets.push_back({.boot = entry.boot,
                           .reason = static_cast<uint8_t>(std::clamp(entry.reason, 0, 255)),
                           .abnormal = entry.abnormal,
-                          .name = entry.name});
+                          .name = reset_log_display_name(entry)});
     }
     return d;
   };

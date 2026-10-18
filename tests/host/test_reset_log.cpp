@@ -209,3 +209,55 @@ TEST(reset_log_recovers_from_the_temporary_file_when_the_log_is_missing) {
   CHECK(reloaded.clear(ec));
   CHECK(!std::filesystem::exists(log.temp_path()));
 }
+
+TEST(reset_log_round_trips_the_slot_as_its_own_field) {
+  TempDir dir("reset_log_slot");
+  const auto path = dir.file("omega_resets.log");
+  std::error_code ec;
+  {
+    ResetLog log({.path = path});
+    CHECK(log.load(ec));
+    log.record(4, "panic", true, "ota_0");
+    log.record(1, "usb, with a comma", false);
+    CHECK(log.save(ec));
+  }
+  ResetLog log({.path = path});
+  CHECK(log.load(ec));
+  CHECK_EQ(log.entries().size(), std::size_t{2});
+  CHECK(log.entries()[0].slot == "ota_0");
+  CHECK(log.entries()[0].name == "panic");
+  CHECK(log.entries()[1].slot.empty());
+  CHECK(log.entries()[1].name == "usb, with a comma");
+}
+
+TEST(reset_log_loads_entries_written_before_the_slot_field_with_the_slot_unknown) {
+  TempDir dir("reset_log_legacy_slot");
+  const auto path = dir.file("omega_resets.log");
+  {
+    std::ofstream out(path);
+    out << "boot_count=3\n"
+        << "entry=1,1,0,power-on\n"
+        << "entry=2,4,1,panic (ota_0)\n"
+        << "entry2=3,9,1,ota_1,brownout\n"
+        << "entry2=4,9\n";
+  }
+  ResetLog log({.path = path});
+  std::error_code ec;
+  CHECK(log.load(ec));
+  CHECK_EQ(log.entries().size(), std::size_t{3});
+  CHECK(log.entries()[0].slot.empty());
+  CHECK(log.entries()[1].slot.empty());
+  CHECK(log.entries()[1].name == "panic (ota_0)");
+  CHECK(log.entries()[2].slot == "ota_1");
+  CHECK(log.entries()[2].name == "brownout");
+
+  // Saving rewrites the old entries in the new form without losing them.
+  log.record(1, "power-on", false, "ota_1");
+  CHECK(log.save(ec));
+  ResetLog reloaded({.path = path});
+  CHECK(reloaded.load(ec));
+  CHECK_EQ(reloaded.entries().size(), std::size_t{4});
+  CHECK(reloaded.entries()[1].name == "panic (ota_0)");
+  CHECK(reloaded.entries()[1].slot.empty());
+  CHECK(reloaded.entries()[3].slot == "ota_1");
+}

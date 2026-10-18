@@ -56,8 +56,6 @@ Last reviewed: 2026-10-17.
       right stick option. Lands with the mapping fix or in M2.
 - [ ] Status LED for sensor fault and update states (STA-1, STA-2). Still open
       under D21.
-- [ ] Give `ResetLog::Entry` a proper slot field instead of encoding the slot in
-      the reason text.
 - [ ] D22 rule 2: whether the reset log should judge a pending image's first
       boots, now that the console does the confirming.
 
