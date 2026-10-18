@@ -38,10 +38,6 @@ Last reviewed: 2026-10-17.
 
 ## Firmware defects
 
-- [ ] DEF-1 and DEF-2 in the TMAG5273 driver, fixed together
-      ([requirements.md](docs/requirements.md#11-known-defects-to-fix-first)).
-      Wire the part variant into one place; `range_xy_mT()` and `range_z_mT()`
-      stop being dead code.
 - [ ] XFAIL: `MIN_COVERED_SECTORS` is never checked, so a sweep covering 8 of
       32 sectors is accepted.
 - [ ] XFAIL: `set_angle_conversion` writes `SENSOR_CONFIG_2` bits 3:2 but the

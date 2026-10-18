@@ -126,6 +126,10 @@ public:
 
   enum class MagneticRange : uint8_t { LOW = 0, HIGH = 1 };
 
+  /// Part variant. It sets the full-scale values above, so it only affects the mT conversion;
+  /// raw counts and the range register bits are the same on both.
+  enum class Variant : uint8_t { A1, A2 };
+
   // ==========================================================================
   // Angle conversion
   // ==========================================================================
@@ -189,6 +193,9 @@ public:
 
     MagneticRange z_range{MagneticRange::HIGH};
 
+    /// Defaults to A2, the full-scale values the driver always assumed.
+    Variant variant{Variant::A2};
+
     OperatingMode operating_mode{OperatingMode::CONTINUOUS};
 
     ConversionAverage conversion_average{ConversionAverage::AVG_1};
@@ -211,6 +218,7 @@ public:
       , channels_(config.channels)
       , xy_range_(config.xy_range)
       , z_range_(config.z_range)
+      , variant_(config.variant)
       , operating_mode_(config.operating_mode)
       , conversion_average_(config.conversion_average)
       , low_noise_(config.low_noise) {
@@ -753,22 +761,27 @@ public:
   // Range accessors
   // ==========================================================================
 
-  /// Full-scale range in mT for the configured XY range.
-  float range_xy_mT() const { return xy_range_ == MagneticRange::LOW ? 133.0f : 266.0f; }
+  /// Full-scale range in mT for the configured XY range and part variant.
+  float range_xy_mT() const { return full_scale_mT(variant_, xy_range_); }
 
-  /// Full-scale range in mT for the configured Z range.
-  float range_z_mT() const { return z_range_ == MagneticRange::LOW ? 133.0f : 266.0f; }
+  /// Full-scale range in mT for the configured Z range and part variant.
+  float range_z_mT() const { return full_scale_mT(variant_, z_range_); }
 
 private:
   // ==========================================================================
   // Conversion helpers
   // ==========================================================================
 
+  /// The one place the part variant is turned into a full-scale value (datasheet, +-mT).
+  static float full_scale_mT(Variant variant, MagneticRange range) {
+    if (variant == Variant::A1) {
+      return range == MagneticRange::LOW ? 40.0f : 80.0f;
+    }
+    return range == MagneticRange::LOW ? 133.0f : 266.0f;
+  }
+
   float convert_raw_to_mT(int16_t raw, MagneticRange range) const {
-
-    const float full_scale = range == MagneticRange::LOW ? 0.1330f : 0.2660f;
-
-    return static_cast<float>(raw) / 32768.0f * full_scale * 1000.0f;
+    return static_cast<float>(raw) / 32768.0f * full_scale_mT(variant_, range);
   }
 
   // ==========================================================================
@@ -780,6 +793,8 @@ private:
   MagneticRange xy_range_{MagneticRange::HIGH};
 
   MagneticRange z_range_{MagneticRange::HIGH};
+
+  Variant variant_{Variant::A2};
 
   OperatingMode operating_mode_{OperatingMode::CONTINUOUS};
 

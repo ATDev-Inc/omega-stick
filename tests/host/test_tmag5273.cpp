@@ -474,6 +474,51 @@ TEST(tmag_range_helpers_agree_with_the_raw_conversion_full_scale) {
   }
 }
 
+TEST(tmag_a1_variant_uses_the_a1_full_scale_values) {
+  FakeBus bus;
+  struct Case {
+    Tmag::MagneticRange range;
+    double full_scale;
+  };
+  for (const Case c :
+       {Case{Tmag::MagneticRange::LOW, 40.0}, Case{Tmag::MagneticRange::HIGH, 80.0}}) {
+    Tmag::Config cfg = bus.config();
+    cfg.variant = Tmag::Variant::A1;
+    cfg.xy_range = c.range;
+    cfg.z_range = c.range;
+    Tmag dev(cfg);
+    std::error_code ec;
+    CHECK_NEAR(dev.range_xy_mT(), c.full_scale, 0.0);
+    CHECK_NEAR(dev.range_z_mT(), c.full_scale, 0.0);
+    bus.set16(Tmag::X_MSB_RESULT, 16384);
+    bus.set16(Tmag::Z_MSB_RESULT, 0x8000);
+    CHECK_NEAR(dev.read_x(ec), c.full_scale / 2.0, 1e-4);
+    CHECK_NEAR(dev.read_z(ec), -c.full_scale, 1e-4);
+    const auto m = dev.read_magnetic(ec);
+    CHECK_NEAR(m.x, c.full_scale / 2.0, 1e-4);
+    CHECK_NEAR(m.z, -c.full_scale, 1e-4);
+  }
+}
+
+TEST(tmag_variant_defaults_to_a2_and_does_not_change_raw_counts) {
+  FakeBus bus;
+  Tmag::Config cfg = bus.config();
+  CHECK(cfg.variant == Tmag::Variant::A2);
+  bus.set16(Tmag::X_MSB_RESULT, 1234);
+  bus.set16(Tmag::Y_MSB_RESULT, 0xFB2E);
+  bus.set16(Tmag::Z_MSB_RESULT, 777);
+  std::error_code ec;
+  Tmag a2(cfg);
+  cfg.variant = Tmag::Variant::A1;
+  Tmag a1(cfg);
+  const auto r2 = a2.read_raw(ec);
+  const auto r1 = a1.read_raw(ec);
+  CHECK_EQ(int(r1.x), int(r2.x));
+  CHECK_EQ(int(r1.y), int(r2.y));
+  CHECK_EQ(int(r1.z), int(r2.z));
+  CHECK_NEAR(a2.range_xy_mT(), 266.0f, 0.0);
+}
+
 // ---- temperature, angle, status -------------------------------------------
 
 TEST(tmag_read_temperature_follows_the_header_formula) {

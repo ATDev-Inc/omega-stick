@@ -270,6 +270,10 @@ Found while surveying the existing driver. Both block milestone M-A.
 
 ### DEF-1: magnetic range conversion is wrong for the A1 variant
 
+**Fixed in [#PRNUM](https://github.com/ATDev-Inc/omega-stick/pull/PRNUM).** The driver now
+takes the part variant (`Config::variant`, default A2) and converts through one helper.
+The text below describes the defect as found.
+
 [`components/tmag5273/include/tmag5273.hpp:746`](../components/tmag5273/include/tmag5273.hpp#L746)
 hardcodes the A2 full-scale values (LOW 133 mT, HIGH 266 mT) in
 `convert_raw_to_mT`, picking LOW or HIGH by the configured range but ignoring the
@@ -286,6 +290,10 @@ Reported values are therefore **~3.3x high on an A1** and correct on an A2.
 still returns `266.0f` unconditionally.
 
 ### DEF-2: `range_z_mT()` is dead code
+
+**Fixed in [#PRNUM](https://github.com/ATDev-Inc/omega-stick/pull/PRNUM).** `range_xy_mT()`,
+`range_z_mT()` and `convert_raw_to_mT` all use the same variant-aware full-scale helper.
+The text below describes the defect as found.
 
 [Line 753](../components/tmag5273/include/tmag5273.hpp#L753) is never called,
 and neither is `range_xy_mT()` at line 751: `convert_raw_to_mT` ignores both and
