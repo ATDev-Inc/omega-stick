@@ -123,9 +123,6 @@ That keeps the fix and its regression test tied together.
 
 Current XFAIL entries:
 
-- `range_calibration_rejects_insufficient_sector_coverage`:
-  `MIN_COVERED_SECTORS` is never checked, so a sweep of 8 of 32 sectors is
-  accepted instead of failing with `no_range_samples`.
 - `tmag_angle_conversion_getter_reads_back_what_the_setter_wrote`:
   `set_angle_conversion` writes `SENSOR_CONFIG_2` bits 3:2 but
   `angle_conversion()` reads bits 7:6.

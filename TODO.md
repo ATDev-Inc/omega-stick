@@ -42,8 +42,6 @@ Last reviewed: 2026-10-17.
       ([requirements.md](docs/requirements.md#11-known-defects-to-fix-first)).
       Wire the part variant into one place; `range_xy_mT()` and `range_z_mT()`
       stop being dead code.
-- [ ] XFAIL: `MIN_COVERED_SECTORS` is never checked, so a sweep covering 8 of
-      32 sectors is accepted.
 - [ ] XFAIL: `set_angle_conversion` writes `SENSOR_CONFIG_2` bits 3:2 but the
       getter reads bits 7:6.
 - [ ] Flip each `XFAIL_TEST` to `TEST` in the pull request that fixes it, and
