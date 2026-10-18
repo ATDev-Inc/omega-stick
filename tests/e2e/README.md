@@ -1,8 +1,9 @@
 # Simulator and console end-to-end check
 
 `sim_console.mjs` drives the real `omega_sim` through the real calibration
-console in headless Chrome, using the Chrome DevTools Protocol. It is a manual
-developer check and is not part of CI.
+console in headless Chrome, using the Chrome DevTools Protocol. It runs in CI
+([e2e_tests.yml](../../.github/workflows/e2e_tests.yml), job `sim-console-e2e`)
+and can be run by hand.
 
 It exercises: connecting and the hello, the first-boot calibration prompts, the
 `calibrate` pattern, the virtual stick (keyboard and pointer, right and up), a
@@ -20,14 +21,14 @@ in the simulator output.
 Build the simulator first (from the repository root):
 
 ```
-cmake -S tests/host -B build-host -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-host
+cmake -S sim -B build-sim
+cmake --build build-sim
 ```
 
 Then, with Node 24 and Chrome installed:
 
 ```
-node tests/e2e/sim_console.mjs
+node tests/e2e/sim_console.mjs --sim build-sim/omega_sim
 ```
 
 It takes about one minute, prints one PASS or FAIL line with its evidence per
@@ -35,12 +36,18 @@ check, and exits 1 if any check fails.
 
 | Option | Meaning |
 |---|---|
-| `--sim PATH` | The `omega_sim` executable (default `build-host/sim/omega_sim[.exe]`) |
+| `--sim PATH` | The `omega_sim` executable (default `build-host/sim/omega_sim[.exe]`; the build above puts it at `build-sim/omega_sim[.exe]`) |
 | `--chrome PATH` | The Chrome executable (default: the usual install path for the platform) |
+| `--no-sandbox` | Run Chrome with `--no-sandbox`. CI needs it: the runner's Chrome sandbox can be refused |
 | `--speed N` | Simulator speed factor (default 4) |
 | `--verbose` | Also print the console log and the simulator output at the end, or on failure the tail of both |
 
 Notes:
+
+- In CI the job uses the runner's `google-chrome`, Node 24 and the simulator
+  built as above, and uploads the output (`--verbose`) as the `e2e-log`
+  artifact on failure. The page is loaded from a local file, so no web server
+  is needed.
 
 - Only Node and Chrome are needed: the script has no dependencies, a small CDP
   client is in `cdp.mjs`.
