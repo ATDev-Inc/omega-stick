@@ -241,8 +241,14 @@ settings.** Normal updates go through the console and keep them.
    board with firmware needs it because its USB port is busy acting as a mouse.
    Plug in a data-capable USB cable, hold `BOOT`, press and release `RESET`,
    then release `BOOT`. With no `RESET` button, unplug, hold `BOOT`, plug in,
-   then release. The board looks inactive in this mode and shows up as a serial
-   device.
+   then release. On the QT Py ESP32-S3 both buttons are on the top of the board
+   next to the USB-C connector, `BOOT` being the one nearer the connector. The
+   board looks inactive in this mode and shows up as a serial device.
+   Firmware built with `OMEGA_STICK_BOOT_FLASH_WINDOW_S` set (a developer
+   setting, 0 in releases) needs no buttons: for that many seconds after
+   plug-in the built-in USB Serial/JTAG port is still up, and the installer, or
+   `idf.py flash`, resets the chip into download mode by itself. Replug and
+   connect within the window.
 2. Choose "Connect and install", pick the serial port (in download mode the
    board appears under a different port name from the console's), then
    "Install Omega Stick". The installer erases the board, then writes the
