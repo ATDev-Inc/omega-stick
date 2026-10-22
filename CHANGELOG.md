@@ -220,7 +220,7 @@ in `version.txt`.
   program's path for each build setup (with Visual Studio it is under
   `build-sim\Debug\`), explains the first-run calibration that waits for the
   `calibrate` pattern, and adds a troubleshooting table. The console, README,
-  CONTRIBUTING and AGENTS point to it.
+  CONTRIBUTING and AGENTS point to it. ([#54](https://github.com/ATDev-Inc/omega-stick/pull/54))
 - **Status, roadmap and task list reconciled with the code.** [docs/status.md](docs/status.md)
   records the fixed driver defects, the cleared known-bug tests, the saved-file
   schema key, the simulator and the end-to-end CI job, and lists the open
