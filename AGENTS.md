@@ -65,6 +65,9 @@ cmake --build build-sim
 build-sim/omega_sim --fresh
 ```
 
+(`build-sim/Debug/omega_sim.exe` with Visual Studio; step-by-step guide and
+troubleshooting in [sim/README.md](sim/README.md))
+
 then choose **Connect Simulator** in the console. Use it to try console and
 calibration flows without hardware; it does not replace hardware testing (see
 [docs/simulator.md](docs/simulator.md) for what it cannot prove).
