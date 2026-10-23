@@ -206,9 +206,15 @@ Replace `PORT` with your serial port (`COM7` on Windows, `/dev/ttyACM0` on
 Linux, `/dev/cu.usbmodem*` on macOS). Exit the monitor with `Ctrl-]`.
 
 A board already running the firmware does not reset into the bootloader by
-itself: once TinyUSB starts, the mouse owns the USB port. Hold `BOOT` while
-plugging the board in before flashing, or set the boot window described under
-[Build options](#build-options).
+itself: once TinyUSB starts, the mouse owns the USB port. Either hold `BOOT`
+(on the QT Py ESP32-S3, the button nearer the USB-C connector) while plugging
+the board in, or build with the boot window described under
+[Build options](#build-options): then unplug, replug, and run `idf.py flash`
+within the window, and esptool resets the chip into download mode itself. The
+flash page works the same way. Note that a full `idf.py flash` also writes the
+littlefs image, so it replaces the saved calibration and settings;
+`idf.py app-flash` writes only the application, into the first app slot, and
+keeps them.
 
 ### Run the host tests
 
