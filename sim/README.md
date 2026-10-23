@@ -44,7 +44,9 @@ Where the program ends up depends on the generator CMake picked:
 | Windows with Ninja (`-G Ninja`) | `build-sim\omega_sim.exe` |
 | Linux | `build-sim/omega_sim` |
 
-The rest of this page writes `omega_sim` for whichever path applies to you.
+Typing just `omega_sim` does not work, because the build folder is not on
+your `PATH`. Wherever a command below starts with `omega_sim`, type the path
+from this table in its place.
 
 Optional: `ctest --test-dir build-sim -C Debug --output-on-failure` runs the
 simulator's unit tests and scenarios (`-C Debug` matters only for Visual
@@ -55,9 +57,13 @@ of the ESP-IDF firmware build.
 
 ## 3. Start the simulator
 
-```
-omega_sim --fresh
-```
+From the repository root, run the line for your setup:
+
+| Setup | Command |
+|---|---|
+| Windows, Visual Studio (the default) | `build-sim\Debug\omega_sim.exe --fresh` |
+| Windows with Ninja | `build-sim\omega_sim.exe --fresh` |
+| Linux | `build-sim/omega_sim --fresh` |
 
 `--fresh` starts as a brand-new board. When it is ready it prints a line like:
 
