@@ -36,7 +36,7 @@ check, and exits 1 if any check fails.
 
 | Option | Meaning |
 |---|---|
-| `--sim PATH` | The `omega_sim` executable (default `build-host/sim/omega_sim[.exe]`; the build above puts it at `build-sim/omega_sim[.exe]`) |
+| `--sim PATH` | The `omega_sim` executable (default `build-host/sim/omega_sim[.exe]`; the build above puts it at `build-sim/omega_sim[.exe]`, or `build-sim/Debug/omega_sim.exe` with Visual Studio) |
 | `--chrome PATH` | The Chrome executable (default: the usual install path for the platform) |
 | `--no-sandbox` | Run Chrome with `--no-sandbox`. CI needs it: the runner's Chrome sandbox can be refused |
 | `--speed N` | Simulator speed factor (default 4) |
