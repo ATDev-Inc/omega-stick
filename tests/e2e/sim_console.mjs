@@ -305,13 +305,18 @@ async function main() {
   await sleep(1500);
   const msgRollback = await text("updateError");
   const verWhilePending = await fwVersion();
+  // While the refused image waits for its rollback, the link and Flash stay locked
+  // (a Disconnect would leave the page unable to report the outcome).
+  const disconnectLocked = await ev($("simBtn") + ".disabled");
+  const flashLocked = await ev($("flashBtn") + ".disabled");
   await waitFor("the deadline rollback", async () => (await fwVersion()) === startVer, 180000);
   const verAfterRollback = await fwVersion();
   check("g", "flash 0.2.0 confirmed, revert, then a fail_self_test image is refused and rolled back at the deadline",
     verNew === "0.2.0" && reconnectedG && /Update confirmed/.test(msgNew) &&
     verReverted === startVer && /sensor reported a fault/.test(msgRollback) && /was not confirmed/.test(msgRollback) &&
-    verWhilePending === "0.3.0" && verAfterRollback === startVer,
-    "start " + startVer + "; after flash " + verNew + " (" + msgNew + "); after revert " + verReverted + " (" + msgRevert.slice(0, 80) + "); rollback: " + msgRollback + " -> version " + verAfterRollback + ", reconnects " + connF + " -> " + (await connectedCount()));
+    verWhilePending === "0.3.0" && verAfterRollback === startVer && disconnectLocked && flashLocked,
+    "start " + startVer + "; after flash " + verNew + " (" + msgNew + "); after revert " + verReverted + " (" + msgRevert.slice(0, 80) + "); rollback: " + msgRollback + " -> version " + verAfterRollback + ", reconnects " + connF + " -> " + (await connectedCount()) +
+    "; while waiting: disconnect locked " + disconnectLocked + ", flash locked " + flashLocked);
 
   // ---- i. a sensor that is not polled yet is waited for, then the image is confirmed ----
   // slow_sensor_start answers GET_DIAGNOSTICS with "not observed" (3) for the first seconds of
