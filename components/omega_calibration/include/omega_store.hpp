@@ -84,12 +84,10 @@ public:
 
   /// Loads calibration + settings from flash if present. A missing or
   /// unparseable file is logged and left at that struct's default-
-  /// constructed values -- exactly the "no usable cached calibration"
-  /// fallback the interactive calibration flow already handles; the
-  /// application is responsible for then running an interactive
-  /// calibration (as before OmegaStore existed) when center()/range() come
-  /// back at their defaults, and can push the result in via
-  /// set_calibration().
+  /// constructed values; a calibration file that parses but fails
+  /// OmegaCalibration::check_usable() keeps what the file says. Either way
+  /// the application loads the calibration itself, decides whether it is
+  /// usable, and pushes what it runs with in via set_calibration().
   explicit OmegaStore(const Config &config)
       : BaseComponent("OmegaStore", config.log_level)
       , calibration_path_(config.calibration_path)
@@ -212,6 +210,14 @@ public:
     settings_.nudge_distance_threshold = enter_threshold;
     settings_.nudge_exit_threshold = exit_threshold;
     settings_.nudge_hold_time = time_window;
+  }
+
+  /// Turns nudge clicks on or off live, keeping the tuning values. No
+  /// change-notification is fired: the control loop reads settings() every
+  /// iteration and releases a held nudge as soon as it sees false.
+  void set_nudge_enabled(bool enabled) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    settings_.nudge_enabled = enabled;
   }
 
   /// Sets the input mode live and fires on_mode_changed() (outside the

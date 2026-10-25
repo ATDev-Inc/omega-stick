@@ -36,6 +36,7 @@
     MARK_VALID: 0x5D,
     REVERT: 0x5E,
     GET_DIAGNOSTICS: 0x5F,
+    SET_NUDGE_ENABLED: 0x60,
     STATE: 0xD0,
     CALIBRATION_RESULT: 0xD1,
     FW_INFO: 0xD2,
@@ -189,9 +190,12 @@
     return { id: MODULE_CALIBRATION, how: "missing", versionMismatch: false };
   }
 
-  // Fixed 79-byte STATE struct; see calibration_service.hpp.
+  // Fixed 80-byte STATE struct; see calibration_service.hpp. The trailing u8
+  // nudge_enabled is newer than the rest: firmware without the nudge on/off
+  // switch sends 79 bytes, which decodes as nudgeEnabled null (nudge clicks
+  // are always on there; see nudgeControls). Bytes after it are ignored.
   function decodeState(payload) {
-    if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79)");
+    if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79 or 80)");
     const v = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
     let o = 0;
     const f32 = () => { const x = v.getFloat32(o, true); o += 4; return x; };
@@ -213,10 +217,34 @@
     s.nudgeExitThreshold = f32();
     s.nudgeTimeMs = u32();
     s.inputMode = u8();
+    s.nudgeEnabled = o < payload.length ? u8() !== 0 : null;
     return s;
   }
 
-  // Variable-length DIAGNOSTICS reply; see calibration_service.hpp.
+  // The "Nudge clicks" checkbox and the tuning fields under it, for a
+  // decoded STATE's nudgeEnabled (true, false, or null from firmware without
+  // the switch). Off keeps the tuning values but greys them out; firmware
+  // without the switch shows the box checked and disabled, with a note,
+  // because it would not answer SET_NUDGE_ENABLED.
+  const NUDGE_SWITCH_UNSUPPORTED_NOTE =
+    "This firmware has no nudge on/off switch, so nudge clicks stay on. Update the firmware to turn them off here.";
+  function nudgeControls({ connected, busy, haveState, nudgeEnabled }) {
+    const known = nudgeEnabled === true || nudgeEnabled === false;
+    const live = !!connected && !busy && !!haveState;
+    const off = nudgeEnabled === false;
+    return {
+      checked: !off,
+      toggleDisabled: !live || !known,
+      tuningDisabled: off,
+      applyDisabled: !live || off,
+      note: haveState && !known ? NUDGE_SWITCH_UNSUPPORTED_NOTE : "",
+    };
+  }
+
+  // Variable-length DIAGNOSTICS reply; see calibration_service.hpp. The
+  // trailing u8 calibration_state (D26) is newer than the rest: older firmware
+  // ends after the reset list, which decodes as calibrationState null. Bytes
+  // after it are ignored, for fields later firmware may append.
   function decodeDiagnostics(payload) {
     if (payload.length < 11) throw new Error("malformed DIAGNOSTICS reply (" + payload.length + " B, expected at least 11)");
     const v = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
@@ -234,7 +262,29 @@
       r.name = utf8.decode(payload.subarray(o, o + nameLen)); o += nameLen;
       d.resets.push(r);
     }
+    d.calibrationState = o < payload.length ? u8() : null;
     return d;
+  }
+
+  // DIAGNOSTICS calibration_state codes (D26).
+  const CALIBRATION_USABLE = 0;
+  const CALIBRATION_NEEDED = 1;
+  const CALIBRATION_NEEDED_NOTICE =
+    "This stick has no usable calibration, so its output is held neutral (no cursor or gamepad " +
+    "movement) until a calibration succeeds. Use \"Re-run calibration\" below and follow the prompts.";
+  // The notice the page shows near the calibration controls for a decoded
+  // DIAGNOSTICS reply (or null when none was read): the text, or "" for none.
+  // Firmware without the field (calibrationState null) gets no notice.
+  function calibrationNotice(diagnostics) {
+    if (!diagnostics || diagnostics.calibrationState === null || diagnostics.calibrationState === undefined) return "";
+    return diagnostics.calibrationState === CALIBRATION_USABLE ? "" : CALIBRATION_NEEDED_NOTICE;
+  }
+  // How the Diagnostics panel shows the field.
+  function describeCalibrationState(code) {
+    if (code === null || code === undefined) return "not reported (older firmware)";
+    if (code === CALIBRATION_USABLE) return "usable";
+    if (code === CALIBRATION_NEEDED) return "needs calibration (output held neutral)";
+    return "code " + code;
   }
 
   // Request payload encoders (GET_STATE, SAVE_TO_FLASH and START_CALIBRATION
@@ -264,6 +314,9 @@
   }
   function encodeSetInputMode(mode) {
     return new Uint8Array([mode]);
+  }
+  function encodeSetNudgeEnabled(enabled) {
+    return new Uint8Array([enabled ? 1 : 0]);
   }
 
   // ---------------------------------------------------------------------
@@ -379,7 +432,13 @@
       if (walkOk) {
         fail("not_app_image", "This is an ESP32 image but not an application (it could be a bootloader). Choose the application .bin file (omega_stick.bin).");
       }
-    } else if (bytes.length >= APP_DESC_OFFSET + APP_DESC_SIZE) {
+    } else if (bytes.length < APP_DESC_OFFSET + APP_DESC_SIZE) {
+      // The descriptor starts but the file ends inside it: there is no version
+      // or project to read, so it must not pass as a usable app image.
+      if (walkOk) {
+        fail("truncated", "The file ends inside the firmware's description block, so it is incomplete. Build it again or copy it again.");
+      }
+    } else {
       const d = APP_DESC_OFFSET;
       info.appDesc = {
         secureVersion: v.getUint32(d + 4, true),
@@ -496,13 +555,35 @@
     return plan;
   }
 
+  // Previous-slot states FW_INFO reports that can be reverted to. "empty" (no
+  // image) and "partial" (an interrupted upload left an image that cannot be
+  // verified) cannot, nor can an unknown state from older firmware.
+  const REVERTIBLE_STATES = ["valid", "new", "pending_verify", "invalid", "aborted", "undefined"];
+  const PARTIAL_SLOT_NOTE = "An interrupted upload left a partial image in the other slot, so there is no previous " +
+    "firmware to go back to. Upload new firmware to replace it.";
+  // info: parsed FW_INFO or null. Returns { usable, reason } for the Revert button.
+  function revertAvailability(info) {
+    if (!info) return { usable: false, reason: "The firmware information has not been read from the device." };
+    const st = info.prevState || "";
+    if (REVERTIBLE_STATES.includes(st)) return { usable: true, reason: "" };
+    if (st === "partial") return { usable: false, reason: PARTIAL_SLOT_NOTE };
+    return { usable: false, reason: "No previous firmware in the other slot" };
+  }
+  // The "Previous state" field: FW_INFO's state name, explained where it needs it.
+  function describePrevState(state) {
+    if (state === "partial") return "partial (an interrupted upload, cannot be used)";
+    if (state === "empty") return "empty (no firmware)";
+    return state || "n/a";
+  }
+
   // prev: { version, label, state } from FW_INFO. Used for the Revert panel.
   function buildRevertPlan(running, prev) {
     const warnings = [], errors = [];
     const pv = (prev && prev.version) || "";
-    if (!pv) errors.push({ code: "no_previous", message: "The other slot has no firmware to go back to." });
+    if (prev && prev.state === "partial") errors.push({ code: "partial_previous", message: PARTIAL_SLOT_NOTE });
+    else if (!pv) errors.push({ code: "no_previous", message: "The other slot has no firmware to go back to." });
     const plan = { blocked: errors.length > 0, errors, warnings, kind: "unknown", kindLabel: "", headline: "" };
-    if (!pv) return plan;
+    if (plan.blocked) return plan;
     const rv = (running && running.version) || "unknown";
     plan.headline = "Running " + rv + " -> Previous " + pv;
     const cmp = compareFirmware(running || {}, { version: pv, sha: "" });
@@ -524,12 +605,23 @@
 
   // Compares the build the page expects after a reboot with what FW_INFO now
   // reports. expected: { kind: "flash" | "revert", version, sha? (short or
-  // full), before: { version, sha } }. after: parsed FW_INFO
-  // ({ version, sha, pending }) or null when nothing could be read.
-  // state: confirming | confirmed | rolled_back | unexpected | same_build | no_device.
+  // full), before: { version, sha }, uncertain? }. uncertain is set when the
+  // OTA_FINISH reply was lost with the link, so it is not known whether the
+  // image was installed. after: parsed FW_INFO ({ version, sha, pending,
+  // running?, boot? }) or null when nothing could be read.
+  // state: confirming | confirmed | rolled_back | not_restarted | unexpected | same_build | no_device.
+  // not_restarted: the boot slot was switched but the device still runs the
+  // old image (the reply and the restart were lost); a restart starts it.
   function decideOutcome(expected, after) {
     const before = expected.before || {};
-    const noun = expected.kind === "revert" ? "Reverted to" : "Updated to";
+    const revert = expected.kind === "revert";
+    const noun = revert ? "Reverted to" : "Updated to";
+    const notRestarted = () => ({
+      state: "not_restarted",
+      message: (revert ? "The previous firmware is" : "The new firmware is") +
+               " installed, but the device has not restarted into it yet. Use Restart now: the device then starts it, " +
+               "and this page checks and confirms it.",
+    });
     if (!after || !after.version) {
       return { state: "no_device", message: "The device did not come back, or its firmware version could not be read." };
     }
@@ -541,11 +633,13 @@
     };
     const isNew = sameAs(after, expected);
     const isOld = sameAs(after, before);
+    const switched = !after.pending && !!after.boot && !!after.running && after.boot !== after.running;
     if (isNew && isOld) {
       // Reflashing the identical build: only the pending flag tells.
       if (after.pending) {
         return { state: "confirming", message: noun + " " + after.version + ". Checking it works..." };
       }
+      if (switched) return notRestarted();
       return { state: "same_build", message: "The device is running " + after.version +
                ", the same build as before, so it cannot be told whether the new copy started." };
     }
@@ -554,6 +648,16 @@
       return { state: "confirmed", message: "Update confirmed. The device is running " + after.version + "." };
     }
     if (isOld) {
+      if (switched) return notRestarted();
+      if (revert) {
+        return { state: "rolled_back",
+                 message: "The device is running " + after.version + " again, not the previous firmware (" +
+                          (expected.version || "unknown") + "). The previous firmware did not start, or it was not confirmed." };
+      }
+      if (expected.uncertain) {
+        return { state: "rolled_back",
+                 message: "The update did not complete, so the device is still running " + after.version + "." };
+      }
       return { state: "rolled_back",
                message: "The new firmware was not confirmed, so the device went back to " + after.version + "." };
     }
@@ -673,6 +777,134 @@
     return judgeConfirmCheck(id, await gather());
   }
 
+  // ---- Update flow state (upd.phase in the page) ----
+  // running: writing the image or sending REVERT. rebooting: waiting for the
+  // device to restart and come back. confirming: the checks before MARK_VALID.
+  // waiting_rollback: a check failed; the device goes back at its deadline.
+  // switched_no_restart: the boot slot changed but the OTA_FINISH or REVERT
+  // reply was lost, and with it the restart. link_lost: Disconnect was used
+  // during one of the last three; the next connect picks the update up again.
+  // done (or no update at all): nothing in flight.
+  // The page keeps listening for the device this long after the link dropped.
+  // The firmware goes back to the previous image 120 s after a pending boot,
+  // and its boot flash window (OMEGA_STICK_BOOT_FLASH_WINDOW_S) can hold USB
+  // back for up to 60 s, so 40 s was too short.
+  const RECONNECT_WINDOW_MS = 110000;
+  function updateActive(phase) { return !!phase && phase !== "done"; }
+  function resumesOnReconnect(phase) { return phase === "rebooting" || phase === "link_lost"; }
+  function reconnectDeadline(droppedAt) { return droppedAt + RECONNECT_WINDOW_MS; }
+  // Status text while the page waits for the device after a restart.
+  function reconnectWaitText(leftMs, elapsedMs) {
+    const left = Math.max(0, Math.round(leftMs / 1000));
+    let t = "Waiting for the device to come back (" + left + " s left).";
+    if (elapsedMs >= 15000) t += " After a restart it can take up to a minute to appear again.";
+    return t;
+  }
+
+  const LOCK_REASON = {
+    running: "An update is in progress. These controls come back when it has finished.",
+    waiting_rollback: "The new firmware was not confirmed, and the device is about to go back to the previous firmware. " +
+      "Wait for that to finish, then try again.",
+    switched_no_restart: "The new firmware is installed but the device has not restarted into it. Use Restart now first.",
+  };
+  const PENDING_FLASH_REASON = "The running firmware is waiting to be confirmed, and the device refuses a new update until it is. " +
+    "Use \"Mark running image valid\" to keep it, or wait for the device to go back to the previous firmware.";
+
+  // Which update controls are usable. s: { connected, busy, latestBusy, phase
+  // (upd.phase or null), reconnecting, pending (FW_INFO pending_verify),
+  // revert (revertAvailability) }. Returns { connectLocked, modeLocked, flash,
+  // install, revert, restart, markValid }; each control is { disabled, reason }
+  // with reason "" when there is nothing to explain. While an update is in
+  // flight anything that restarts the device or starts another update stays
+  // locked, since any of them would force the pending image to roll back.
+  function updateControls(s) {
+    const phase = updateActive(s.phase) ? s.phase : "done";
+    const active = phase !== "done";
+    const conn = !!s.connected, busy = !!s.busy;
+    const on = () => ({ disabled: false, reason: "" });
+    const off = (reason) => ({ disabled: true, reason: reason || "" });
+    const lock = active ? off(LOCK_REASON[phase] || LOCK_REASON.running) : null;
+    let flash;
+    if (!conn) flash = off("");
+    else if (lock) flash = lock;
+    else if (s.pending) flash = off(PENDING_FLASH_REASON);
+    else flash = busy ? off("") : on();
+    const install = flash.disabled ? flash : (s.latestBusy ? off("") : on());
+    const rv = s.revert || { usable: false, reason: "" };
+    let revert;
+    if (conn && lock) revert = lock;
+    else if (!rv.usable) revert = off(rv.reason);
+    else revert = (!conn || busy) ? off("") : on();
+    const restart = (!conn || busy) ? off("") : (lock && phase !== "switched_no_restart") ? lock : on();
+    const markValid = (!conn || busy) ? off("") : (lock && phase !== "waiting_rollback") ? lock : on();
+    const connectLocked = ["running", "confirming", "waiting_rollback", "switched_no_restart"].includes(phase) ||
+      (phase === "rebooting" && (conn || !!s.reconnecting));
+    return { connectLocked, modeLocked: active, flash, install, revert, restart, markValid };
+  }
+
+  // What happens to an update when the link goes away while the device is up
+  // but the update is not settled. manual: the page's Disconnect was used (it is
+  // locked during an update, so this is a fallback). Returns null when the
+  // phase is not affected, else { phase, reconnect (start the automatic
+  // reconnect), message }.
+  function afterLinkLoss(phase, manual) {
+    if (phase === "confirming") {
+      return manual
+        ? { phase: "link_lost", reconnect: false,
+            message: "Disconnected before the new firmware was confirmed. The device goes back to the previous firmware by " +
+                     "itself unless this page confirms it within about two minutes of its restart. Reconnect so this page can finish its checks." }
+        : { phase: "rebooting", reconnect: true,
+            message: "The connection dropped while the new firmware was being checked. Reconnecting to find out which firmware the device is running..." };
+    }
+    if (phase === "waiting_rollback") {
+      return manual
+        ? { phase: "link_lost", reconnect: false,
+            message: "Disconnected. The new firmware was not confirmed, so the device goes back to the previous firmware by " +
+                     "itself within about two minutes of its restart. Reconnect to see which firmware it runs." }
+        : { phase: "rebooting", reconnect: true,
+            message: "The connection dropped; the device is probably going back to the previous firmware. Reconnecting to find out which firmware it is running..." };
+    }
+    if (phase === "switched_no_restart") {
+      return manual
+        ? { phase: "link_lost", reconnect: false,
+            message: "Disconnected. The new firmware is installed but has not started yet. Reconnect, then use Restart now so " +
+                     "this page can check and confirm it. If the device restarts without this page, it goes back to the current firmware about two minutes later." }
+        : { phase: "rebooting", reconnect: true,
+            message: "The connection dropped. Reconnecting to find out which firmware the device is running..." };
+    }
+    return null;
+  }
+
+  // OTA_FINISH or REVERT got no reply in time. The firmware switches the boot
+  // slot before it replies and only the delayed restart goes with the lost
+  // reply, so the page reads FW_INFO again. kind: flash | revert. info: parsed
+  // FW_INFO ({ running, boot }) or null. state: switched | not_switched | unknown.
+  function decideAfterFinishTimeout(kind, info) {
+    const what = kind === "revert" ? "the previous firmware" : "the new firmware";
+    if (!info || !info.running || !info.boot) {
+      return { state: "unknown",
+               message: "The device stopped answering, and it is not known whether " + what + " was installed. " +
+                        "Reconnect and check the Boot partition field before trying again." };
+    }
+    if (info.boot !== info.running) {
+      return { state: "switched",
+               message: (kind === "revert" ? "The previous firmware is" : "The new firmware is") +
+                        " installed, but the device did not restart into it. Use Restart now: the device then starts it, " +
+                        "and this page checks and confirms it." };
+    }
+    return { state: "not_switched",
+             message: kind === "revert"
+               ? "The device stopped answering and is still set to start the running firmware, so nothing was changed. Try again."
+               : "The device stopped answering while it checked the new firmware, and it is still set to start the running firmware, so nothing was installed. Try again." };
+  }
+
+  // Whether closing or reloading the page now would leave an update half done.
+  // s: { phase, uploading, downloading }.
+  function shouldWarnBeforeUnload(s) {
+    if (s.uploading || s.downloading) return true;
+    return ["running", "rebooting", "confirming", "switched_no_restart", "link_lost"].includes(s.phase);
+  }
+
   // Wording shown when a check failed and MARK_VALID was not sent.
   function confirmFailureNotice(message) {
     return message + " The new firmware was not confirmed. The device goes back to the previous firmware by " +
@@ -728,6 +960,14 @@
     if (has(/transport lost|disconnected|upload cancelled|NetworkError|device has been lost/i)) {
       return out("lost", "The connection to the device was lost.",
         "Unplug the device, plug it in again, reconnect, and check which firmware it runs before trying again. A half-written update never replaces the working firmware.");
+    }
+    // Firmware that refuses a new upload while the running image is pending
+    // says why; show its words rather than the generic "would not start".
+    const refusal = /OTA_BEGIN refused: (the running image is not confirmed yet[^:]*)/i.exec(t);
+    if (refusal) {
+      const why = refusal[1].trim().replace(/[.;,]+$/, "");
+      return out("not_confirmed", "The device refused the update: " + why + ".",
+        "Confirm the running firmware with \"Mark running image valid\", or wait for the device to go back to the previous firmware, then try again.");
     }
     if (has(/timed out/i)) {
       return out("timeout", /OTA_BEGIN/.test(t) ? "The device took too long to get ready for the update."
@@ -798,6 +1038,45 @@
   const PAGES_BASE = "/omega-stick/";
   const RELEASES_URL = "https://github.com/ATDev-Inc/omega-stick/releases";
   const NOTES_PREFIX = RELEASES_URL + "/";
+
+  // Why a fetch() of the feed or the image threw. Browsers report a request
+  // blocked by CORS and a network failure the same way, so "offline" is used
+  // only when the browser says it has no connection. online: the onLine flag.
+  // kind: timeout | offline | unreachable.
+  function classifyFetchError(error, online) {
+    if (error && error.name === "AbortError") return "timeout";
+    if (online === false) return "offline";
+    return "unreachable";
+  }
+  // Plain wording for a failed feed check. kind: classifyFetchError's kinds,
+  // or missing | http | invalid.
+  function describeFeedFailure(kind, status) {
+    switch (kind) {
+      case "offline": return "This computer is offline, so the release server could not be reached. Check your internet connection and try again.";
+      case "timeout": return "The release server did not answer in time. Try again later.";
+      case "unreachable": return "The release server could not be reached. The network, a firewall or proxy, or the browser's security " +
+        "settings may have blocked it. Try again later, or look at the releases on GitHub.";
+      case "missing": return "No release has been published yet.";
+      case "http": return "The release server returned an error (" + status + "). Try again later.";
+      default: return "The release information could not be read, so nothing was changed.";
+    }
+  }
+  // Plain wording for a failed firmware download. kind: classifyFetchError's
+  // kinds, or http | size | sha | nohash.
+  function describeDownloadFailure(kind, status) {
+    switch (kind) {
+      case "offline": return "This computer is offline, so the firmware could not be downloaded. Nothing was changed.";
+      case "timeout": return "The download stopped making progress, so it was cancelled. Nothing was changed. Try again.";
+      case "unreachable": return "The firmware file could not be reached. The network, a firewall or proxy, or the browser's " +
+        "security settings may have blocked it. Nothing was changed.";
+      case "http": return "The release server could not provide the file (error " + status + "). Try again later.";
+      case "size": return "The downloaded file is not the size the release says it should be, so it was not installed. Try again.";
+      case "sha": return "The downloaded file did not match its checksum, so it was not installed. Try again, and if it keeps " +
+        "happening, download the release from GitHub instead.";
+      case "nohash": return "This browser cannot check the download, so it was not installed. Download the release from GitHub and choose the file instead.";
+      default: return "The download failed, so nothing was changed.";
+    }
+  }
 
   // Where to read the feed from. Served from the project's own Pages site the
   // feed is a sibling path, so it stays same-origin; anywhere else (file://,
@@ -874,6 +1153,21 @@
   // serial?, isSaved } where isSaved is true for the exact port or device
   // object that was connected before. Never guesses between several sticks.
   // reason: exact | only-match | ambiguous | none.
+  // Arbitrates between the automatic reconnect loop and a connect the person
+  // started (the Reconnect button's picker, or a Connect button). The manual
+  // attempt owns connection setup while it runs: the device it is opening is
+  // already marked opened but is not the transport yet, so a loop that kept
+  // scanning would see the other stick as the only free match and open it too.
+  // s: { transportPresent, manualInProgress, manualSucceeded (a manual connect
+  // succeeded since the loop started) }. Returns "stop" (end the loop for good),
+  // "wait" (open nothing; check again on the next wake) or "try" (the loop may
+  // look for a device and open it). The loop asks again after every await.
+  function autoReconnectStep(s) {
+    if (s.transportPresent || s.manualSucceeded) return "stop";
+    if (s.manualInProgress) return "wait";
+    return "try";
+  }
+
   function pickReconnectCandidate(link, candidates) {
     const free = (candidates || []).filter((c) => c && !c.opened && c.kind === link.kind);
     const saved = free.find((c) => c.isSaved);
@@ -893,14 +1187,17 @@
   // validate uploaded scripts, and accumulate HID output for the output view.
   const SIM_PATTERNS = ["rest", "circle", "calibrate", "nudge_right", "nudge_left", "nudge_up", "nudge_down", "wander"];
   const SIM_FAULTS = ["ok", "no_response", "stuck_counter", "weak_magnet"];
-  const SIM_NEXT_IMAGE = ["ok", "fail_self_test", "crash_loop", "slow_sensor_start", "slow_sensor_fail"];
+  const SIM_NEXT_IMAGE = ["ok", "fail_self_test", "crash_loop", "slow_sensor_start", "slow_sensor_fail",
+    "crash_when_confirmed"];
   const SIM_SOURCE_KINDS = ["manual", "pattern", "script"];
   const SIM_REPLIES = ["ok", "busy", "invalid", "unsupported", "error"];
-  const SIM_ACTIONS = ["recalibrate", "save", "restart", "set_mode", "set_deadzone", "flash", "revert", "mark_valid", "fw_info"];
+  const SIM_ACTIONS = ["recalibrate", "save", "restart", "set_mode", "set_deadzone", "flash", "revert", "mark_valid", "fw_info",
+    "plant_unusable_calibration", "set_nudge_enabled"];
   const SIM_SCRIPT_MAX_BYTES = 262144, SIM_SCRIPT_MAX_STEPS = 5000;
   const SIM_MAX_AT_MS = 86400000; // a day
   const SIM_STEP_KEYS = ["stick", "pattern", "fault", "drift", "noise", "next_image", "action", "expect"];
-  const SIM_EXPECT_KEYS = ["calibrated", "center_max", "mouse_moved", "clicked", "mode", "sensor_fault", "sensor_observed", "neutral", "fw_slot", "fw_pending", "fw_version", "xac_x", "xac_y"];
+  const SIM_EXPECT_KEYS = ["calibrated", "center_max", "mouse_moved", "clicked", "mode", "sensor_fault", "sensor_observed", "neutral",
+    "needs_calibration", "fw_slot", "fw_pending", "fw_version", "xac_x", "xac_y"];
 
   const isNum = (v) => typeof v === "number" && Number.isFinite(v);
   const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -1100,6 +1397,8 @@
     }
     if (a === "set_mode") {
       if (step.value !== "mouse" && step.value !== "xac") add(at + "set_mode needs \"value\": \"mouse\" or \"xac\".");
+    } else if (a === "set_nudge_enabled") {
+      if (step.value !== true && step.value !== false) add(at + "set_nudge_enabled needs \"value\": true or false.");
     } else if (a === "set_deadzone") {
       const v = step.value;
       if (!isObj(v)) { add(at + "set_deadzone needs a \"value\" object with \"center\" and/or \"range\"."); return; }
@@ -1136,7 +1435,8 @@
     const oneOf = (k, list) => { if (!list.includes(e[k])) add(at + "expect." + k + " must be one of " + list.join(", ") + "."); };
     for (const k of Object.keys(e)) {
       switch (k) {
-        case "calibrated": case "sensor_fault": case "sensor_observed": case "fw_pending": case "neutral": bool(k); break;
+        case "calibrated": case "sensor_fault": case "sensor_observed": case "fw_pending": case "neutral":
+        case "needs_calibration": bool(k); break;
         case "center_max": if (!isNum(e[k]) || e[k] < 0 || e[k] > 10) add(at + "expect.center_max must be a number from 0 to 10."); break;
         case "fw_version": if (typeof e[k] !== "string" || e[k].length === 0) add(at + "expect.fw_version must be text."); break;
         case "xac_x": case "xac_y": if (!isNum(e[k]) || e[k] < -1 || e[k] > 1) add(at + "expect." + k + " must be a number from -1 to 1."); break;
@@ -1187,12 +1487,17 @@
   const OmegaProtocol = {
     SIM_PATTERNS, SIM_FAULTS, SIM_NEXT_IMAGE,
     encodeSimMessage, parseSimMessage, validateSimScript, createHidAccumulator,
-    pickReconnectCandidate,
+    pickReconnectCandidate, autoReconnectStep,
     FEED_URL, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
     OTA_SLOT_SIZE, CHIP_ID_ESP32S3, DEFAULT_PROJECT, KIND_LABEL,
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
     decideOutcome, CONFIRM_CHECKS, judgeConfirmCheck, awaitSensorHealthy, runConfirmCheck, confirmFailureNotice,
+    REVERTIBLE_STATES, PARTIAL_SLOT_NOTE, revertAvailability, describePrevState,
+    RECONNECT_WINDOW_MS, updateActive, resumesOnReconnect, reconnectDeadline, reconnectWaitText,
+    PENDING_FLASH_REASON, updateControls, afterLinkLoss, decideAfterFinishTimeout, shouldWarnBeforeUnload,
+    classifyFetchError, describeFeedFailure, describeDownloadFailure,
     SENSOR_NOT_OBSERVED, SENSOR_POLL_MS, SENSOR_WAIT_MS, SENSOR_DWELL_MS, describeSensorState,
+    CALIBRATION_USABLE, CALIBRATION_NEEDED, CALIBRATION_NEEDED_NOTICE, calibrationNotice, describeCalibrationState,
     describeUpdateError, formatProgress, formatBytes,
     FIRST_FLASH_URL, NO_USB_UPDATES_NOTE, usbUpdatesUnavailable, decideOutcomeNoUpdates,
     HEADER_SIZE, CRC_SIZE, MAX_PAYLOAD, MAX_FRAME,
@@ -1202,7 +1507,8 @@
     crc32, buildFrame, FrameParser, readU32,
     parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
     encodeSetManualOffset, encodeSetDeadzoneOverride,
-    encodeSetNudgeSettings, encodeSetInputMode,
+    encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled,
+    NUDGE_SWITCH_UNSUPPORTED_NOTE, nudgeControls,
   };
   globalThis.OmegaProtocol = OmegaProtocol;
   if (typeof module !== "undefined" && module.exports) module.exports = OmegaProtocol;

@@ -133,8 +133,19 @@ struct StepInput {
   /// D22 rule 1: a firmware update is in flight (or a reboot is pending), so
   /// the output stays neutral. Takes priority over a recalibration request.
   bool output_hold{false};
+  /// D26: there is no usable calibration, so the output stays neutral as for
+  /// output_hold. Unlike output_hold it lets a recalibration request through:
+  /// a successful sweep is what ends it (the caller clears the flag).
+  bool needs_calibration{false};
   DeviceSettings settings;
 };
+
+/// True when the tick sends a neutral report and does nothing else: a
+/// firmware update holds the output (output_hold), or there is no usable
+/// calibration and no recalibration is starting on this tick.
+inline bool holds_output(const StepInput &in) {
+  return in.output_hold || (in.needs_calibration && !in.recalibration_requested);
+}
 
 /// Bit 0 = button 1 (left click), bit 1 = button 2 (right click).
 struct MouseReport {
@@ -262,13 +273,30 @@ inline StepOutput mouse_step(MouseState &s, const StepInput &in) {
   // a restart.
   const auto &nudge_settings = in.settings;
 
+  // With nudge clicks switched off (SET_NUDGE_ENABLED), a held nudge is
+  // released on this very tick rather than at the next window, so a held
+  // button or scroll never outlives the switch. The gesture baseline follows
+  // the stick every tick while off, so switching back on, even mid-window,
+  // measures only movement made after the switch: a push made while off can
+  // never turn into a click.
+  if (!nudge_settings.nudge_enabled) {
+    if (s.nudge != NudgeDirection::NONE) {
+      s.nudge = NudgeDirection::NONE;
+      s.scroll_poll_count = 0;
+    }
+    s.prev_x = jx;
+    s.prev_y = jy;
+    s.window_start = in.now;
+  }
+
   // --- Nudge direction detection only (runs every nudge_hold_time window) ---
   if (duration >= nudge_settings.nudge_hold_time) {
     const float prev_mag = std::hypot(s.prev_x, s.prev_y);
     const float mapped_magnitude = cur_mag - prev_mag;
 
     if (s.nudge == NudgeDirection::NONE) {
-      if (mapped_magnitude >= nudge_settings.nudge_distance_threshold) {
+      if (nudge_settings.nudge_enabled &&
+          mapped_magnitude >= nudge_settings.nudge_distance_threshold) {
         s.nudge = classify_nudge(jx, jy);
         s.scroll_poll_count = 0;
       }
@@ -318,6 +346,8 @@ inline StepOutput xac_step(XacState &s, const StepInput &in) {
     return detail::recalibration_output();
   }
 
+  // XAC mode has no nudge clicks, so DeviceSettings::nudge_enabled (and the
+  // nudge tuning) does not affect it: the axes always follow the stick.
   StepOutput out;
   out.send_report = true;
   // IMPORTANT:
@@ -420,12 +450,13 @@ inline FaultEdge sensor_fault_update(CommonState &common, const StepInput &in, P
 } // namespace detail
 
 inline void mouse_tick(MouseState &s, const StepInput &in, Ports &ports) {
-  if (in.output_hold) {
-    // Neutral report every tick while a firmware update runs, with the same
-    // bookkeeping reset as a sensor recovery so releasing the hold does not
-    // see a delta against a reading from before it. The sensor monitor keeps
-    // running; a pending recalibration waits (the caller only consumes it
-    // when not holding).
+  if (holds_output(in)) {
+    // Neutral report every tick while a firmware update runs or there is no
+    // usable calibration, with the same bookkeeping reset as a sensor
+    // recovery so releasing the hold does not see a delta against a reading
+    // from before it. The sensor monitor keeps running; during an update a
+    // pending recalibration waits (the caller only consumes it when not
+    // holding).
     detail::sensor_fault_update(s.common, in, ports);
     s.nudge = NudgeDirection::NONE;
     s.scroll_poll_count = 0;
@@ -479,8 +510,9 @@ inline void mouse_tick(MouseState &s, const StepInput &in, Ports &ports) {
 }
 
 inline void xac_tick(XacState &s, const StepInput &in, Ports &ports) {
-  if (in.output_hold) {
-    // See mouse_tick: neutral report every tick while a firmware update runs.
+  if (holds_output(in)) {
+    // See mouse_tick: neutral report every tick while a firmware update runs
+    // or there is no usable calibration.
     detail::sensor_fault_update(s.common, in, ports);
     ports.send_xac(XacReport{});
     return;

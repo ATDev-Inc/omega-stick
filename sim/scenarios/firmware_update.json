@@ -3,6 +3,7 @@
   "name": "a firmware update installs, boots pending, is confirmed by the host, and can be reverted",
   "steps": [
     { "at_ms": 0, "pattern": "calibrate" },
+    { "at_ms": 500, "action": "recalibrate" },
     { "at_ms": 40000, "expect": { "calibrated": true, "fw_slot": "ota_0", "fw_pending": false } },
     { "at_ms": 41000, "action": "revert", "expect_reply": "error" },
     { "at_ms": 42000, "action": "flash", "version": "9.9.9-sim" },

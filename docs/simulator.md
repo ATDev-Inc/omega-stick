@@ -13,7 +13,7 @@ hardware: USB (a localhost WebSocket instead), the HID output (reported to the
 page instead of moving your cursor), flash partitions (a two-slot fake), and
 restarts (the firmware state is rebuilt in the same process).
 
-Nothing here proves the hardware works. The simulator is for the logic and the
+Nothing here proves the hardware works: the console's WebUSB reconnect after an update was broken on a real stick (fixed in #56) and the simulator's WebSocket transport could not show it. The simulator is for the logic and the
 console; see [docs/status.md](status.md) for what has been tried on a device.
 
 ## Running it
@@ -30,7 +30,7 @@ omega_sim [--port 8765] [--data DIR] [--fresh] [--mode mouse|xac]
 |---|---|
 | `--port N` | WebSocket port on 127.0.0.1 (default 8765) |
 | `--data DIR` | Directory that holds the simulated flash: calibration, settings, reset log, OTA slot state (default `./omega_sim_data`) |
-| `--fresh` | Erase `--data` first, like a brand-new board (forces the first-boot calibration sweep) |
+| `--fresh` | Erase `--data` first, like a brand-new board (no calibration: it boots quiet until the console calibrates it, D26) |
 | `--mode` | Input mode to start in when there is no saved setting |
 | `--script FILE` | Play a script (format below) from boot |
 | `--headless` | No WebSocket; run `--script` on simulated time as fast as possible, print a report, exit 0 if every `expect` passed, 1 otherwise |
@@ -102,7 +102,7 @@ Page to simulator:
 | `{"type":"fault","sensor":"no_response"}` | Set the sensor fault (`ok`, `no_response`, `stuck_counter`, `weak_magnet`) |
 | `{"type":"drift","rate":0.02}` | Center drift in stick units per minute, 0 for none |
 | `{"type":"noise","sigma":0.002}` | Sensor noise, in stick units |
-| `{"type":"next_image","behavior":"fail_self_test"}` | How the next firmware image flashed through the console behaves after its restart: `ok`, `fail_self_test` (the sensor fails reads on the new image, so GET_DIAGNOSTICS reports a fault, the console refuses to confirm and the deadline rolls it back), `crash_loop` (crashes on boot, reverted), `slow_sensor_start` (starts polling the sensor 3 s after boot, then runs normally: until then GET_DIAGNOSTICS reports sensor_fault 3, "not observed"), `slow_sensor_fail` (starts polling late and then every read fails) |
+| `{"type":"next_image","behavior":"fail_self_test"}` | How the next firmware image flashed through the console behaves after its restart: `ok`, `fail_self_test` (the sensor fails reads on the new image, so GET_DIAGNOSTICS reports a fault, the console refuses to confirm and the deadline rolls it back), `crash_loop` (crashes on boot, reverted), `slow_sensor_start` (starts polling the sensor 3 s after boot, then runs normally: until then GET_DIAGNOSTICS reports sensor_fault 3, "not observed"), `slow_sensor_fail` (starts polling late and then every read fails), `crash_when_confirmed` (runs normally while pending, so it can be confirmed, then crashes on every boot once confirmed: a confirmed image that crash-loops, handed over to the other slot). |
 | `{"type":"reset"}` | Power-cycle the simulated stick |
 | `{"type":"wipe"}` | Erase the simulated flash and power-cycle (a new board) |
 
@@ -167,9 +167,10 @@ one from boot. Times are milliseconds from the start of the script.
 ```json
 {
   "version": 1,
-  "name": "first boot calibrates and then moves right",
+  "name": "the console calibrates a fresh board, which then moves right",
   "steps": [
     { "at_ms": 0,      "pattern": "calibrate" },
+    { "at_ms": 500,    "action": "recalibrate" },
     { "at_ms": 40000,  "expect": { "calibrated": true, "center_max": 0.05 } },
     { "at_ms": 41000,  "stick": [0, 0] },
     { "at_ms": 41500,  "stick": [0.6, 0] },
@@ -187,7 +188,7 @@ Each step has `at_ms` and exactly one of:
 | `stick: [x, y]` | Keyframe. The stick moves linearly between consecutive keyframes |
 | `pattern: name` | Play a built-in pattern from this time (optional `duration_ms`) |
 | `fault`, `drift`, `noise`, `next_image` | Same values as the WebSocket messages |
-| `action` | A console request sent through the real protocol: `recalibrate`, `save`, `restart`, `set_mode` (with `value`: `mouse` or `xac`), `set_deadzone` (with `value`: `{"center": 0.1, "range": 0.05}`, either may be omitted), `flash` (uploads a generated firmware image through OTA_BEGIN/DATA/FINISH; optional `version`, default `9.9.9-sim`), `revert`, `mark_valid`, `fw_info` (GET_FW_INFO). Optional `expect_reply`: `ok`, `busy`, `invalid`, `unsupported` (function_not_supported), `error`; without it the reply must be `ok`. For `flash` the reply checked is the first failure, else OTA_FINISH's |
+| `action` | A console request sent through the real protocol: `recalibrate`, `save`, `restart`, `set_mode` (with `value`: `mouse` or `xac`), `set_nudge_enabled` (with `value`: `true` or `false`, SET_NUDGE_ENABLED; `save` keeps it across a `restart`), `set_deadzone` (with `value`: `{"center": 0.1, "range": 0.05}`, either may be omitted), `flash` (uploads a generated firmware image through OTA_BEGIN/DATA/FINISH; optional `version`, default `9.9.9-sim`), `revert`, `mark_valid`, `fw_info` (GET_FW_INFO), and `plant_unusable_calibration`, which is not a console request: it writes a calibration file below the usable-to-noise ratio (the numbers of a board calibrated with the stick untouched) straight to the simulated flash for the next boot to load (follow it with `restart`), replying `ok` once written. Optional `expect_reply`: `ok`, `busy`, `invalid`, `unsupported` (function_not_supported), `error`; without it the reply must be `ok`. For `flash` the reply checked is the first failure, else OTA_FINISH's |
 | `expect` | Assertions, checked at that time (headless mode reports them; interactive mode logs them) |
 
 `expect` keys:
@@ -202,6 +203,7 @@ Each step has `at_ms` and exactly one of:
 | `sensor_fault: true/false` | The firmware reports a sensor fault |
 | `sensor_observed: true/false` | The polling loop has seen the sensor answer since boot (false is the "not observed" state, GET_DIAGNOSTICS sensor_fault 3) |
 | `neutral: true` | Every report since the previous `expect` was neutral |
+| `needs_calibration: true/false` | GET_DIAGNOSTICS, sent over the link at that time, reports calibration_state 1 (no usable calibration, output held neutral) or 0 |
 | `fw_slot: "ota_0"/"ota_1"` | The running slot |
 | `fw_pending: true/false` | The running image is waiting to be confirmed (the console sends MARK_VALID; the image never confirms itself, and rolls back at the deadline) |
 | `fw_version: "..."` | The running image's version string (what GET_FW_INFO reports) |
@@ -212,18 +214,26 @@ repeating it at a later time. `mouse_moved` needs at least 3 counts of net
 motion; below that it reads `none`.
 
 Scenarios kept in [sim/scenarios/](../sim/scenarios/) run headless in CI.
-`update_never_confirmed.json` flashes a good image that nobody confirms and
-checks that the deadline rolls it back.
+`fresh_board_calibrates.json` checks that a fresh board stays neutral until the
+console calibrates it, and `unusable_calibration_boots_quiet.json` that a saved
+calibration below the usable-to-noise ratio boots quiet, reports it in
+GET_DIAGNOSTICS, survives a failed sweep still quiet, and resumes after a good
+one. `nudge_switch_off.json` turns nudge clicks off and checks that nudges
+then only move the cursor, also after a saved restart, until they are turned
+back on. `update_never_confirmed.json` flashes a good image that nobody confirms and
+checks that the deadline rolls it back. `update_crash_loop_after_confirm.json`
+confirms an image that then crash-loops and checks that the crash-loop handover
+sticks with no console attached.
 
 ## How it differs from the firmware
 
 - One link. The device has a WebUSB and a Web Serial stream with a service
   each; the simulator has the one WebSocket stream and one service.
-- The link is up before the first-boot calibration sweep (the firmware brings
-  USB up after it), so a console can connect, read the prompts and fetch state
-  during the sweep. `START_CALIBRATION` is refused as busy until it is done.
-- A fresh board's sweep needs the stick to move: play the `calibrate` pattern
-  (or a script that does) while it runs.
+- As on the device, a board with no usable calibration runs no sweep at boot:
+  it starts with its output held neutral (D26) and calibrates when the console
+  sends `START_CALIBRATION`. That sweep needs the stick to move: play the
+  `calibrate` pattern (or a script that does) while it runs, as every scenario
+  does at its start.
 - Simulated flash is a directory: the process changes into `--data`, which is
   where the espp file system keeps its files off the device.
 - An uploaded image is checked for the image magic and an `esp_app_desc_t` at
@@ -233,6 +243,21 @@ checks that the deadline rolls it back.
   confirmed image crash-looping is reverted with reason `revert`.
 - Restarts triggered by RESTART, REVERT and OTA_FINISH happen 750 ms of real
   time after the reply, as on the device (`CalibrationService` waits in a real
-  thread). Headless runs wait for that before simulated time moves on.
+  thread). Headless runs wait for that before simulated time moves on. An
+  input-mode switch also waits 750 ms of real time, on the thread that fed the
+  request.
+- The crash-loop handover marker, which the device keeps in RTC memory, is a
+  process-level variable; a simulated power-on (`reset`, `wipe`, a fresh start)
+  clears it.
+- The bootloader fake marks every pending slot aborted at boot, and a rollback
+  needs the other slot to hold a complete image whose state is new, pending or
+  valid, as `esp_ota_check_rollback_is_possible()` requires. A fresh board's
+  `ota_0` counts as valid. (A board flashed over serial starts with blank
+  otadata, and on the Omega Stick the first update's deadline rollback still
+  ran at runtime, so the fake treats that case the same way.)
+- OTA_BEGIN erases the other slot and drops its state; once an upload's
+  descriptor has arrived the slot reads as `partial` until OTA_FINISH, so an
+  aborted or expired upload cannot be reverted to. OTA_BEGIN is refused while
+  the running image is pending, as on the device.
 
 A manual end-to-end check that drives the real simulator through the real console in headless Chrome is in [tests/e2e/](../tests/e2e/README.md).

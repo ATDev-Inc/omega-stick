@@ -12,9 +12,12 @@ namespace {
 
 constexpr std::array<const char *, 8> kPatterns = {
     "rest", "circle", "calibrate", "nudge_right", "nudge_left", "nudge_up", "nudge_down", "wander"};
-constexpr std::array<const char *, 9> kActions = {"recalibrate", "save",         "restart",
-                                                  "set_mode",    "set_deadzone", "flash",
-                                                  "revert",      "mark_valid",   "fw_info"};
+constexpr std::array<const char *, 11> kActions = {"recalibrate",      "save",
+                                                   "restart",          "set_mode",
+                                                   "set_deadzone",     "flash",
+                                                   "revert",           "mark_valid",
+                                                   "fw_info",          "plant_unusable_calibration",
+                                                   "set_nudge_enabled"};
 constexpr std::array<const char *, 5> kReplies = {"ok", "busy", "invalid", "unsupported", "error"};
 
 template <typename Arr> bool contains(const Arr &arr, const std::string &s) {
@@ -83,6 +86,8 @@ Expect parse_expect(const json::Value &e, size_t index) {
       x.sensor_observed = want_bool(v, key);
     } else if (key == "neutral") {
       x.neutral = want_bool(v, key);
+    } else if (key == "needs_calibration") {
+      x.needs_calibration = want_bool(v, key);
     } else if (key == "fw_slot") {
       x.fw_slot = want_choice(v, key, {"ota_0", "ota_1"});
     } else if (key == "fw_pending") {
@@ -172,8 +177,8 @@ Step parse_step(const json::Value &s, size_t index) {
     st.kind = Step::Kind::NextImage;
     NextImage ignored;
     if (!body->is_string() || !parse_next_image(body->as_string(), ignored)) {
-      fail(index, "next_image must be ok, fail_self_test, crash_loop, slow_sensor_start or "
-                  "slow_sensor_fail");
+      fail(index, "next_image must be ok, fail_self_test, crash_loop, slow_sensor_start, "
+                  "slow_sensor_fail or crash_when_confirmed");
     }
     st.name = body->as_string();
   } else if (body_key == "expect") {
@@ -198,6 +203,11 @@ Step parse_step(const json::Value &s, size_t index) {
         fail(index, "set_mode needs value \"mouse\" or \"xac\"");
       }
       st.text = value->as_string();
+    } else if (st.name == "set_nudge_enabled") {
+      if (!value || !value->is_bool()) {
+        fail(index, "set_nudge_enabled needs value true or false");
+      }
+      st.text = value->as_bool() ? "on" : "off";
     } else if (st.name == "set_deadzone") {
       if (!value || !value->is_object() || value->size() == 0) {
         fail(index, "set_deadzone needs value {\"center\": n, \"range\": n}");

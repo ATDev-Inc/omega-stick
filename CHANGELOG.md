@@ -14,6 +14,14 @@ in `version.txt`.
 
 ### Added
 
+- **On/off switch for nudge clicks.** A "Nudge clicks" checkbox in the
+  console's nudge-click block turns nudge clicks and scrolling off or on live
+  (new request `SET_NUDGE_ENABLED`), so the stick only moves the cursor without
+  having to max out the enter threshold. A nudge held at that moment is released
+  at once, the tuning values are kept, and "Save current state to flash" keeps
+  the choice (`nudge_enabled` in `omega_settings.cfg`; existing settings load
+  with nudge clicks on). XAC mode is unaffected. Older firmware shows the box
+  checked and disabled. ([#60](https://github.com/ATDev-Inc/omega-stick/pull/60))
 - **Schema version in the saved files.** Calibration and settings now each
   carry `schema=1`, so future firmware can migrate them or refuse a file it
   cannot read and fall back to recalibrating or defaults. Existing boards keep
@@ -99,6 +107,23 @@ in `version.txt`.
 
 ### Changed
 
+- **A stick with no usable calibration stays still until it is calibrated
+  from the console.** After a first flash, or with a saved calibration whose
+  range is too small for the stick's resting noise (as a first-boot sweep of
+  an untouched stick produces), the firmware no longer runs the sweep at boot
+  or halts. USB and the console start, the output is held neutral, and the
+  console shows a notice next to "Re-run calibration". A calibration is only
+  accepted when its usable range is at least three times its center noise, so
+  an untouched sweep is refused instead of turning noise into cursor
+  movement. GET_DIAGNOSTICS ends with a new calibration state byte (D26).
+  ([#59](https://github.com/ATDev-Inc/omega-stick/pull/59))
+- **Each stick now has its own USB serial number.** It is the chip's factory
+  MAC address as 12 lowercase hex digits, where every stick used to report the
+  same placeholder. With two sticks plugged in, the console can now tell them
+  apart when it reconnects after an update, and the browser remembers its USB
+  permission per stick. Your computer will see an existing stick as a new USB
+  device once, so the browser may ask you to grant access again.
+  ([#55](https://github.com/ATDev-Inc/omega-stick/pull/55))
 - **espp 1.3.8 throughout.** Every espp component moves from 1.3.6 to 1.3.8,
   still one release across the board (D20). For this firmware the only code
   change is in the bundled hid-rp headers, which now include what they use, so
@@ -147,6 +172,57 @@ in `version.txt`.
 
 ### Fixed
 
+- **A crash-loop handover is no longer undone by the rollback deadline.** When a
+  confirmed image crashed three boots in a row, the stick switched to the other
+  image, but with no console attached that image was rejected 120 s later and
+  the stick went back to the crashing one for good. The image the handover
+  boots is now accepted at once, and at most one handover happens per power-on.
+  Builds with updates over USB on only. ([#57](https://github.com/ATDev-Inc/omega-stick/pull/57))
+- **Firmware upload refused with a clear reason while an update is unconfirmed.**
+  Starting an upload while the running image still waits for confirmation used
+  to fail with a bare "io error"; it now says to confirm the image or wait for
+  the rollback. ([#57](https://github.com/ATDev-Inc/omega-stick/pull/57))
+- **A half-finished upload is no longer offered as the previous firmware.** After
+  an aborted or expired upload, GET_FW_INFO reported the other slot's version
+  as if it could be reverted to, and REVERT then failed. It now reports the slot
+  as `partial`. ([#57](https://github.com/ATDev-Inc/omega-stick/pull/57))
+- **Neutral output around more reboots and flash erases.** The output hold now
+  goes up before an upload erases the inactive slot, the deadline rollback sends
+  neutral reports for 100 ms before it reboots, the mode switch waits the same
+  750 ms as the other console reboots, and a reboot reply that could not be sent
+  no longer drops the hold of an upload still running. ([#57](https://github.com/ATDev-Inc/omega-stick/pull/57))
+
+- **Automatic reconnect after an update now works over WebUSB and Web Serial.** The console handed its own candidate record to the USB and serial open calls instead of the device, so every reconnect attempt failed with "device.open is not a function" and a good update rolled back at the deadline. Found on the first hardware update. ([#56](https://github.com/ATDev-Inc/omega-stick/pull/56))
+- **The console keeps a firmware update locked until it is settled.** Connect,
+  Disconnect, Flash, Revert, Restart and the input mode switch stay off from
+  the upload until the new firmware is confirmed or the stick has gone back,
+  and the page asks before it is closed. Before, they came back between the
+  restart and the confirm step, where any of them forced a rollback, and a
+  Disconnect while confirming left the update stuck on "Checking the sensor".
+  Now a reconnect picks the update up again, and the page says the stick goes
+  back by itself unless it is confirmed. ([#56](https://github.com/ATDev-Inc/omega-stick/pull/56))
+- **The console waits longer for the stick after an update.** It keeps looking
+  for about 110 seconds, with the time left on screen, instead of giving up
+  after 40, so a stick held back by the boot flash window or slow USB on
+  Windows is still found and confirmed before its rollback at 120 seconds.
+  With two sticks plugged in it asks you to pick one straight away.
+  ([#56](https://github.com/ATDev-Inc/omega-stick/pull/56))
+- **A lost reply at the end of an update is no longer reported as a failure.**
+  If the stick already switched to the new firmware but its reply did not
+  arrive, the console says the firmware is installed and offers Restart now,
+  then checks and confirms it as usual. ([#56](https://github.com/ATDev-Inc/omega-stick/pull/56))
+- **Flash is off while the running firmware waits to be confirmed.** The
+  reason is shown under the button, and if the firmware refuses an update for
+  this reason the console shows its message. A previous slot left `partial` by
+  an interrupted upload turns Revert off with a note saying a new upload is the
+  way forward. ([#56](https://github.com/ATDev-Inc/omega-stick/pull/56))
+- **Smaller console update fixes.** A firmware file that ends inside its
+  description block is refused instead of stopping the page; the firmware
+  record is read again on every connect, so Flash and Revert never plan from
+  another stick; a stalled download is cancelled after 20 seconds; a blocked
+  release check is no longer called "offline"; and a revert that did not take
+  says so instead of "the new firmware was not confirmed".
+  ([#56](https://github.com/ATDev-Inc/omega-stick/pull/56))
 - **TMAG5273 XY and Z range bits were swapped.** The driver wrote the X/Y range
   to the Z range bit and the reverse. The firmware sets both ranges to HIGH, so
   the stick's behaviour does not change, but a build that set only one range

@@ -299,6 +299,12 @@ one and the two slots cannot bounce the device between them. An other slot the
 bootloader already rejected is not retried automatically; the console's REVERT
 remains the deliberate way to try it again.
 
+*Note 2026-10-25:* the image the handover boots is pending, and with no console
+attached the deadline used to reject it and send the device back into the crash
+loop for good, so the boot the handover starts now confirms it at once (a marker
+in RTC memory, `FirmwareHealthCheck::accept_after_handover()`), and at most one
+handover happens per power-on. See [firmware-updates.md](firmware-updates.md#rollback-and-the-health-check).
+
 **Amended 2026-10-12: the console confirms the new image, not the firmware.**
 The original design had the image confirm itself after USB enumerated, the
 sensor answered and 10 s had passed. It now never confirms itself. After the
@@ -540,6 +546,46 @@ well (`sdkconfig.ota`) so the code keeps compiling.
 
 This narrows D18 and D22 for this release; it does not reverse them. Their
 rules apply unchanged to any build with the option on.
+
+## D26: No usable calibration: boot quiet and calibrate from the console
+
+A stick without a usable calibration boots quiet. It does not run the
+interactive sweep at boot and does not halt: USB, the console service and the
+control loop all start, and the output is held neutral, through the same path
+as an update hold (`omega_control::holds_output()`, fed a `needs_calibration`
+flag), until a calibration started from the console (`START_CALIBRATION`)
+succeeds. The result is then applied and saved and the hold ends; a failed or
+unusable sweep keeps the hold. GET_DIAGNOSTICS reports the state in a trailing
+`u8 calibration_state` (0 usable, 1 needs calibration), and the console shows a
+notice next to "Re-run calibration" while it is 1. A missing calibration is not
+an init failure: a pending image still boots, can be checked and confirmed.
+
+A calibration is usable only if its usable radius is at least
+`OmegaCalibration::MIN_USABLE_TO_NOISE_RATIO` (3.0) times its center noise
+radius. 3.0 is `CENTER_MARGIN / MAX_CENTER_DEADZONE`: below it the auto center
+deadzone would have to exceed its 0.5 cap to cover the noise. The rule applies
+to every sweep (`range_calibration()` refuses the result) and to the saved file
+(`load()` reports `calibration_unusable` and leaves the file in place). The
+#44 rule (at least half the 32 sectors covered) stays.
+
+**Why.** On 2026-10-25 the maintainer's board ran its first-boot calibration
+with the stick untouched. Noise around the center reached every sector, so the
+#44 coverage rule passed, and the board saved a usable radius of 0.049 to 0.060
+against a center noise radius of 0.074 to 0.086. In mouse mode every noise
+sample then became cursor movement; no deadzone override could hide it (the
+center override caps at 0.5), and the maintainer could not use the computer.
+The boot sweep's prompts only reach a serial log that is gone once USB starts,
+so a user cannot follow them, and the previous alternative, halting before USB
+on a failed sweep, leaves a board that never enumerates. Quiet output with a
+working console is the state the user can recover from. This resolves the open
+"first-boot halt" question raised on #44.
+
+**Consequence.** A first flash, or an older board whose saved calibration fails
+the rule, needs one calibration from the console before the stick moves
+anything. The manual trim constants in `main.cpp` are applied to the empty
+calibration so the first console calibration keeps them, as the boot sweep did.
+The DIAGNOSTICS field is additive: older consoles stop after the reset list,
+and the console reads a payload without it as "not reported".
 
 ---
 

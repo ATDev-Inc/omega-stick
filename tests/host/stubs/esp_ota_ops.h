@@ -5,6 +5,7 @@
 // behaviour comes from one global esp_ota_fake() that tests set up and inspect;
 // OtaFixture resets it for every test. C++ only (the real API is C linkage).
 
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -30,6 +31,8 @@ inline const char *esp_err_to_name(esp_err_t err) {
 
 struct esp_partition_t {
   char label[17];
+  uint32_t address;
+  uint32_t size;
 };
 
 typedef enum {
@@ -43,10 +46,14 @@ typedef enum {
 
 struct esp_ota_ops_fake {
   bool has_other_partition{true};
-  esp_partition_t other{"ota_1"};
+  esp_partition_t other{"ota_1", 0x1F0000, 0x1E0000};
   bool other_has_image{true};
   esp_app_desc_t other_desc{};
   esp_ota_img_states_t other_state{ESP_OTA_IMG_VALID};
+  /// False models a slot holding the start of an image that never finished
+  /// uploading: its descriptor reads, but esp_image_verify() fails.
+  bool other_verifies{true};
+  int verify_calls{0};
   esp_err_t set_boot_result{ESP_OK};
   int set_boot_calls{0};
   const esp_partition_t *last_set_boot{nullptr};
@@ -57,6 +64,8 @@ struct esp_ota_ops_fake {
     has_other_partition = true;
     memset(&other, 0, sizeof(other));
     snprintf(other.label, sizeof(other.label), "%s", "ota_1");
+    other.address = 0x1F0000;
+    other.size = 0x1E0000;
     other_has_image = true;
     memset(&other_desc, 0, sizeof(other_desc));
     other_desc.magic_word = 0xABCD5432u;
@@ -65,6 +74,8 @@ struct esp_ota_ops_fake {
     snprintf(other_desc.time, sizeof(other_desc.time), "%s", "01:02:03");
     snprintf(other_desc.date, sizeof(other_desc.date), "%s", "Jan  2 2026");
     other_state = ESP_OTA_IMG_VALID;
+    other_verifies = true;
+    verify_calls = 0;
     set_boot_result = ESP_OK;
     set_boot_calls = 0;
     last_set_boot = nullptr;

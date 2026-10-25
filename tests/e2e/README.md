@@ -5,13 +5,14 @@ console in headless Chrome, using the Chrome DevTools Protocol. It runs in CI
 ([e2e_tests.yml](../../.github/workflows/e2e_tests.yml), job `sim-console-e2e`)
 and can be run by hand.
 
-It exercises: connecting and the hello, the first-boot calibration prompts, the
-`calibrate` pattern, the virtual stick (keyboard and pointer, right and up), a
+It exercises: connecting and the hello, the notice for a stick with no usable
+calibration, calibrating it from the console with the `calibrate` pattern (the
+notice then clears), the virtual stick (keyboard and pointer, right and up), a
 nudge click, re-running calibration from the console, a deadzone override
 (accepted in range, refused out of range), the switch to XAC mode with the
 automatic reconnect, a `no_response` sensor fault and recovery, a firmware
 update that the console checks and confirms, a revert, and an image whose
-sensor fails, which the console refuses to confirm and the simulator rolls back
+sensor fails, which the console refuses to confirm (keeping Disconnect and Flash locked while it waits) and the simulator rolls back
 at the deadline, and an image whose sensor starts polling late, which the console
 waits for before confirming, and a simulator started with `--no-ota`, for which the console hides its update controls and shows the no-updates note. It also fails on any script error in the page or any crash line
 in the simulator output.

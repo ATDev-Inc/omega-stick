@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "name": "with nudge clicks switched off a nudge only moves the cursor, also after a saved restart",
+  "steps": [
+    { "at_ms": 0, "pattern": "calibrate" },
+    { "at_ms": 500, "action": "recalibrate" },
+    { "at_ms": 40000, "expect": { "calibrated": true } },
+    { "at_ms": 41000, "pattern": "nudge_right" },
+    { "at_ms": 42000, "expect": { "clicked": "right" } },
+    { "at_ms": 42500, "pattern": "rest" },
+    { "at_ms": 43000, "action": "set_nudge_enabled", "value": false },
+    { "at_ms": 43500, "expect": { "clicked": "none" } },
+    { "at_ms": 44000, "pattern": "nudge_right" },
+    { "at_ms": 45000, "expect": { "clicked": "none", "mouse_moved": "right" } },
+    { "at_ms": 45500, "pattern": "nudge_up" },
+    { "at_ms": 46500, "expect": { "clicked": "none", "mouse_moved": "up" } },
+    { "at_ms": 47000, "pattern": "rest" },
+    { "at_ms": 47500, "action": "save" },
+    { "at_ms": 48000, "action": "restart" },
+    { "at_ms": 51000, "expect": { "calibrated": true, "clicked": "none" } },
+    { "at_ms": 51500, "pattern": "nudge_right" },
+    { "at_ms": 52500, "expect": { "clicked": "none", "mouse_moved": "right" } },
+    { "at_ms": 53000, "pattern": "rest" },
+    { "at_ms": 53500, "action": "set_nudge_enabled", "value": true },
+    { "at_ms": 54000, "pattern": "nudge_right" },
+    { "at_ms": 55000, "expect": { "clicked": "right" } }
+  ]
+}

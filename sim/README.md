@@ -87,16 +87,15 @@ time.
 3. Choose **Connect Simulator**. The console behaves as with a real stick and
    adds a **Simulator** panel.
 
-## 5. First run: let it calibrate
+## 5. First run: calibrate it
 
-A fresh board starts with its first-boot calibration sweep, as a real stick
-does, and the sweep needs the stick to move. Nothing happens until it does:
-the console shows the calibration prompts, and **Re-run calibration** is refused
-as busy.
+A fresh board has no calibration, so it boots quiet, as a real stick does: the
+output is held neutral and the console says the stick needs calibration
+(D26). Nothing moves until a calibration succeeds.
 
-In the Simulator panel, play the **`calibrate`** pattern while the prompts are
-showing. The sweep finishes, the calibration is saved, and the stick is ready
-to use. (Or start with
+In the Simulator panel, play the **`calibrate`** pattern, then choose
+**Re-run calibration**. The sweep finishes, the calibration is saved, and the
+stick is ready to use. (Or start with
 `omega_sim --fresh --script sim/scenarios/fresh_board_calibrates.json`, which
 does this for you.)
 

@@ -78,9 +78,13 @@
 //                                 host restarted its upload, e.g. after a
 //                                 disconnect), that stale session is aborted
 //                                 and a new one begins. ERROR if another
-//                                 service owns the active session. A session
-//                                 with no OTA_BEGIN/OTA_DATA for the idle
-//                                 timeout (main loop: 30 s) is aborted by
+//                                 service owns the active session, and
+//                                 (operation_not_permitted) while the running
+//                                 image is still pending verification: the
+//                                 bootloader would refuse it, so confirm it
+//                                 (MARK_VALID) or let it roll back first. A
+//                                 session with no OTA_BEGIN/OTA_DATA for
+//                                 OTA_IDLE_TIMEOUT (30 s) is aborted by
 //                                 expire_stale_update().
 //   0x59 OTA_DATA               : payload: u32 offset + raw image bytes
 //                                 (offset must equal the bytes written so
@@ -108,8 +112,8 @@
 //                                 as an update.
 //   The OTA messages (and GET_FW_INFO/MARK_VALID/REVERT) reply ERROR
 //   (function_not_supported) when Config::ota is null.
-//   Output stays neutral through an update (D22 rule 1): from an accepted
-//   OTA_BEGIN until the reboot, and before the reboot that OTA_FINISH,
+//   Output stays neutral through an update (D22 rule 1): from OTA_BEGIN
+//   (before the slot is erased) until the reboot, and before the reboot that OTA_FINISH,
 //   REVERT, RESTART and a SET_INPUT_MODE switch each defer, the service asks
 //   the device to hold its HID output neutral (Config::output_hold). The
 //   hold is released if the upload ends without a reboot (OTA_ABORT, the
@@ -118,6 +122,13 @@
 //   0x5F GET_DIAGNOSTICS        : no payload. Reply: DIAGNOSTICS, or ERROR
 //                                 (function_not_supported) when
 //                                 Config::diagnostics is unset.
+//   0x60 SET_NUDGE_ENABLED      : payload: u8 enabled (0 = nudge clicks off,
+//                                 1 = on). Applied live and kept in the
+//                                 settings; SAVE_TO_FLASH persists it like
+//                                 the nudge tuning, which it leaves as is.
+//                                 Reply: OK / ERROR (invalid_argument for any
+//                                 other value or payload length). Older
+//                                 firmware ignores the frame (no reply).
 //
 // Message types & payloads (device -> host), same module, reply flag set:
 //   0xD3 DIAGNOSTICS : payload (see build_diagnostics_payload() below):
@@ -133,7 +144,16 @@
 //                  u8  reset_count         (N, oldest first)
 //                  N × { u32 boot, u8 reason, u8 abnormal, u8 name_len,
 //                        name_len bytes of UTF-8 name }
-//   0xD0 STATE - payload: fixed 79-byte little-endian struct, in this exact
+//                  u8  calibration_state   (0 usable calibration, 1 needs
+//                                           calibration: none is saved or the
+//                                           saved one is unusable, so the
+//                                           output is held neutral until a
+//                                           START_CALIBRATION succeeds, D26.
+//                                           Added after the first release:
+//                                           older firmware ends the payload
+//                                           after the reset list, and hosts
+//                                           must ignore any bytes after it)
+//   0xD0 STATE - payload: fixed 80-byte little-endian struct, in this exact
 //                order (see build_state_payload() below):
 //                  f32 center_x, center_y, center_noise_radius,
 //                  f32 center_deadzone                 (calibration-derived)
@@ -150,6 +170,11 @@
 //                  f32 nudge_exit_threshold             (absolute)
 //                  u32 nudge_time_ms                    (measurement window)
 //                  u8  input_mode                       (0 = mouse, 1 = XAC)
+//                  u8  nudge_enabled                    (0/1; added after the
+//                                                        first release: older
+//                                                        firmware sends 79
+//                                                        bytes, which hosts
+//                                                        read as enabled)
 //   0xD2 FW_INFO : payload: u8 pending_verify (0/1), u8 session_active
 //                (0/1), then length-prefixed strings (u8 len + bytes, at
 //                most 255 bytes each, no terminator) in this order:
@@ -165,10 +190,21 @@
 //                  previous version   (that slot's PROJECT_VER, "" if empty)
 //                  previous date      ("" if empty)
 //                  previous time      ("" if empty)
-//                  previous state     ("valid", "new", "pending_verify",
-//                                      "invalid", "aborted", "undefined",
-//                                      or "empty" when the slot holds no
-//                                      readable app image)
+//                  previous state     one of:
+//                                      "valid", "new", "pending_verify",
+//                                      "invalid", "aborted": the slot's
+//                                        otadata state;
+//                                      "undefined": a complete image with
+//                                        no otadata entry (e.g. the image a
+//                                        serial flash left in ota_0);
+//                                      "partial": the slot starts with an
+//                                        app descriptor (so version, date
+//                                        and time are still reported) but
+//                                        the image does not verify, e.g. an
+//                                        upload that was aborted, expired or
+//                                        is still running. REVERT to it
+//                                        fails; treat it like "empty";
+//                                      "empty": no readable app image.
 //                Hosts must stop parsing when the payload runs out: older
 //                firmware sends only the first two strings, and later
 //                firmware may append more.
@@ -182,7 +218,9 @@
 //                an async recalibration kicked off by START_CALIBRATION
 //                finishes. Payload: u8 success (0/1), then, only when
 //                success = 0, u32 code + UTF-8 message (same convention as
-//                ERROR).
+//                ERROR). A sweep whose result fails
+//                OmegaCalibration::check_usable() reports success = 0 with
+//                that error's message and is not applied (D26).
 //
 // Flow control: same as coredump_service.hpp: the host serializes
 // transactions, one request in flight, waits for its reply. The one
@@ -215,6 +253,7 @@
 #include "ota.hpp"
 
 #include "esp_app_desc.h"
+#include "esp_image_format.h"
 #include "esp_ota_ops.h"
 
 namespace espp {
@@ -286,8 +325,9 @@ public:
     MarkValid = 0x5D,           ///< confirm running image (cancel rollback)
     Revert = 0x5E,              ///< boot the other OTA slot (previous firmware), then reboot
     GetDiagnostics = 0x5F,      ///< request the sensor fault status and reset log
+    SetNudgeEnabled = 0x60,     ///< u8: turn nudge clicks off (0) or on (1)
     // device -> host
-    State = 0xD0,             ///< fixed 79-byte calibration + settings struct
+    State = 0xD0,             ///< fixed 80-byte calibration + settings struct
     CalibrationResult = 0xD1, ///< UNSOLICITED: outcome of an async StartCalibration
     FwInfo = 0xD2,            ///< u8 pending_verify, u8 session_active, str project, str version
     Diagnostics = 0xD3,       ///< variable-length sensor fault status + reset log
@@ -312,9 +352,14 @@ public:
   /// same request asked for (RESTART, REVERT, OTA_FINISH).
   static constexpr std::chrono::milliseconds REPLY_FLUSH_DELAY{750};
 
+  /// How long an upload may go without OTA_BEGIN/OTA_DATA before the polling
+  /// loops abort it with expire_stale_update(): an upload a transport loss
+  /// abandoned would otherwise keep the output held neutral for good.
+  static constexpr std::chrono::seconds OTA_IDLE_TIMEOUT{30};
+
   /// Wire size of the STATE payload (see the header comment for the exact
   /// field layout).
-  static constexpr size_t kStatePayloadSize = 79;
+  static constexpr size_t kStatePayloadSize = 80;
 
   /**
    * @brief Function used to transmit one encoded reply frame to the host.
@@ -337,7 +382,12 @@ public:
       std::string name;
     };
     std::vector<Reset> resets; ///< oldest first
+    /// CALIBRATION_USABLE or CALIBRATION_NEEDED (D26), sent after the resets.
+    uint8_t calibration_state{0};
   };
+  /// DiagnosticsData::calibration_state values.
+  static constexpr uint8_t CALIBRATION_USABLE = 0;
+  static constexpr uint8_t CALIBRATION_NEEDED = 1;
   using diagnostics_fn = std::function<DiagnosticsData()>;
 
   /// Configuration for the CalibrationService.
@@ -386,12 +436,14 @@ public:
     /// left unset, GET_DIAGNOSTICS replies with ERROR (function_not_supported).
     diagnostics_fn diagnostics{nullptr};
     /// Optional: asks the device to hold its HID output neutral (D22 rule 1).
-    /// Called with true from an accepted OTA_BEGIN, and when a reply defers a
-    /// reboot (OTA_FINISH, REVERT, RESTART, SET_INPUT_MODE), so the device
-    /// never vanishes mid-motion. Called with false when an upload ends
-    /// without a reboot (OTA_ABORT, idle expiry, a failed write or finish,
+    /// Called with true from OTA_BEGIN before the engine erases the slot (and
+    /// with false again if begin fails), and when a reply defers a reboot
+    /// (OTA_FINISH, REVERT, RESTART, SET_INPUT_MODE), so the device never
+    /// vanishes mid-motion. Called with false when an upload ends without a
+    /// reboot (OTA_ABORT, idle expiry, a failed write or finish,
     /// abort_update()) and when a deferred reboot is dropped because its
-    /// reply was not queued. Only changes are reported, once per edge, so
+    /// reply was not queued, unless an upload this service began is still
+    /// running. Only changes are reported, once per edge, so
     /// several services can share one counter. Runs under this service's
     /// internal mutex, so it must return almost immediately: update an atomic
     /// the control loop polls (see main.cpp's `output_holds`). When left unset
@@ -513,17 +565,21 @@ public:
    * @brief Abort an upload this service began if it has been idle too long.
    *
    * Bounded expiry for an upload abandoned by an unexpected transport loss
-   * (the engine itself has no session timeout). Intended use: the main loop
-   * calls this on every service about once a second with a 30 s @p max_idle.
-   * Idle time is measured from the last successful OTA_BEGIN / OTA_DATA.
-   * A service that does not own the active session never touches it.
+   * (the engine itself has no session timeout). Intended use: the polling
+   * loop calls this on every service once per iteration with
+   * OTA_IDLE_TIMEOUT as @p max_idle. Idle time is measured from the last
+   * successful OTA_BEGIN / OTA_DATA. A service that does not own the active
+   * session never touches it.
    *
    * @param max_idle Idle time at or beyond which the session is aborted.
+   * @param now The current time; only tests pass anything but the default.
    * @return true if a session was aborted. false if nothing was owned, the
    *         session is not idle long enough, or the service is busy handling
    *         a frame (a busy service is not idle).
    */
-  bool expire_stale_update(std::chrono::milliseconds max_idle) {
+  bool expire_stale_update(
+      std::chrono::milliseconds max_idle,
+      std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now()) {
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
     if (!lock.owns_lock() || !ota_ || !ota_owner_) {
       return false;
@@ -533,7 +589,7 @@ public:
       hold_output(false);
       return false;
     }
-    if (std::chrono::steady_clock::now() - ota_last_activity_ < max_idle) {
+    if (now - ota_last_activity_ < max_idle) {
       return false;
     }
     logger_.warn("OTA upload idle for too long; aborting");
@@ -618,6 +674,14 @@ protected:
         reply = build_error(std::errc::invalid_argument, "OTA_BEGIN needs u32 image size");
         return true;
       }
+      if (ota_->is_pending_verify()) {
+        // esp_ota_begin() refuses with ESP_ERR_OTA_ROLLBACK_INVALID_STATE,
+        // which espp::Ota reports as a bare io_error. Say what to do instead.
+        reply = build_error(std::errc::operation_not_permitted,
+                            "OTA_BEGIN refused: the running image is not confirmed yet; confirm "
+                            "it (MARK_VALID) or wait for the rollback");
+        return true;
+      }
       bool took_over = false;
       if (ota_owner_ && ota_->session_active()) {
         // The host on this link restarted its upload (it can only have one
@@ -628,16 +692,21 @@ protected:
         ota_owner_ = false;
         took_over = true;
       }
+      // Hold before begin(): it erases the target slot, which takes seconds
+      // and stalls the polling loop between flash operations, so the reports
+      // sent meanwhile must already be neutral (D22 rule 1). After a takeover
+      // the hold is already up from the stale session.
+      const bool was_holding = holding_;
+      hold_output(true);
       std::error_code ec;
       if (!ota_->begin(stream::get_u32(payload), ec)) {
-        if (took_over) {
-          hold_output(false); // the stale session is gone and no new one began
+        if (!was_holding || took_over) {
+          hold_output(false); // no session began (and a stale one is gone)
         }
         reply = build_error(ec, "OTA_BEGIN failed");
         return true;
       }
       ota_owner_ = true;
-      hold_output(true);
       ota_last_activity_ = std::chrono::steady_clock::now();
       logger_.info("OTA_BEGIN {} bytes", stream::get_u32(payload));
       reply = build_ok();
@@ -722,8 +791,14 @@ protected:
           prev_date = od.date;
           prev_time = od.time;
           esp_ota_img_states_t st;
-          prev_state =
-              esp_ota_get_state_partition(other, &st) == ESP_OK ? ota_state_name(st) : "undefined";
+          if (!slot_image_verifies(*other)) {
+            // The descriptor sits at the start of the image, so an upload
+            // that stopped early still shows one; REVERT would fail on it.
+            prev_state = "partial";
+          } else {
+            prev_state = esp_ota_get_state_partition(other, &st) == ESP_OK ? ota_state_name(st)
+                                                                           : "undefined";
+          }
         }
       }
       std::vector<uint8_t> p;
@@ -891,6 +966,18 @@ protected:
       reply = build_ok();
       return true;
     }
+    case Msg::SetNudgeEnabled: {
+      if (payload.size() != 1 || payload[0] > 1) {
+        reply =
+            build_error(std::errc::invalid_argument, "SET_NUDGE_ENABLED needs u8 enabled (0 or 1)");
+        return true;
+      }
+      const bool enabled = payload[0] == 1;
+      store_.set_nudge_enabled(enabled);
+      logger_.info("SET_NUDGE_ENABLED {}", enabled ? "on" : "off");
+      reply = build_ok();
+      return true;
+    }
     case Msg::SetInputMode: {
       if (payload.size() != 1 || payload[0] > 1) {
         reply = build_error(std::errc::invalid_argument, "SET_INPUT_MODE needs u8 mode (0 or 1)");
@@ -952,7 +1039,7 @@ protected:
     }
   }
 
-  /// Encode a Snapshot into the fixed 79-byte STATE payload (see the header
+  /// Encode a Snapshot into the fixed 80-byte STATE payload (see the header
   /// comment for the exact field order).
   static std::vector<uint8_t> build_state_payload(const OmegaStore::Snapshot &snap) {
     std::vector<uint8_t> payload;
@@ -986,6 +1073,7 @@ protected:
     put_f32(payload, settings.nudge_exit_threshold);
     espp::stream_frame::put_u32(payload, static_cast<uint32_t>(settings.nudge_hold_time.count()));
     payload.push_back(static_cast<uint8_t>(settings.input_mode));
+    payload.push_back(settings.nudge_enabled ? 1 : 0);
 
     return payload;
   }
@@ -1002,7 +1090,8 @@ protected:
     stream::put_u32(payload, d.boot_count);
 
     // Work out how many of the newest resets fit, then emit them in order.
-    const size_t header_size = payload.size() + 1; // + u8 reset_count
+    // + u8 reset_count, and the u8 calibration_state after the list.
+    const size_t header_size = payload.size() + 1 + 1;
     size_t first = d.resets.size();
     size_t used = header_size;
     while (first > 0) {
@@ -1024,6 +1113,7 @@ protected:
       payload.push_back(static_cast<uint8_t>(name_len));
       payload.insert(payload.end(), r.name.begin(), r.name.begin() + name_len);
     }
+    payload.push_back(d.calibration_state);
     return payload;
   }
 
@@ -1155,15 +1245,32 @@ private:
     {
       std::lock_guard<std::mutex> lock(mutex_);
       action = std::exchange(after_reply_, nullptr);
+      if (action && !queued) {
+        logger_.error("reply was not queued; the deferred action is dropped");
+        // No reboot is coming after all, but an upload this link still runs
+        // keeps the output held until it ends.
+        if (!(ota_owner_ && ota_->session_active())) {
+          hold_output(false);
+        }
+        return;
+      }
     }
-    if (!action)
-      return;
-    if (!queued) {
-      logger_.error("reply was not queued; the deferred action is dropped");
-      hold_output(false); // no reboot is coming after all
-      return;
+    if (action) {
+      action();
     }
-    action();
+  }
+
+  /// Whether the app image in `part` passes the same check
+  /// esp_ota_set_boot_partition() makes, so REVERT to it would work. Reads
+  /// the whole image (a fraction of a second). An upload in progress writes
+  /// that slot, so it cannot hold a complete image yet.
+  bool slot_image_verifies(const esp_partition_t &part) const {
+    if (ota_ && ota_->session_active()) {
+      return false;
+    }
+    const esp_partition_pos_t pos{.offset = part.address, .size = part.size};
+    esp_image_metadata_t meta;
+    return esp_image_verify(ESP_IMAGE_VERIFY_SILENT, &pos, &meta) == ESP_OK;
   }
 
   OmegaStore &store_;

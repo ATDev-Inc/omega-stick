@@ -30,6 +30,15 @@
 //    reset log at boot). The bootloader only protects a pending image, so
 //    without this a crash loop after confirmation would run until someone
 //    re-flashed over serial.
+//  - The one exception to "never confirms itself": the image the crash-loop
+//    handover boots. esp_ota_set_boot_partition() makes it boot pending, and
+//    with no console attached the deadline would mark it invalid and reboot
+//    into the crashing image, which could then never hand over again. That
+//    image ran before (the handover never picks a rejected slot), so the boot
+//    the handover starts accepts it at once (accept_after_handover(), told by
+//    a marker that survives the software reset: take_handover_marker()). At
+//    most one handover happens per power-on, so two broken images cannot
+//    swap back and forth for ever and wear out the otadata sectors.
 //
 // Consequence worth knowing: any reset (mode switch, unplug) before the host
 // has confirmed an update reverts to the previous firmware, and a device with
@@ -38,6 +47,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <iterator>
 #include <span>
@@ -62,6 +72,66 @@ public:
   /// Three keeps one panic, which a core dump already records, from
   /// switching firmware on its own.
   static constexpr size_t CRASH_LOOP_RESETS{3};
+  /// How long the output is held neutral between the deadline passing and the
+  /// rollback, so the last HID reports before the reboot are neutral (D22
+  /// rule 1): several polls of the 10 ms (mouse) and 5 ms (XAC) loops.
+  static constexpr std::chrono::milliseconds ROLLBACK_HOLD{100};
+
+  /// What tick() asks of the caller.
+  enum class Action {
+    NONE,        ///< nothing to do
+    HOLD_OUTPUT, ///< the deadline passed: raise the output hold (returned once)
+    ROLL_BACK,   ///< the hold has been up for ROLLBACK_HOLD: call rollback_now() (returned once)
+  };
+
+  /// Values of the crash-loop handover marker: a uint32_t the application
+  /// keeps in memory that survives a software reset but not a power-on
+  /// (RTC_NOINIT_ATTR on the device). Any other value means "no marker".
+  static constexpr uint32_t HANDOVER_REQUESTED =
+      0x4F484F31;                                       ///< set just before the handover restart
+  static constexpr uint32_t HANDOVER_DONE = 0x4F484F32; ///< a handover happened since power-on
+
+  /// What one boot learns from the handover marker.
+  struct HandoverMarker {
+    bool booted_by_handover{false};         ///< the handover started this boot
+    bool handed_over_since_power_on{false}; ///< no further handover until a power-on
+  };
+
+  /// Reads the handover marker at boot and rewrites it for this boot: the
+  /// HANDOVER_REQUESTED the previous boot left becomes HANDOVER_DONE, which
+  /// stays until a power-on. `power_on` is true when this boot followed a
+  /// power-on reset, after which the marker's memory holds garbage.
+  static HandoverMarker take_handover_marker(uint32_t &marker, bool power_on) {
+    HandoverMarker m;
+    if (!power_on) {
+      m.booted_by_handover = marker == HANDOVER_REQUESTED;
+      m.handed_over_since_power_on = m.booted_by_handover || marker == HANDOVER_DONE;
+    }
+    marker = m.handed_over_since_power_on ? HANDOVER_DONE : 0;
+    return m;
+  }
+
+  /// For the boot the crash-loop handover started. The image it switched to
+  /// boots pending (esp_ota_set_boot_partition() writes it as NEW), but it
+  /// ran before and was not rejected, and with no console attached nobody
+  /// would confirm it: the deadline would send the device back into the
+  /// crashing image. So it is accepted at once. Returns true when it
+  /// confirmed the image; a no-op unless `booted_by_handover` and the running
+  /// image is pending.
+  template <typename OtaT> static bool accept_after_handover(OtaT &ota, bool booted_by_handover) {
+    if (!booted_by_handover || !ota.is_pending_verify()) {
+      return false;
+    }
+    std::error_code ec;
+    if (!ota.mark_app_valid(ec)) {
+      printf("OTA: could not confirm the image the crash-loop handover booted (%s)\n",
+             ec.message().c_str());
+      return false;
+    }
+    printf("OTA: booted by the crash-loop handover; this image ran before, so it is confirmed "
+           "now\n");
+    return true;
+  }
 
   explicit FirmwareHealthCheck(espp::Ota &ota)
       : ota_(ota)
@@ -166,34 +236,63 @@ public:
     return true;
   }
 
-  /// Call once per polling-loop iteration. Free when nothing is pending;
-  /// otherwise it looks at the OTA state at most once per CHECK_INTERVAL.
-  void tick() {
+  /// Call once per polling-loop iteration and act on the result. Free when
+  /// nothing is pending; otherwise it looks at the OTA state at most once per
+  /// CHECK_INTERVAL. Past the deadline it returns HOLD_OUTPUT once (raise the
+  /// output hold, so the loop sends neutral reports), then ROLL_BACK once,
+  /// ROLLBACK_HOLD later (call rollback_now()). It never reboots by itself, so
+  /// the device never vanishes mid-deflection.
+  Action tick() {
+    if (holding_) {
+      if (Clock::now() - hold_start_ < ROLLBACK_HOLD) {
+        return Action::NONE;
+      }
+      holding_ = false;
+      return Action::ROLL_BACK;
+    }
     if (!pending_) {
-      return;
+      return Action::NONE;
     }
     const auto now = Clock::now();
     if (now - last_check_ < CHECK_INTERVAL) {
-      return;
+      return Action::NONE;
     }
     last_check_ = now;
     if (!ota_.is_pending_verify()) {
       printf("OTA: image confirmed by the host (MARK_VALID); rollback cancelled\n");
       pending_ = false;
-      return;
+      return Action::NONE;
     }
     if (now - start_ >= ROLLBACK_DEADLINE) {
-      printf("OTA: new firmware was not confirmed by the host in time; rolling back\n");
-      std::error_code ec;
-      ota_.mark_app_invalid_and_rollback(ec); // only returns on failure
-      printf("OTA: rollback failed (%s); next reset will roll back\n", ec.message().c_str());
+      printf("OTA: new firmware was not confirmed by the host in time; holding the output "
+             "neutral, then rolling back\n");
       pending_ = false;
+      holding_ = true;
+      hold_start_ = now;
+      return Action::HOLD_OUTPUT;
     }
+    return Action::NONE;
+  }
+
+  /// After tick() returned ROLL_BACK: marks the image invalid and reboots into
+  /// the previous one. Returns only if the host confirmed the image during the
+  /// hold or the rollback failed; the caller then releases its hold.
+  void rollback_now() {
+    if (!ota_.is_pending_verify()) {
+      printf("OTA: image confirmed by the host (MARK_VALID) during the hold; rollback cancelled\n");
+      return;
+    }
+    printf("OTA: rolling back now\n");
+    std::error_code ec;
+    ota_.mark_app_invalid_and_rollback(ec); // only returns on failure
+    printf("OTA: rollback failed (%s); next reset will roll back\n", ec.message().c_str());
   }
 
 private:
   espp::Ota &ota_;
   bool pending_;
+  bool holding_{false};
+  typename Clock::time_point hold_start_{};
   typename Clock::time_point start_;
   typename Clock::time_point last_check_;
 };

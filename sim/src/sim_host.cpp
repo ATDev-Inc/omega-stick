@@ -7,6 +7,7 @@
 #include <system_error>
 
 #include "calibration_service.hpp"
+#include "omega_calibration.hpp"
 #include "ota.hpp"
 #include "stream_frame.hpp"
 
@@ -21,6 +22,40 @@ std::vector<uint8_t> f32_bytes(float v) {
   std::vector<uint8_t> out(sizeof(float));
   std::memcpy(out.data(), &v, sizeof(float));
   return out;
+}
+
+/// The DIAGNOSTICS calibration_state byte after the reset list, or -1 when the
+/// payload ends there (older firmware) or is malformed.
+int diagnostics_calibration_state(const std::vector<uint8_t> &p) {
+  if (p.size() < 11) {
+    return -1;
+  }
+  size_t off = 11;
+  for (unsigned i = 0; i < p[10]; i++) {
+    if (off + 7 > p.size()) {
+      return -1;
+    }
+    off += 7 + p[off + 6];
+  }
+  return off < p.size() ? p[off] : -1;
+}
+
+/// The calibration the maintainer's board saved after a first-boot sweep with
+/// the stick untouched (D26): usable radius 0.049 against center noise 0.086,
+/// in raw sensor units (mT).
+bool plant_unusable_calibration(std::error_code &ec) {
+  espp::OmegaCalibration::CenterResult center;
+  center.noise_radius = 0.086f;
+  center.deadzone = espp::OmegaCalibration::MAX_CENTER_DEADZONE;
+  espp::OmegaCalibration::RangeResult range;
+  range.min_x = -0.058f;
+  range.max_x = 0.060f;
+  range.min_y = -0.049f;
+  range.max_y = 0.055f;
+  range.usable_radius = 0.049f;
+  range.deadzone = espp::OmegaCalibration::MAX_RANGE_DEADZONE;
+  return espp::OmegaCalibration::save(
+      center, range, espp::OmegaCalibration::default_path("omega_calibration.cfg"), ec);
 }
 
 } // namespace
@@ -284,8 +319,8 @@ void Host::handle_control(const json::Value &msg) {
   } else if (type == "next_image") {
     NextImage b;
     if (!parse_next_image(msg.string_or("behavior"), b)) {
-      reject("next_image: behavior must be ok, fail_self_test, crash_loop, slow_sensor_start or "
-             "slow_sensor_fail");
+      reject("next_image: behavior must be ok, fail_self_test, crash_loop, slow_sensor_start, "
+             "slow_sensor_fail or crash_when_confirmed");
       return;
     }
     flash().set_next_image(b);
@@ -468,7 +503,8 @@ void Host::execute(const Step &step) {
   }
 }
 
-std::string Host::request(uint8_t type, const std::vector<uint8_t> &payload) {
+std::string Host::request(uint8_t type, const std::vector<uint8_t> &payload,
+                          std::vector<uint8_t> *reply_payload) {
   const auto frame = stream::build_frame(false, espp::CalibrationService::kModule, type, payload);
   {
     std::lock_guard<std::mutex> lock(capture_mu_);
@@ -511,6 +547,9 @@ std::string Host::request(uint8_t type, const std::vector<uint8_t> &payload) {
       }
       return "error";
     }
+    if (reply_payload) {
+      *reply_payload = f.payload;
+    }
     return "ok";
   }
   return "none";
@@ -536,8 +575,18 @@ std::string Host::action_reply(const Step &step) {
   if (step.name == "fw_info") {
     return request(type(Msg::GetFwInfo), {});
   }
+  if (step.name == "plant_unusable_calibration") {
+    // sim only: writes the file straight to the simulated flash, as if an older
+    // firmware had saved it. It takes effect at the next boot (see "restart").
+    std::error_code ec;
+    return plant_unusable_calibration(ec) ? "ok" : "error";
+  }
   if (step.name == "set_mode") {
     return request(type(Msg::SetInputMode), {static_cast<uint8_t>(step.text == "xac" ? 1 : 0)});
+  }
+  if (step.name == "set_nudge_enabled") {
+    // step.text is "on" or "off" (script value true or false).
+    return request(type(Msg::SetNudgeEnabled), {static_cast<uint8_t>(step.text == "on" ? 1 : 0)});
   }
   if (step.name == "set_deadzone") {
     uint8_t flags = 0;
@@ -650,6 +699,20 @@ void Host::evaluate(const Step &step, size_t index) {
   if (e.neutral) {
     check(neutral == *e.neutral,
           std::string("neutral ") + yes_no(neutral) + " (expected " + yes_no(*e.neutral) + ")");
+  }
+  if (e.needs_calibration) {
+    // Asks the firmware over the link, as the console does.
+    std::vector<uint8_t> payload;
+    const std::string reply = request(static_cast<uint8_t>(Msg::GetDiagnostics), {}, &payload);
+    const int state = reply == "ok" ? diagnostics_calibration_state(payload) : -1;
+    if (state < 0) {
+      check(false,
+            "needs_calibration: GET_DIAGNOSTICS replied " + reply + " without a calibration state");
+    } else {
+      const bool got = state != 0;
+      check(got == *e.needs_calibration, std::string("needs_calibration ") + yes_no(got) +
+                                             " (expected " + yes_no(*e.needs_calibration) + ")");
+    }
   }
   if (e.fw_slot) {
     const std::string got = flash().running_label();

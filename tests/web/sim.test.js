@@ -142,6 +142,7 @@ test("a script with every kind of step is valid", () => {
     { at_ms: 11, action: "set_mode", value: "xac" },
     { at_ms: 12, action: "set_deadzone", value: { center: 0.1, range: 0.05 } },
     { at_ms: 13, action: "set_deadzone", value: { range: 0.05 } },
+    { at_ms: 13, action: "set_nudge_enabled", value: false },
     { at_ms: 14, expect: {
       calibrated: false, center_max: 0.05, mouse_moved: "none", clicked: "left", mode: "mouse",
       sensor_fault: true, neutral: true, fw_slot: "ota_1", fw_pending: false } },
@@ -198,6 +199,10 @@ test("validateSimScript checks action steps", () => {
   bad(withSteps({ at_ms: 0, action: "dance" }), "action");
   bad(withSteps({ at_ms: 0, action: "set_mode" }), "set_mode");
   bad(withSteps({ at_ms: 0, action: "set_mode", value: "gamepad" }), "set_mode");
+  bad(withSteps({ at_ms: 0, action: "set_nudge_enabled" }), "set_nudge_enabled");
+  bad(withSteps({ at_ms: 0, action: "set_nudge_enabled", value: "off" }), "set_nudge_enabled");
+  bad(withSteps({ at_ms: 0, action: "set_nudge_enabled", value: 0 }), "set_nudge_enabled");
+  ok(withSteps({ at_ms: 0, action: "set_nudge_enabled", value: true }));
   bad(withSteps({ at_ms: 0, action: "set_deadzone" }), "set_deadzone");
   bad(withSteps({ at_ms: 0, action: "set_deadzone", value: {} }), "set_deadzone");
   bad(withSteps({ at_ms: 0, action: "set_deadzone", value: { edge: 1 } }), "edge");

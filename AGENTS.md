@@ -183,7 +183,8 @@ espp.
   flash and calls `esp_restart()`.
 - **Persistence** is two `key=value` text files on littlefs, not NVS:
   `omega_calibration.cfg` (calibration) and `omega_settings.cfg` (deadzone
-  overrides, nudge-click tuning, input mode). They are deliberately separate.
+  overrides, nudge-click tuning and on/off switch, input mode). They are
+  deliberately separate.
 - **Calibration console:** a framed request/reply protocol carried over the USB vendor interface (WebUSB) and CDC serial. The wire
   format is documented at the top of
   [calibration_service.hpp](components/omega_calibration/include/calibration_service.hpp)

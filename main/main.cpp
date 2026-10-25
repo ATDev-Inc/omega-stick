@@ -16,6 +16,8 @@
 #include <vector>
 
 #include "esp_app_desc.h" // esp_app_get_description() -- firmware version banner at boot
+#include "esp_attr.h"     // RTC_NOINIT_ATTR -- the crash-loop handover marker
+#include "esp_mac.h"      // esp_efuse_mac_get_default() -- per-chip USB serial number
 #include "esp_ota_ops.h"  // esp_ota_get_running_partition() -- slot tag in the reset log
 #include "esp_system.h" // esp_restart() -- used to apply a live mode switch (see on_mode_changed below)
 
@@ -51,7 +53,8 @@ static constexpr uint16_t OMEGA_USB_VID = 0x1209;
 static constexpr uint16_t OMEGA_USB_PID = 0x0d32;
 
 // Manual per-axis trim, added on top of the measured center, ONLY on a
-// fresh (never-before-calibrated) run -- see the calibration section below.
+// board with no saved calibration (it is carried into the first console
+// calibration) -- see the calibration section below.
 // Once calibrated, the manual offset lives in OmegaStore/DeviceSettings and
 // is live-adjustable from the calibration console instead.
 static constexpr float MANUAL_OFFSET_X = 0.0f;
@@ -107,11 +110,12 @@ struct EspPorts : espp::omega_control::Ports {
   const bool &sensor_read_ok;
   const uint8_t &sensor_conversion_count; ///< same source; CONV_STATUS.SET_COUNT
   SensorFaultStatus &sensor_status;       ///< published for GET_DIAGNOSTICS
+  std::atomic<bool> &needs_calibration;   ///< D26 hold; a successful sweep clears it
 
   EspPorts(espp::TMAG5273 &tmag_, espp::OmegaStore &store_, espp::Joystick &js_,
            espp::UsbDevice &usb_, espp::CalibrationService &vendor_, espp::CalibrationService &cdc_,
            const bool &sensor_read_ok_, const uint8_t &sensor_conversion_count_,
-           SensorFaultStatus &sensor_status_)
+           SensorFaultStatus &sensor_status_, std::atomic<bool> &needs_calibration_)
       : tmag(tmag_)
       , store(store_)
       , js(js_)
@@ -120,7 +124,8 @@ struct EspPorts : espp::omega_control::Ports {
       , calibration_cdc(cdc_)
       , sensor_read_ok(sensor_read_ok_)
       , sensor_conversion_count(sensor_conversion_count_)
-      , sensor_status(sensor_status_) {}
+      , sensor_status(sensor_status_)
+      , needs_calibration(needs_calibration_) {}
 
   void send_mouse(const espp::omega_control::MouseReport &r) override {
     espp::MouseInputReport<0, 3, true> mouse;
@@ -149,7 +154,9 @@ struct EspPorts : espp::omega_control::Ports {
 
   // On entry `center` holds the control loop's copy of the calibration; on
   // success both hold the finalised new results, with the store's live manual
-  // offset carried over.
+  // offset carried over. range_calibration() refuses a result that fails
+  // OmegaCalibration::check_usable(), so an unusable sweep is a failure here:
+  // nothing is applied or saved, and a needs-calibration hold stays (D26).
   bool run_sweep(espp::OmegaCalibration::CenterResult &center,
                  espp::OmegaCalibration::RangeResult &range) override {
     printf("\n=== RE-CALIBRATION REQUESTED (calibration console) ===\n");
@@ -189,8 +196,14 @@ struct EspPorts : espp::omega_control::Ports {
                save_ec.message().c_str());
       }
       printf("=== RE-CALIBRATION COMPLETE ===\n\n");
+      if (needs_calibration.exchange(false)) {
+        printf("Calibration is usable; output resumes.\n");
+      }
     } else {
       printf("ERROR: re-calibration failed: %s\n", recal_ec.message().c_str());
+      if (needs_calibration.load()) {
+        printf("Output stays neutral until a calibration succeeds.\n");
+      }
     }
     calibration_vendor.notify_calibration_result(recal_ok, recal_ok ? std::error_code{} : recal_ec);
     calibration_cdc.notify_calibration_result(recal_ok, recal_ok ? std::error_code{} : recal_ec);
@@ -294,6 +307,21 @@ static const char *reset_reason_name(esp_reset_reason_t reason) {
   }
 }
 
+// USB serial number: the factory MAC as 12 lowercase hex digits, unique per
+// chip. Without it every stick reports espp's default, so the console cannot
+// tell two sticks apart and a persisted WebUSB permission is shared by all.
+static std::string usb_serial_number() {
+  uint8_t mac[6] = {};
+  if (esp_efuse_mac_get_default(mac) != ESP_OK) {
+    printf("WARNING: could not read the factory MAC; using the default USB serial\n");
+    return "000000000001";
+  }
+  char buf[13];
+  snprintf(buf, sizeof(buf), "%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4],
+           mac[5]);
+  return buf;
+}
+
 // The subset of abnormal resets that point at the firmware itself: the kind a
 // different image might not have. Brownouts and power glitches are left out,
 // since the other slot would not survive them either (D18 amendment).
@@ -339,7 +367,31 @@ static bool reset_reason_is_abnormal(esp_reset_reason_t reason) {
 // closed) keeps the OTA engine claimed, which blocks a retry and REVERT. The
 // polling loops drop such a session after this long without OTA traffic (see
 // CalibrationService::expire_stale_update()).
-static constexpr auto OTA_IDLE_TIMEOUT = 30s;
+static constexpr auto OTA_IDLE_TIMEOUT = espp::CalibrationService::OTA_IDLE_TIMEOUT;
+
+#if CONFIG_OMEGA_STICK_OTA
+// The crash-loop handover's note to the boot it starts, in memory that a
+// software reset keeps and a power-on loses. See
+// FirmwareHealthCheck::take_handover_marker().
+static RTC_NOINIT_ATTR uint32_t crash_loop_handover_marker;
+
+// Acts on FirmwareHealthCheck::tick() once per polling-loop iteration. Past the
+// deadline the output is held neutral for ROLLBACK_HOLD before the rollback
+// reboots, so the host is not left with a deflection (D22 rule 1).
+static void run_health_check(espp::FirmwareHealthCheck<> &health, std::atomic<int> &output_holds) {
+  switch (health.tick()) {
+  case espp::FirmwareHealthCheck<>::Action::HOLD_OUTPUT:
+    output_holds.fetch_add(1);
+    break;
+  case espp::FirmwareHealthCheck<>::Action::ROLL_BACK:
+    health.rollback_now(); // only returns if the host confirmed meanwhile or it failed
+    output_holds.fetch_sub(1);
+    break;
+  case espp::FirmwareHealthCheck<>::Action::NONE:
+    break;
+  }
+}
+#endif
 
 // Runs entirely on the dedicated "omega-stick" task (see app_main below),
 // not on the small default main-task stack. Matches espp::Task's callback
@@ -407,12 +459,24 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   // A confirmed image that has crashed on its last few boots hands the device
   // to the other slot (D18 amendment); a pending one is the bootloader's job.
   // It runs here, before any peripheral is touched, because a crash loop in
-  // the I2C or sensor setup is exactly the case it exists for.
-  if (espp::FirmwareHealthCheck<>::revert_if_crash_looping(
-          ota, espp::FirmwareHealthCheck<>::crashes_while_running(boots, running_slot_label))) {
+  // the I2C or sensor setup is exactly the case it exists for. At most once
+  // per power-on: if the image it hands over to crash-loops too, both are
+  // broken, and swapping between them would only wear out the otadata sectors.
+  using HealthCheck = espp::FirmwareHealthCheck<>;
+  const auto handover = HealthCheck::take_handover_marker(crash_loop_handover_marker,
+                                                          esp_reset_reason() == ESP_RST_POWERON);
+  if (!handover.handed_over_since_power_on &&
+      HealthCheck::revert_if_crash_looping(
+          ota, HealthCheck::crashes_while_running(boots, running_slot_label))) {
+    crash_loop_handover_marker = HealthCheck::HANDOVER_REQUESTED;
     std::this_thread::sleep_for(100ms); // let the message leave the console
     esp_restart();
   }
+  // The handover boots the other image pending (esp_ota_set_boot_partition()
+  // writes it as NEW), and with no console attached nothing would confirm it:
+  // the deadline would roll it back into the crash loop. It ran before and was
+  // not rejected, so it is accepted now: the one image the firmware confirms.
+  HealthCheck::accept_after_handover(ota, handover.booted_by_handover);
 #else
   // Firmware updates over USB are off in this build (D25): no OTA engine, so
   // the console's update messages reply function_not_supported, and there is
@@ -461,8 +525,14 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   // served to the console together with the reset log by GET_DIAGNOSTICS
   // (D21, D23).
   SensorFaultStatus sensor_status;
-  auto make_diagnostics = [&reset_log, &sensor_status]() {
+  // D26: set at boot when there is no usable calibration, cleared by
+  // EspPorts::run_sweep when a console calibration succeeds. Read by the
+  // polling loop (neutral output while set) and by GET_DIAGNOSTICS.
+  std::atomic<bool> needs_calibration{false};
+  auto make_diagnostics = [&reset_log, &sensor_status, &needs_calibration]() {
     espp::CalibrationService::DiagnosticsData d;
+    d.calibration_state = needs_calibration.load() ? espp::CalibrationService::CALIBRATION_NEEDED
+                                                   : espp::CalibrationService::CALIBRATION_USABLE;
     d.sensor_fault = sensor_status.fault.load(std::memory_order_relaxed);
     d.sensor_first_fault = sensor_status.first_fault.load(std::memory_order_relaxed);
     d.sensor_fault_count = sensor_status.count.load(std::memory_order_relaxed);
@@ -577,10 +647,10 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
               printf("WARNING: failed to save settings before restart: %s\n",
                      save_ec.message().c_str());
             }
-            // CalibrationService sends the OK before calling this; give it a
-            // moment to actually go out over USB before the reset tears the
-            // link down.
-            std::this_thread::sleep_for(200ms);
+            // CalibrationService queues the OK before calling this; give it
+            // the same time to go out over USB as the other console reboots
+            // before the reset tears the link down.
+            std::this_thread::sleep_for(espp::CalibrationService::REPLY_FLUSH_DELAY);
             esp_restart();
           },
       .log_level = espp::Logger::Verbosity::ERROR,
@@ -590,78 +660,29 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   espp::OmegaCalibration::RangeResult range;
   std::error_code cal_ec;
 
-  bool have_calibration = espp::OmegaCalibration::load(center, range, calibration_path, cal_ec);
-  bool run_calibration = !have_calibration;
-
-  if (have_calibration) {
+  // D26: without a usable calibration the stick boots quiet. USB, the console
+  // and the control loop all start, but the output is held neutral (the
+  // needs_calibration hold, see omega_control::holds_output()) until a
+  // START_CALIBRATION from the console succeeds. No sweep runs at boot: its
+  // prompts only reach a serial log, and a sweep of a stick nobody moved saved
+  // a calibration that turned resting noise into cursor movement.
+  if (espp::OmegaCalibration::load(center, range, calibration_path, cal_ec)) {
     printf("\nLoaded existing calibration.");
-  }
-
-  if (run_calibration) {
-    printf("\n");
-    printf("No usable cached calibration (%s); running interactive calibration.\n",
-           cal_ec.message().c_str());
-
-    printf("\n");
-    printf("========================================\n");
-    printf("       CENTER CALIBRATION\n");
-    printf("========================================\n\n");
-
-    espp::OmegaCalibration calibration({
-        .read =
-            [&tmag](float *x, float *y) {
-              std::error_code read_ec;
-              auto magnetic = tmag.read_magnetic(read_ec);
-              if (read_ec) {
-                return false;
-              }
-              *x = magnetic.x;
-              *y = magnetic.y;
-              return true;
-            },
-        .message = [](const std::string &text) { printf("%s\n", text.c_str()); },
-        .verbosity = espp::Logger::Verbosity::ERROR,
-    });
-
-    if (!calibration.center_calibration(center, cal_ec)) {
-      printf("ERROR: Center calibration failed: %s\n", cal_ec.message().c_str());
-      reject_if_pending("center calibration failed");
-      while (true) {
-        std::this_thread::sleep_for(1s);
-      }
+  } else {
+    needs_calibration.store(true);
+    if (cal_ec != espp::OmegaCalibration::make_error_code(
+                      espp::OmegaCalibration::Error::calibration_unusable)) {
+      // Nothing usable was read. Start from zero with the manual per-axis trim
+      // (see MANUAL_OFFSET_X/Y above), which the console calibration keeps and
+      // then persists. A saved but unusable calibration keeps its own offset
+      // instead: it might have been adjusted from the console since.
+      center = {};
+      range = {};
+      espp::OmegaCalibration::set_manual_offset(center, MANUAL_OFFSET_X, MANUAL_OFFSET_Y);
     }
-
-    printf("\n");
-    printf("========================================\n");
-    printf("       RANGE CALIBRATION\n");
-    printf("========================================\n\n");
-
-    if (!calibration.range_calibration(center, range, cal_ec)) {
-      printf("ERROR: Range calibration failed: %s\n", cal_ec.message().c_str());
-      reject_if_pending("range calibration failed");
-      while (true) {
-        std::this_thread::sleep_for(1s);
-      }
-    }
-
-    calibration.finalize_center_deadzone(center, range);
-
-    // Manual per-axis trim (see MANUAL_OFFSET_X/Y above) is applied here,
-    // on a fresh calibration, and then persisted below. A LOADED
-    // calibration keeps whatever offset was already saved instead of
-    // being reset to these constants every boot -- that offset might have
-    // been runtime-adjusted since (via the calibration console) and saved
-    // again, and we don't want to clobber that.
-    espp::OmegaCalibration::set_manual_offset(center, MANUAL_OFFSET_X, MANUAL_OFFSET_Y);
-
-    if (!espp::OmegaCalibration::save(center, range, calibration_path, cal_ec)) {
-      // Not fatal: we still have a valid in-memory calibration, it just
-      // won't be cached for next boot.
-      printf("WARNING: Failed to save calibration to %s: %s\n", calibration_path.c_str(),
-             cal_ec.message().c_str());
-    } else {
-      printf("Saved calibration to %s\n", calibration_path.c_str());
-    }
+    printf("\nNo usable calibration (%s).\n", cal_ec.message().c_str());
+    printf("Output is held neutral until a calibration succeeds: connect the calibration "
+           "console and use \"Re-run calibration\".\n");
   }
 
   // Keep the store's cached copy in sync with whatever we just loaded/ran,
@@ -691,8 +712,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   // exclusive access to tmag/js -- the polling loop a few dozen lines down
   // -- polls the flag once per iteration and, when set, temporarily steps
   // out of normal mouse/XAC operation to run the calibration sequence
-  // itself, inline, exactly like the fresh-boot path above does. This is
-  // still "async" as far as the calibration console's request/reply pair is
+  // itself, inline. This is still "async" as far as the calibration
+  // console's request/reply pair is
   // concerned (the OK reply for START_CALIBRATION returns immediately,
   // before the sequence has even started), it just does the actual work on
   // the one task that is allowed to touch the sensor.
@@ -785,6 +806,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     espp::UsbDevice::Config usb_cfg;
     usb_cfg.manufacturer = "espp";
     usb_cfg.product = "omega-stick mouse";
+    usb_cfg.serial_number = usb_serial_number();
+    printf("USB serial number: %s\n", usb_cfg.serial_number.c_str());
     usb_cfg.vid = OMEGA_USB_VID;
     usb_cfg.pid = OMEGA_USB_PID;
     espp::UsbDevice::CdcFunction cdc_fn;
@@ -906,7 +929,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     // Nudge-click state, drift compensation and the recalibration hand-off
     // live in omega_control (see components/omega_control).
     EspPorts ports(tmag, store, js, usb, calibration_vendor, calibration_cdc, sensor_read_ok,
-                   sensor_conversion_count, sensor_status);
+                   sensor_conversion_count, sensor_status, needs_calibration);
     espp::omega_control::MouseState state;
     state.common.center = center;
     state.common.range = range;
@@ -916,7 +939,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 #endif
     while (true) {
 #if CONFIG_OMEGA_STICK_OTA
-      fw_health.tick();
+      run_health_check(fw_health, output_holds);
 #endif
       // Cheap when idle: a try_lock and a timestamp compare per service.
       calibration_vendor.expire_stale_update(OTA_IDLE_TIMEOUT);
@@ -933,6 +956,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
                   .now = espp::omega_control::Clock::now(),
                   .recalibration_requested = recal,
                   .output_hold = hold,
+                  .needs_calibration = needs_calibration.load(),
                   .settings = store.settings()},
                  ports);
       if (recal) {
@@ -958,6 +982,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     espp::UsbDevice::Config usb_cfg;
     usb_cfg.manufacturer = "espp";
     usb_cfg.product = "omega-stick XAC";
+    usb_cfg.serial_number = usb_serial_number();
+    printf("USB serial number: %s\n", usb_cfg.serial_number.c_str());
     usb_cfg.vid = OMEGA_USB_VID;
     usb_cfg.pid = OMEGA_USB_PID;
 
@@ -1085,7 +1111,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     // ------------------------------------------------------------
 
     EspPorts ports(tmag, store, js, usb, calibration_vendor, calibration_cdc, sensor_read_ok,
-                   sensor_conversion_count, sensor_status);
+                   sensor_conversion_count, sensor_status, needs_calibration);
     espp::omega_control::XacState state;
     state.common.center = center;
     state.common.range = range;
@@ -1095,7 +1121,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 #endif
     while (true) {
 #if CONFIG_OMEGA_STICK_OTA
-      fw_health.tick();
+      run_health_check(fw_health, output_holds);
 #endif
       // Cheap when idle: a try_lock and a timestamp compare per service.
       calibration_vendor.expire_stale_update(OTA_IDLE_TIMEOUT);
@@ -1112,6 +1138,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
                 .now = espp::omega_control::Clock::now(),
                 .recalibration_requested = recal,
                 .output_hold = hold,
+                .needs_calibration = needs_calibration.load(),
                 .settings = store.settings()},
                ports);
       if (recal) {

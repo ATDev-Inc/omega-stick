@@ -83,6 +83,61 @@ TEST(calibration_load_reports_missing_file) {
   CHECK(support::is_error(ec, OmegaCalibration::Error::file_open_failed));
 }
 
+// The calibration the maintainer's board saved after a first-boot sweep with
+// the stick untouched (D26): usable radius below the center noise radius.
+TEST(calibration_load_treats_an_unusable_file_as_no_calibration) {
+  TempDir dir("cal_unusable");
+  const auto path = dir.file("omega_calibration.cfg");
+  OmegaCalibration::CenterResult bad_c;
+  bad_c.center_x = 0.31f;
+  bad_c.center_y = -0.12f;
+  bad_c.noise_radius = 0.086f;
+  bad_c.deadzone = 0.5f;
+  bad_c.manual_offset_x = 0.02f;
+  OmegaCalibration::RangeResult bad_r;
+  bad_r.min_x = -0.058f;
+  bad_r.max_x = 0.060f;
+  bad_r.min_y = -0.049f;
+  bad_r.max_y = 0.055f;
+  bad_r.usable_radius = 0.049f;
+  bad_r.deadzone = 0.1f;
+  std::error_code ec;
+  CHECK(OmegaCalibration::save(bad_c, bad_r, path, ec));
+
+  OmegaCalibration::CenterResult center;
+  OmegaCalibration::RangeResult range;
+  CHECK(!OmegaCalibration::load(center, range, path, ec));
+  CHECK(support::is_error(ec, OmegaCalibration::Error::calibration_unusable));
+  // A distinct error from a missing or broken file, the file is left in
+  // place, and the values are still read (the boot keeps the manual offset).
+  CHECK(!support::is_error(ec, OmegaCalibration::Error::file_open_failed));
+  CHECK(std::filesystem::exists(path));
+  CHECK_NEAR(center.manual_offset_x, 0.02f, 1e-6);
+  CHECK_NEAR(range.usable_radius, 0.049f, 1e-6);
+}
+
+TEST(calibration_load_derives_a_missing_usable_radius_from_the_bounds) {
+  TempDir dir("cal_no_usable");
+  const auto path = dir.file("omega_calibration.cfg");
+  {
+    std::ofstream out(path);
+    out << "center_x=1\ncenter_y=2\ncenter_noise_radius=0.1\ncenter_deadzone=0.1\n"
+           "range_min_x=-4\nrange_max_x=5\nrange_min_y=-6\nrange_max_y=7\nrange_deadzone=0.05\n";
+  }
+  OmegaCalibration::CenterResult center;
+  OmegaCalibration::RangeResult range;
+  std::error_code ec;
+  CHECK(OmegaCalibration::load(center, range, path, ec));
+  CHECK_NEAR(range.usable_radius, 4.0f, 1e-6); // the weakest axis extreme
+  {
+    std::ofstream out(path); // the same bounds against noise 2: 4 < 3 x 2
+    out << "center_x=1\ncenter_y=2\ncenter_noise_radius=2\ncenter_deadzone=0.1\n"
+           "range_min_x=-4\nrange_max_x=5\nrange_min_y=-6\nrange_max_y=7\nrange_deadzone=0.05\n";
+  }
+  CHECK(!OmegaCalibration::load(center, range, path, ec));
+  CHECK(support::is_error(ec, OmegaCalibration::Error::calibration_unusable));
+}
+
 TEST(calibration_clear_tolerates_missing_and_removes_present) {
   TempDir dir("cal_clear");
   const auto path = dir.file("omega_calibration.cfg");
@@ -105,6 +160,7 @@ TEST(settings_round_trip_with_overrides_set) {
   in.nudge_exit_threshold = 0.7f;
   in.nudge_hold_time = std::chrono::milliseconds(250);
   in.input_mode = OmegaCalibration::InputMode::XAC;
+  in.nudge_enabled = false;
 
   std::error_code ec;
   CHECK(OmegaCalibration::DeviceSettings::save(in, path, ec));
@@ -119,6 +175,7 @@ TEST(settings_round_trip_with_overrides_set) {
   CHECK_NEAR(out.nudge_exit_threshold, 0.7f, 1e-5);
   CHECK_EQ(out.nudge_hold_time.count(), 250);
   CHECK(out.input_mode == OmegaCalibration::InputMode::XAC);
+  CHECK(!out.nudge_enabled);
 }
 
 TEST(settings_round_trip_with_overrides_cleared) {
@@ -144,9 +201,11 @@ TEST(settings_partial_file_falls_back_to_defaults) {
     out << "input_mode=1\n";
   }
   OmegaCalibration::DeviceSettings out;
+  out.nudge_enabled = false; // a missing key restores the default, it does not keep this
   std::error_code ec;
   CHECK(OmegaCalibration::DeviceSettings::load(out, path, ec));
   CHECK(out.input_mode == OmegaCalibration::InputMode::XAC);
+  CHECK(out.nudge_enabled);
   CHECK_NEAR(out.nudge_distance_threshold, 0.5f, 1e-6);
   CHECK_NEAR(out.nudge_exit_threshold, 0.8f, 1e-6);
   CHECK_EQ(out.nudge_hold_time.count(), 100);
