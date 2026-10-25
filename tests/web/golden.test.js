@@ -25,6 +25,7 @@ const ENCODERS = {
   SET_NUDGE_SETTINGS: (a) => P.encodeSetNudgeSettings(a.enter, a.exit, a.timeMs),
   SET_INPUT_MODE_MOUSE: (a) => P.encodeSetInputMode(a.mode),
   SET_INPUT_MODE_INVALID: (a) => P.encodeSetInputMode(a.mode),
+  SET_NUDGE_ENABLED_OFF: (a) => P.encodeSetNudgeEnabled(a.enabled),
 };
 
 // C++ prints each f32 as the shortest decimal that round-trips as a float, so
