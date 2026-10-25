@@ -68,6 +68,10 @@ public:
   // far above 3 (the host-test fixture is about 49, a simulator sweep about
   // 220).
   static constexpr float MIN_USABLE_TO_NOISE_RATIO = CENTER_MARGIN / MAX_CENTER_DEADZONE;
+  /// Slack applied by load() (relative to the ratio): the saved file keeps six
+  /// significant digits, which can move a threshold result by about 1e-5, so
+  /// 1e-3 is generous without admitting a genuinely unusable calibration.
+  static constexpr float LOAD_RATIO_TOLERANCE = 1e-3f;
 
   static constexpr auto SETTLE_DELAY = std::chrono::seconds(5);
   static constexpr auto SAMPLE_DELAY = std::chrono::milliseconds(10);
@@ -703,13 +707,16 @@ public:
   /// positive and at least MIN_USABLE_TO_NOISE_RATIO times its center noise
   /// radius. Otherwise sets ec to Error::calibration_unusable and returns
   /// false. A non-finite value is unusable too. range_calibration() applies
-  /// this to every sweep and load() to every saved file.
+  /// this to every sweep and load() to every saved file. `tolerance` relaxes
+  /// the ratio by that fraction: load() passes LOAD_RATIO_TOLERANCE so a sweep
+  /// accepted right at the threshold still loads after the file's six
+  /// significant digits rounded both radii.
   static bool check_usable(const CenterResult &center, const RangeResult &range,
-                           std::error_code &ec) {
+                           std::error_code &ec, float tolerance = 0.0f) {
     const float noise = center.noise_radius;
     const float usable = range.usable_radius;
     if (!std::isfinite(noise) || !std::isfinite(usable) || noise < 0.0f || usable <= 0.0f ||
-        usable < MIN_USABLE_TO_NOISE_RATIO * noise) {
+        usable < MIN_USABLE_TO_NOISE_RATIO * noise * (1.0f - tolerance)) {
       ec = make_error_code(Error::calibration_unusable);
       return false;
     }
@@ -1215,7 +1222,7 @@ public:
     range.deadzone = values["range_deadzone"];
     range.sector_max_radius.clear(); // not persisted; diagnostic only
 
-    return check_usable(center, range, ec);
+    return check_usable(center, range, ec, LOAD_RATIO_TOLERANCE);
   }
 
   /// Deletes the persisted calibration file at the given path, so the next
