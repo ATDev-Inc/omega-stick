@@ -109,6 +109,13 @@ in `version.txt`.
   an untouched sweep is refused instead of turning noise into cursor
   movement. GET_DIAGNOSTICS ends with a new calibration state byte (D26).
   ([#59](https://github.com/ATDev-Inc/omega-stick/pull/59))
+- **Each stick now has its own USB serial number.** It is the chip's factory
+  MAC address as 12 lowercase hex digits, where every stick used to report the
+  same placeholder. With two sticks plugged in, the console can now tell them
+  apart when it reconnects after an update, and the browser remembers its USB
+  permission per stick. Your computer will see an existing stick as a new USB
+  device once, so the browser may ask you to grant access again.
+  ([#55](https://github.com/ATDev-Inc/omega-stick/pull/55))
 - **espp 1.3.8 throughout.** Every espp component moves from 1.3.6 to 1.3.8,
   still one release across the board (D20). For this firmware the only code
   change is in the bundled hid-rp headers, which now include what they use, so
