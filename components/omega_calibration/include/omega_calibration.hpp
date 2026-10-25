@@ -57,6 +57,18 @@ public:
   // the range calibration.
   static constexpr int MIN_COVERED_SECTORS = RANGE_SECTORS / 2;
 
+  // A calibration is usable only if its usable radius is at least this many
+  // times its center noise radius (check_usable()). The auto center deadzone
+  // is noise_radius * CENTER_MARGIN / usable_radius, capped at
+  // MAX_CENTER_DEADZONE, so below CENTER_MARGIN / MAX_CENTER_DEADZONE (3.0)
+  // the cap stops the deadzone short of the noise and the resting stick moves
+  // the cursor. A sweep of a stick nobody moved passes MIN_COVERED_SECTORS
+  // (noise points every way) but lands below 1: the board that prompted this
+  // saved usable 0.049 to 0.060 against noise 0.074 to 0.086. A real sweep is
+  // far above 3 (the host-test fixture is about 49, a simulator sweep about
+  // 220).
+  static constexpr float MIN_USABLE_TO_NOISE_RATIO = CENTER_MARGIN / MAX_CENTER_DEADZONE;
+
   static constexpr auto SETTLE_DELAY = std::chrono::seconds(5);
   static constexpr auto SAMPLE_DELAY = std::chrono::milliseconds(10);
 
@@ -341,6 +353,8 @@ public:
     file_parse_failed,
     file_missing_field,
     unsupported_schema, ///< file written by newer firmware (schema above SCHEMA_VERSION)
+    /// usable radius below MIN_USABLE_TO_NOISE_RATIO x center noise radius (check_usable())
+    calibration_unusable,
   };
 
   /// Schema version written to both persisted files as `schema=N` and the
@@ -392,6 +406,9 @@ public:
           return "file is missing a required field";
         case Error::unsupported_schema:
           return "file was written by newer firmware (unsupported schema)";
+        case Error::calibration_unusable:
+          return "calibration unusable: the swept range is too small for the resting noise "
+                 "(was the stick moved to its edges?)";
         default:
           return "unknown error";
         }
@@ -614,6 +631,18 @@ public:
       return false;
     }
 
+    // A stick left at rest covers every sector with noise, so coverage alone
+    // does not catch it; the usable radius against the center noise does.
+    {
+      RangeResult measured;
+      measured.usable_radius = usable_radius;
+      if (!check_usable(center, measured, ec)) {
+        logger_.error("Usable radius {:.6f} is below {:.1f}x the center noise radius {:.6f}!",
+                      usable_radius, MIN_USABLE_TO_NOISE_RATIO, center.noise_radius);
+        return false;
+      }
+    }
+
     std::sort(valid_sector_maxima.begin(), valid_sector_maxima.end());
     const size_t percentile_index =
         static_cast<size_t>((valid_sector_maxima.size() - 1) * RANGE_PERCENTILE);
@@ -668,6 +697,23 @@ public:
   static void adjust_manual_offset(CenterResult &center, float delta_x, float delta_y) {
     center.manual_offset_x += delta_x;
     center.manual_offset_y += delta_y;
+  }
+
+  /// True when a calibration can drive the output: its usable radius is
+  /// positive and at least MIN_USABLE_TO_NOISE_RATIO times its center noise
+  /// radius. Otherwise sets ec to Error::calibration_unusable and returns
+  /// false. A non-finite value is unusable too. range_calibration() applies
+  /// this to every sweep and load() to every saved file.
+  static bool check_usable(const CenterResult &center, const RangeResult &range,
+                           std::error_code &ec) {
+    const float noise = center.noise_radius;
+    const float usable = range.usable_radius;
+    if (!std::isfinite(noise) || !std::isfinite(usable) || noise < 0.0f || usable <= 0.0f ||
+        usable < MIN_USABLE_TO_NOISE_RATIO * noise) {
+      ec = make_error_code(Error::calibration_unusable);
+      return false;
+    }
+    return true;
   }
 
   /// Normalizes a CenterResult's noise radius into a deadzone fraction of
@@ -1092,9 +1138,14 @@ public:
   /// Loads calibration results previously written by save(). Only the
   /// fields needed to reconstruct a Joystick config are required; the
   /// diagnostic fields (noise_radius, usable_radius, etc.) are restored
-  /// when present but default to 0 otherwise. Returns false (with ec set)
-  /// if the file can't be opened, can't be parsed, or is missing a
-  /// required field.
+  /// when present but default to 0 otherwise (a missing usable radius is
+  /// worked out from the range bounds). Returns false (with ec set) if the
+  /// file can't be opened, can't be parsed, or is missing a required field.
+  ///
+  /// A file that parses but fails check_usable() also returns false, with
+  /// Error::calibration_unusable: center and range then hold what the file
+  /// says (so a caller can keep its manual offset), but must not be used to
+  /// drive the output. The file is left in place.
   static bool load(CenterResult &center, RangeResult &range, const std::filesystem::path &path,
                    std::error_code &ec) {
     ec.clear();
@@ -1153,8 +1204,10 @@ public:
     range.max_x = values["range_max_x"];
     range.min_y = values["range_min_y"];
     range.max_y = values["range_max_y"];
-    range.usable_radius =
-        values.count("range_usable_radius") ? values["range_usable_radius"] : 0.0f;
+    range.usable_radius = values.count("range_usable_radius")
+                              ? values["range_usable_radius"]
+                              : std::min({std::abs(range.min_x), std::abs(range.max_x),
+                                          std::abs(range.min_y), std::abs(range.max_y)});
     range.reliable_max_radius =
         values.count("range_reliable_max_radius") ? values["range_reliable_max_radius"] : 0.0f;
     range.normalized_max_radius =
@@ -1162,11 +1215,11 @@ public:
     range.deadzone = values["range_deadzone"];
     range.sector_max_radius.clear(); // not persisted; diagnostic only
 
-    return true;
+    return check_usable(center, range, ec);
   }
 
-  /// Deletes the persisted calibration file at the given path, forcing a
-  /// fresh interactive calibration next time load() is tried (e.g. from a
+  /// Deletes the persisted calibration file at the given path, so the next
+  /// load() finds none and the device waits for a calibration (e.g. from a
   /// "hold button at boot to recalibrate" check, or a debug/console
   /// command). It is not an error for the file to already be missing:
   /// this returns true in that case too. Returns false (with ec set) only

@@ -3,14 +3,17 @@
 Unit tests that compile the calibration headers on a desktop toolchain, with
 no ESP-IDF and no hardware. They cover:
 
-- `OmegaCalibration::save/load` and `DeviceSettings::save/load` round-trips
+- `OmegaCalibration::save/load` and `DeviceSettings::save/load` round-trips,
+  and `load()` reporting a saved calibration below the usable-to-noise ratio
+  as `calibration_unusable` (D26)
 - `OmegaStore` load-on-construct, live setters, change callbacks, `save_to_flash`,
   and ignoring a saved deadzone override above the allowed maximum when loading
 - `CalibrationService` request decoding, replies, and store side effects,
   including the framing path through the real espp `stream_frame` parser,
   rejection of `SET_DEADZONE_OVERRIDE` values that are not finite or exceed
   `MAX_CENTER_DEADZONE` / `MAX_RANGE_DEADZONE`, and the
-  `GET_DIAGNOSTICS` reply layout and fit-to-frame rule
+  `GET_DIAGNOSTICS` reply layout (with the trailing `calibration_state`, D26)
+  and fit-to-frame rule
 - Output hold (D22 rule 1, `service_output_hold_*` in `test_service.cpp`):
   `Config::output_hold` is raised by an accepted `OTA_BEGIN` and before the
   deferred reboots of `OTA_FINISH`, `REVERT`, `RESTART` and an input-mode
@@ -27,7 +30,8 @@ no ESP-IDF and no hardware. They cover:
 - `XacInputReport` (`components/xac`): the byte layout `get_report()` hands
   to `write_hid_report()`, checked against the real espp `hid-rp` headers
 - Calibration math (`test_calibration_math.cpp`): `center_calibration`,
-  `range_calibration`, `finalize_center_deadzone`, manual offsets and
+  `range_calibration`, `finalize_center_deadzone`, `check_usable` (the D26
+  usable-to-noise rule, with the untouched board's numbers), manual offsets and
   `MedianFilter3`, driven by a deterministic fake sensor and an injected
   no-op `SleepFunction` (`Config::sleep`)
 - `DriftCompensator` (`test_drift.cpp`) through its time-injected `update()`
@@ -48,7 +52,9 @@ no ESP-IDF and no hardware. They cover:
   every call in order, including that a neutral report brackets every
   recalibration so a held nudge button is released. Also the `output_hold`
   input (neutral report every tick, a held nudge released, a recalibration
-  request pre-empted, no bogus nudge on release) in both modes, and
+  request pre-empted, no bogus nudge on release) in both modes, the
+  `needs_calibration` input (D26: neutral output that a recalibration request
+  does get through), and
   `RecalibrationGate`, which refuses a second request until the sweep finishes
 
 ## Running

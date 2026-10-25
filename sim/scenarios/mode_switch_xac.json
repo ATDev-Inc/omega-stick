@@ -3,6 +3,7 @@
   "name": "switching to xac restarts into xac mode and the gamepad follows the stick",
   "steps": [
     { "at_ms": 0, "pattern": "calibrate" },
+    { "at_ms": 500, "action": "recalibrate" },
     { "at_ms": 40000, "expect": { "calibrated": true, "mode": "mouse" } },
     { "at_ms": 41000, "action": "set_mode", "value": "xac" },
     { "at_ms": 42000, "stick": [0.5, 0] },

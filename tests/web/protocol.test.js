@@ -509,3 +509,53 @@ test("decideOutcomeNoUpdates reports an installed image, not a failure or a roll
   assert.doesNotMatch(o.message, /roll|not confirmed|did not come back/i);
   assert.equal(P.decideOutcomeNoUpdates("").state, "installed_no_updates");
 });
+
+// ---- DIAGNOSTICS calibration_state (D26) -----------------------------------
+// calibration_service.hpp: ... u8 reset_count, N x reset entry, then u8
+// calibration_state (0 usable, 1 needs calibration). Older firmware ends the
+// payload after the reset list.
+
+const diagHeader = (resetCount) => concat(bytes(0, 0), u32le(0), u32le(7), bytes(resetCount));
+const resetEntry = (boot, name) => concat(u32le(boot), bytes(1, 0, name.length), ascii(name));
+
+test("decodeDiagnostics: an older payload without calibration_state decodes as null", () => {
+  const d = P.decodeDiagnostics(concat(diagHeader(1), resetEntry(7, "power-on")));
+  assert.equal(d.calibrationState, null);
+  assert.equal(d.resets.length, 1);
+  assert.equal(d.resets[0].name, "power-on");
+  assert.equal(P.decodeDiagnostics(diagHeader(0)).calibrationState, null); // the 11-byte minimum
+});
+
+test("decodeDiagnostics: reads the trailing calibration_state after the reset list", () => {
+  const needs = P.decodeDiagnostics(concat(diagHeader(1), resetEntry(7, "power-on"), bytes(1)));
+  assert.equal(needs.calibrationState, P.CALIBRATION_NEEDED);
+  assert.equal(needs.resets[0].name, "power-on");
+  assert.equal(needs.bootCount, 7);
+  assert.equal(P.decodeDiagnostics(concat(diagHeader(0), bytes(0))).calibrationState, P.CALIBRATION_USABLE);
+  // Bytes a later firmware might append after it are ignored.
+  assert.equal(P.decodeDiagnostics(concat(diagHeader(0), bytes(1, 0xAA, 0xBB))).calibrationState, 1);
+});
+
+test("calibrationNotice: shown only when the device says it needs calibration", () => {
+  assert.equal(P.CALIBRATION_USABLE, 0);
+  assert.equal(P.CALIBRATION_NEEDED, 1);
+  const notice = P.calibrationNotice({ calibrationState: 1 });
+  assert.equal(notice, P.CALIBRATION_NEEDED_NOTICE);
+  assert.match(notice, /no usable calibration/);
+  assert.match(notice, /held neutral/);
+  assert.match(notice, /Re-run calibration/);
+  assert.doesNotMatch(notice, /\u2014/); // no em dashes in user-facing text
+  assert.equal(P.calibrationNotice({ calibrationState: 0 }), "");
+  assert.equal(P.calibrationNotice({ calibrationState: null }), ""); // older firmware: no claim either way
+  assert.equal(P.calibrationNotice(null), "");
+  assert.equal(P.calibrationNotice(undefined), "");
+  // An unknown non-zero code is treated as "not usable", like the sensor codes.
+  assert.equal(P.calibrationNotice({ calibrationState: 7 }), P.CALIBRATION_NEEDED_NOTICE);
+});
+
+test("describeCalibrationState names each state", () => {
+  assert.equal(P.describeCalibrationState(0), "usable");
+  assert.match(P.describeCalibrationState(1), /needs calibration/);
+  assert.match(P.describeCalibrationState(null), /older firmware/);
+  assert.equal(P.describeCalibrationState(5), "code 5");
+});
