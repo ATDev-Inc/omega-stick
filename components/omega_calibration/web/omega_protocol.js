@@ -216,7 +216,10 @@
     return s;
   }
 
-  // Variable-length DIAGNOSTICS reply; see calibration_service.hpp.
+  // Variable-length DIAGNOSTICS reply; see calibration_service.hpp. The
+  // trailing u8 calibration_state (D26) is newer than the rest: older firmware
+  // ends after the reset list, which decodes as calibrationState null. Bytes
+  // after it are ignored, for fields later firmware may append.
   function decodeDiagnostics(payload) {
     if (payload.length < 11) throw new Error("malformed DIAGNOSTICS reply (" + payload.length + " B, expected at least 11)");
     const v = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
@@ -234,7 +237,29 @@
       r.name = utf8.decode(payload.subarray(o, o + nameLen)); o += nameLen;
       d.resets.push(r);
     }
+    d.calibrationState = o < payload.length ? u8() : null;
     return d;
+  }
+
+  // DIAGNOSTICS calibration_state codes (D26).
+  const CALIBRATION_USABLE = 0;
+  const CALIBRATION_NEEDED = 1;
+  const CALIBRATION_NEEDED_NOTICE =
+    "This stick has no usable calibration, so its output is held neutral (no cursor or gamepad " +
+    "movement) until a calibration succeeds. Use \"Re-run calibration\" below and follow the prompts.";
+  // The notice the page shows near the calibration controls for a decoded
+  // DIAGNOSTICS reply (or null when none was read): the text, or "" for none.
+  // Firmware without the field (calibrationState null) gets no notice.
+  function calibrationNotice(diagnostics) {
+    if (!diagnostics || diagnostics.calibrationState === null || diagnostics.calibrationState === undefined) return "";
+    return diagnostics.calibrationState === CALIBRATION_USABLE ? "" : CALIBRATION_NEEDED_NOTICE;
+  }
+  // How the Diagnostics panel shows the field.
+  function describeCalibrationState(code) {
+    if (code === null || code === undefined) return "not reported (older firmware)";
+    if (code === CALIBRATION_USABLE) return "usable";
+    if (code === CALIBRATION_NEEDED) return "needs calibration (output held neutral)";
+    return "code " + code;
   }
 
   // Request payload encoders (GET_STATE, SAVE_TO_FLASH and START_CALIBRATION
@@ -1138,11 +1163,13 @@
     "crash_when_confirmed"];
   const SIM_SOURCE_KINDS = ["manual", "pattern", "script"];
   const SIM_REPLIES = ["ok", "busy", "invalid", "unsupported", "error"];
-  const SIM_ACTIONS = ["recalibrate", "save", "restart", "set_mode", "set_deadzone", "flash", "revert", "mark_valid", "fw_info"];
+  const SIM_ACTIONS = ["recalibrate", "save", "restart", "set_mode", "set_deadzone", "flash", "revert", "mark_valid", "fw_info",
+    "plant_unusable_calibration"];
   const SIM_SCRIPT_MAX_BYTES = 262144, SIM_SCRIPT_MAX_STEPS = 5000;
   const SIM_MAX_AT_MS = 86400000; // a day
   const SIM_STEP_KEYS = ["stick", "pattern", "fault", "drift", "noise", "next_image", "action", "expect"];
-  const SIM_EXPECT_KEYS = ["calibrated", "center_max", "mouse_moved", "clicked", "mode", "sensor_fault", "sensor_observed", "neutral", "fw_slot", "fw_pending", "fw_version", "xac_x", "xac_y"];
+  const SIM_EXPECT_KEYS = ["calibrated", "center_max", "mouse_moved", "clicked", "mode", "sensor_fault", "sensor_observed", "neutral",
+    "needs_calibration", "fw_slot", "fw_pending", "fw_version", "xac_x", "xac_y"];
 
   const isNum = (v) => typeof v === "number" && Number.isFinite(v);
   const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -1378,7 +1405,8 @@
     const oneOf = (k, list) => { if (!list.includes(e[k])) add(at + "expect." + k + " must be one of " + list.join(", ") + "."); };
     for (const k of Object.keys(e)) {
       switch (k) {
-        case "calibrated": case "sensor_fault": case "sensor_observed": case "fw_pending": case "neutral": bool(k); break;
+        case "calibrated": case "sensor_fault": case "sensor_observed": case "fw_pending": case "neutral":
+        case "needs_calibration": bool(k); break;
         case "center_max": if (!isNum(e[k]) || e[k] < 0 || e[k] > 10) add(at + "expect.center_max must be a number from 0 to 10."); break;
         case "fw_version": if (typeof e[k] !== "string" || e[k].length === 0) add(at + "expect.fw_version must be text."); break;
         case "xac_x": case "xac_y": if (!isNum(e[k]) || e[k] < -1 || e[k] > 1) add(at + "expect." + k + " must be a number from -1 to 1."); break;
@@ -1439,6 +1467,7 @@
     PENDING_FLASH_REASON, updateControls, afterLinkLoss, decideAfterFinishTimeout, shouldWarnBeforeUnload,
     classifyFetchError, describeFeedFailure, describeDownloadFailure,
     SENSOR_NOT_OBSERVED, SENSOR_POLL_MS, SENSOR_WAIT_MS, SENSOR_DWELL_MS, describeSensorState,
+    CALIBRATION_USABLE, CALIBRATION_NEEDED, CALIBRATION_NEEDED_NOTICE, calibrationNotice, describeCalibrationState,
     describeUpdateError, formatProgress, formatBytes,
     FIRST_FLASH_URL, NO_USB_UPDATES_NOTE, usbUpdatesUnavailable, decideOutcomeNoUpdates,
     HEADER_SIZE, CRC_SIZE, MAX_PAYLOAD, MAX_FRAME,

@@ -87,15 +87,15 @@
             mode the board appears under a different port name from the one the console uses.</li>
           <li>Choose <strong>Install Omega Stick</strong>. The installer erases the board, then writes the firmware.</li>
           <li>Wait for it to finish. It takes about a minute. Do not unplug the board.</li>
-          <li>Unplug the board and plug it back in, and leave the stick alone for the first few seconds:
-            the firmware measures the stick's center as it starts.</li>
+          <li>Unplug the board and plug it back in. It starts with no calibration, so the stick stays
+            still: no cursor or gamepad movement until you calibrate it in step 3.</li>
         </ol>
       </section>
 
       <section class="panel" aria-labelledby="h-calibrate">
         <h2 id="h-calibrate">Step 3: calibrate</h2>
-        <p>On its first start the board calibrates by itself, with prompts you cannot see, so the range it
-          records is whatever the stick happened to do. Set it properly now:</p>
+        <p>A freshly flashed stick holds its output still until it has a calibration. The console says so
+          next to the calibration controls. Calibrate it now:</p>
         <ol class="steps">
           <li>Open the <a href="console/">console</a> and connect with Web Serial, which shows the prompts.</li>
           <li>Choose <strong>Re-run calibration</strong> and follow them: leave the stick untouched while the

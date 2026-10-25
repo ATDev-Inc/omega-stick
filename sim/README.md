@@ -28,8 +28,9 @@ build-sim/omega_sim --fresh
 ```
 
 Then open the calibration console, choose **Connect Simulator** and connect to
-`ws://127.0.0.1:8765`. A fresh board runs its first-boot calibration: in the
-Simulator panel play the `calibrate` pattern while it runs (or start with
+`ws://127.0.0.1:8765`. A fresh board has no calibration, so it boots quiet
+(output held neutral) and the console says so: in the Simulator panel play the
+`calibrate` pattern, then choose **Re-run calibration** (or start with
 `--script sim/scenarios/fresh_board_calibrates.json`).
 
 | Option | Meaning |

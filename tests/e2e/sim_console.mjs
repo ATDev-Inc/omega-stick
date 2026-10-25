@@ -113,9 +113,9 @@ async function main() {
   };
   const connectedCount = () => countIn("Connected (simulator over WebSocket)");
 
-  // ---- a. connect, hello, panel, first-boot prompts, calibrate ----
-  // The page is loaded first and the simulator started afterwards, so the page
-  // can join before the first-boot sweep has printed its first prompt.
+  // ---- a. connect, hello, panel, the needs-calibration notice, calibrate from the console ----
+  // A fresh board boots quiet (D26): the console shows the notice, and "Re-run
+  // calibration" with the calibrate pattern playing calibrates it.
   sim = spawn(simPath, ["--fresh", "--data", path.join(tmp, "simdata"), "--port", String(port), "--speed", speed], { stdio: ["ignore", "pipe", "pipe"] });
   sim.stdout.on("data", (d) => { simOut += d; });
   sim.stderr.on("data", (d) => { simOut += d; });
@@ -130,20 +130,28 @@ async function main() {
   await waitFor("hello", async () => /Connected to omega_sim/.test(await text("simInfo")), 5000);
   const info = await text("simInfo");
   const panelShown = await ev("!" + $("simPanel") + ".hidden");
-  await waitLog("the range calibration prompt", /RANGE CALIBRATION/, 20000);
-  const logA = await logText();
+  const noticeBefore = await waitFor("the needs-calibration notice", async () =>
+    !(await ev($("calNeededNotice") + ".hidden")) && (await text("calNeededNotice")), 15000).catch(() => "");
   await pattern("calibrate");
-  await waitLog("calibration results", /CALIBRATION RESULTS/, 40000);
-  await waitLog("state refresh after the sweep", /Recalibration finished successfully/, 10000);
+  await waitFor("the recalibrate button", async () => !(await ev($("recalibrateBtn") + ".disabled")), 10000);
+  await click("recalibrateBtn");
+  await waitLog("the range calibration prompt", /Move the joystick slowly/, 30000);
+  const logA = await logText();
+  await waitLog("state refresh after the sweep", /Recalibration finished successfully/, 40000);
+  await waitFor("the notice to clear", async () => await ev($("calNeededNotice") + ".hidden"), 10000).catch(() => { });
   await sleep(500);
+  const noticeAfterHidden = await ev($("calNeededNotice") + ".hidden");
   const stateInfo = await text("stateInfo");
   const centerField = await ev("document.querySelector('[data-f=center]').textContent");
   const radiusField = await ev("document.querySelector('[data-f=usableRadius]').textContent");
   const calibrated = /[0-9]/.test(centerField) && /[0-9]/.test(radiusField);
-  check("a", "connect, hello, panel, first-boot prompts, calibrate pattern, state shows a calibration",
-    panelShown && /Connected to omega_sim/.test(info) && /Move the joystick slowly/.test(logA) &&
+  check("a", "connect, hello, panel, needs-calibration notice, console calibration with the pattern, state shows a calibration, notice gone",
+    panelShown && /Connected to omega_sim/.test(info) && /no usable calibration/.test(noticeBefore) &&
+    /Move the joystick slowly/.test(logA) && noticeAfterHidden &&
     calibrated && (await countIn("Fetched calibration & settings state")) >= 2,
-    info + " | log has the range prompts: " + /Move the joystick slowly/.test(logA) + " | state: " + stateInfo + " | center " + centerField + ", usable radius " + radiusField);
+    info + " | notice before: " + JSON.stringify(noticeBefore.slice(0, 60)) + " | log has the range prompts: " +
+    /Move the joystick slowly/.test(logA) + " | notice hidden after: " + noticeAfterHidden + " | state: " + stateInfo +
+    " | center " + centerField + ", usable radius " + radiusField);
   await click("simStopBtn");
 
   // ---- b. virtual stick moves the mouse; nudge clicks ----

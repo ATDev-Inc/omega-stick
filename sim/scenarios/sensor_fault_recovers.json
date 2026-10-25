@@ -3,6 +3,7 @@
   "name": "a missing sensor gives a fault and a neutral output, and recovery restores it",
   "steps": [
     { "at_ms": 0, "pattern": "calibrate" },
+    { "at_ms": 500, "action": "recalibrate" },
     { "at_ms": 40000, "expect": { "calibrated": true } },
     { "at_ms": 41000, "stick": [0.8, 0] },
     { "at_ms": 42000, "fault": "no_response" },

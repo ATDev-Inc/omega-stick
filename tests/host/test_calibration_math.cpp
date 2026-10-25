@@ -611,7 +611,10 @@ TEST(calibrate_runs_center_then_range_then_finalizes_the_deadzone) {
   CHECK(center.deadzone < Cal::MAX_CENTER_DEADZONE);
 }
 
-TEST(calibrate_clamps_the_center_deadzone_when_the_noise_is_huge) {
+TEST(calibrate_refuses_noise_bigger_than_the_travel) {
+  // Before D26 this calibrated with the center deadzone clamped to
+  // MAX_CENTER_DEADZONE, which leaves most of the noise as output. The clamp
+  // itself is still covered by finalize_center_deadzone_is_clamped_*.
   constexpr float noise = 50.0f; // bigger than the stick's whole travel
   Recorder rec;
   Cal cal(make_config(rec, center_then_sweep(0.0f, 0.0f, noise,
@@ -619,9 +622,96 @@ TEST(calibrate_clamps_the_center_deadzone_when_the_noise_is_huge) {
   Cal::CenterResult center;
   Cal::RangeResult range;
   std::error_code ec;
-  CHECK(cal.calibrate(center, range, ec));
+  CHECK(!cal.calibrate(center, range, ec));
+  CHECK(support::is_error(ec, Cal::Error::calibration_unusable));
   CHECK(center.noise_radius > 0.8f * noise);
-  CHECK_NEAR(center.deadzone, Cal::MAX_CENTER_DEADZONE, 0.0);
+  CHECK_NEAR(range.usable_radius, 0.0f, 0.0); // the refused sweep is not written out
+}
+
+// ---- check_usable (D26) ----------------------------------------------------
+
+namespace {
+
+Cal::CenterResult with_noise(float noise_radius) {
+  Cal::CenterResult c;
+  c.noise_radius = noise_radius;
+  return c;
+}
+
+Cal::RangeResult with_usable(float usable_radius) {
+  Cal::RangeResult r;
+  r.usable_radius = usable_radius;
+  return r;
+}
+
+} // namespace
+
+TEST(min_usable_to_noise_ratio_is_where_the_deadzone_cap_stops_covering_the_noise) {
+  // At the ratio the auto center deadzone is exactly MAX_CENTER_DEADZONE.
+  CHECK_NEAR(Cal::MIN_USABLE_TO_NOISE_RATIO, 3.0f, 1e-6);
+  Recorder rec;
+  Cal cal(make_config(rec, replay({{0.0f, 0.0f}})));
+  Cal::CenterResult center = with_noise(0.5f);
+  cal.finalize_center_deadzone(center, with_usable(0.5f * Cal::MIN_USABLE_TO_NOISE_RATIO));
+  CHECK_NEAR(center.deadzone, Cal::MAX_CENTER_DEADZONE, 1e-6);
+}
+
+TEST(check_usable_accepts_a_real_calibration) {
+  std::error_code ec = Cal::make_error_code(Cal::Error::read_failure);
+  CHECK(Cal::check_usable(support::sample_center(), support::sample_range(), ec)); // ratio ~49
+  CHECK(ec == Cal::make_error_code(Cal::Error::read_failure)); // untouched on success
+  // A file without a noise radius (0) cannot be judged against noise: usable.
+  CHECK(Cal::check_usable(with_noise(0.0f), with_usable(1.0f), ec));
+}
+
+TEST(check_usable_rejects_the_board_calibrated_untouched) {
+  // The maintainer's board ran its first-boot sweep with nobody touching the
+  // stick and saved usable radii of 0.049 to 0.060 against center noise radii
+  // of 0.074 to 0.086. Every pairing is unusable.
+  for (float usable : {0.049f, 0.060f}) {
+    for (float noise : {0.074f, 0.086f}) {
+      std::error_code ec;
+      CHECK(!Cal::check_usable(with_noise(noise), with_usable(usable), ec));
+      CHECK(support::is_error(ec, Cal::Error::calibration_unusable));
+    }
+  }
+}
+
+TEST(check_usable_boundary_is_the_ratio) {
+  std::error_code ec;
+  CHECK(Cal::check_usable(with_noise(0.08f), with_usable(0.08f * 3.0f), ec));
+  CHECK(!Cal::check_usable(with_noise(0.08f), with_usable(0.08f * 2.99f), ec));
+}
+
+TEST(check_usable_rejects_zero_negative_and_non_finite_values) {
+  std::error_code ec;
+  CHECK(!Cal::check_usable(with_noise(0.0f), with_usable(0.0f), ec));
+  CHECK(!Cal::check_usable(with_noise(-1.0f), with_usable(10.0f), ec));
+  CHECK(!Cal::check_usable(with_noise(0.1f), with_usable(-10.0f), ec));
+  CHECK(!Cal::check_usable(with_noise(NAN), with_usable(10.0f), ec));
+  CHECK(!Cal::check_usable(with_noise(0.1f), with_usable(INFINITY), ec));
+  CHECK(support::is_error(ec, Cal::Error::calibration_unusable));
+}
+
+TEST(range_calibration_refuses_a_sweep_of_a_resting_stick) {
+  // Noise around the center reaches every sector, so MIN_COVERED_SECTORS
+  // passes, but the usable radius (0.055) is below 3x the noise (0.08).
+  Recorder rec;
+  Cal cal(make_config(rec, replay(sector_sweep(0.0f, 0.0f, constant_radii(32, 0.056f)))));
+  Cal::CenterResult center = center_at(0.0f, 0.0f);
+  center.noise_radius = 0.08f;
+  Cal::RangeResult range;
+  range.usable_radius = 99.0f;
+  std::error_code ec;
+  CHECK(!cal.range_calibration(center, range, ec));
+  CHECK(support::is_error(ec, Cal::Error::calibration_unusable));
+  CHECK_NEAR(range.usable_radius, 99.0f, 0.0); // untouched on failure
+}
+
+TEST(calibration_unusable_has_its_own_message) {
+  const auto ec = Cal::make_error_code(Cal::Error::calibration_unusable);
+  CHECK(ec.message().find("unusable") != std::string::npos);
+  CHECK(ec != Cal::make_error_code(Cal::Error::no_range_samples));
 }
 
 TEST(calibrate_keeps_the_manual_offset_across_recalibration) {
@@ -652,4 +742,30 @@ TEST(calibrate_stops_at_the_first_failing_step) {
   CHECK(support::is_error(ec, Cal::Error::no_center_samples));
   CHECK_EQ(reads, Cal::CENTER_SAMPLES); // range calibration never ran
   CHECK_NEAR(range.usable_radius, 99.0f, 0.0);
+}
+
+TEST(calibration_accepted_at_the_threshold_survives_the_save_load_round_trip) {
+  // The file keeps six significant digits, so the noise and usable radii round
+  // independently; a sweep accepted exactly at the ratio must still load.
+  support::TempDir dir("cal_threshold");
+  const auto path = dir.file("omega_calibration.cfg");
+  espp::OmegaCalibration::CenterResult c;
+  c.center_x = 0.1f;
+  c.center_y = -0.2f;
+  c.noise_radius = 0.0861234f;
+  c.deadzone = 0.5f;
+  espp::OmegaCalibration::RangeResult r;
+  r.usable_radius = espp::OmegaCalibration::MIN_USABLE_TO_NOISE_RATIO * c.noise_radius;
+  r.min_x = -r.usable_radius;
+  r.max_x = r.usable_radius;
+  r.min_y = -r.usable_radius;
+  r.max_y = r.usable_radius;
+  r.deadzone = 0.1f;
+  std::error_code ec;
+  CHECK(espp::OmegaCalibration::check_usable(c, r, ec));
+  CHECK(espp::OmegaCalibration::save(c, r, path, ec));
+  espp::OmegaCalibration::CenterResult center;
+  espp::OmegaCalibration::RangeResult range;
+  CHECK(espp::OmegaCalibration::load(center, range, path, ec));
+  CHECK(!ec);
 }

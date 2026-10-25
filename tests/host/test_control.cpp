@@ -803,6 +803,105 @@ TEST(control_xac_output_hold_centers_the_gamepad_until_released) {
   CHECK_EQ(ports.xac.back().y, -0.5f);
 }
 
+// ---- needs_calibration (D26) ------------------------------------------------
+
+namespace {
+
+oc::StepInput uncalibrated(oc::StepInput in) {
+  in.needs_calibration = true;
+  return in;
+}
+
+} // namespace
+
+TEST(control_holds_output_covers_updates_and_a_missing_calibration) {
+  oc::StepInput in = input(0.0f, 0.0f, 0);
+  CHECK(!oc::holds_output(in));
+  CHECK(oc::holds_output(held(in)));
+  CHECK(oc::holds_output(uncalibrated(in)));
+  // A recalibration ends a needs-calibration hold but waits out an update.
+  CHECK(!oc::holds_output(uncalibrated(input(0.0f, 0.0f, 0, /*recal=*/true))));
+  CHECK(oc::holds_output(held(input(0.0f, 0.0f, 0, /*recal=*/true))));
+}
+
+TEST(control_mouse_needs_calibration_sends_neutral_however_far_the_stick_is) {
+  FakePorts ports;
+  oc::MouseState s = fresh_mouse();
+  // Noise or a push: with no usable calibration nothing reaches the host, not
+  // a movement, a nudge click, or a drift correction.
+  for (int ms = 10; ms <= 3000; ms += 10) {
+    const float x = (ms / 10) % 2 ? 0.9f : -0.9f;
+    oc::mouse_tick(s, uncalibrated(input(x, 0.3f, ms)), ports);
+    CHECK_EQ(ports.mouse.back().buttons, 0);
+    CHECK_EQ(ports.mouse.back().dx, 0);
+    CHECK_EQ(ports.mouse.back().dy, 0);
+    CHECK_EQ(ports.mouse.back().wheel, 0);
+  }
+  CHECK(s.nudge == NudgeDirection::NONE);
+  CHECK_EQ(ports.count("run_sweep"), 0);
+  CHECK_EQ(ports.count("apply_drift"), 0);
+  CHECK_EQ(ports.count("save"), 0);
+}
+
+TEST(control_mouse_needs_calibration_keeps_the_sensor_monitor_running) {
+  // The update confirm checks read the sensor state, so a board waiting for
+  // calibration must still report its sensor as observed and healthy.
+  FakePorts ports;
+  oc::MouseState s = fresh_mouse();
+  for (int ms = 10; ms <= 500; ms += 10) {
+    oc::mouse_tick(s, uncalibrated(input(0.0f, 0.0f, ms, false, 1.0f + ms * 1e-3f, 2.0f)), ports);
+  }
+  CHECK_EQ(ports.observed, 1);
+  CHECK_EQ(ports.count("fault"), 0);
+}
+
+TEST(control_mouse_needs_calibration_lets_a_recalibration_run) {
+  FakePorts ports;
+  ports.sweep_range.usable_radius = 40.0f;
+  oc::MouseState s = fresh_mouse();
+  oc::mouse_tick(s, uncalibrated(input(0.0f, 0.0f, 10, /*recal=*/true)), ports);
+  CHECK(ports.calls == RECAL_SEQUENCE_MOUSE);
+  CHECK_NEAR(s.common.range.usable_radius, 40.0f, 0.0);
+}
+
+TEST(control_mouse_resumes_once_the_needs_calibration_flag_clears) {
+  FakePorts ports;
+  oc::MouseState s = fresh_mouse();
+  oc::mouse_tick(s, uncalibrated(input(0.4f, 0.0f, 50)), ports);
+  CHECK_EQ(ports.mouse.back().dx, 0);
+  // The caller clears the flag after a successful sweep: the next tick moves
+  // the cursor, with no nudge from the reading taken during the hold.
+  oc::mouse_tick(s, input(0.4f, 0.0f, 60), ports);
+  CHECK(s.nudge == NudgeDirection::NONE);
+  CHECK_EQ(ports.mouse.back().dx, expected_delta(0.4f));
+}
+
+TEST(control_mouse_failed_recalibration_leaves_the_hold_to_the_caller) {
+  // A failed (or unusable) sweep changes nothing; the caller keeps
+  // needs_calibration set, so the following ticks stay neutral.
+  FakePorts ports;
+  ports.sweep_ok = false;
+  oc::MouseState s = fresh_mouse();
+  s.common.range.usable_radius = 0.055f;
+  oc::mouse_tick(s, uncalibrated(input(0.0f, 0.0f, 10, /*recal=*/true)), ports);
+  CHECK_EQ(ports.count("run_sweep"), 1);
+  CHECK_NEAR(s.common.range.usable_radius, 0.055f, 0.0);
+  oc::mouse_tick(s, uncalibrated(input(0.9f, 0.0f, 20)), ports);
+  CHECK_EQ(ports.mouse.back().dx, 0);
+}
+
+TEST(control_xac_needs_calibration_centers_the_gamepad) {
+  FakePorts ports;
+  oc::XacState s;
+  oc::xac_tick(s, uncalibrated(input(0.7f, -0.5f, 0)), ports);
+  CHECK_EQ(ports.xac.back().x, 0.0f);
+  CHECK_EQ(ports.xac.back().y, 0.0f);
+  oc::xac_tick(s, uncalibrated(input(0.7f, -0.5f, 5, /*recal=*/true)), ports);
+  CHECK_EQ(ports.count("run_sweep"), 1);
+  oc::xac_tick(s, input(0.7f, -0.5f, 10), ports);
+  CHECK_EQ(ports.xac.back().x, 0.7f);
+}
+
 TEST(recalibration_gate_refuses_a_second_request_until_the_sweep_finishes) {
   oc::RecalibrationGate gate;
   std::error_code ec;

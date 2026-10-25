@@ -139,6 +139,8 @@ std::string diagnostics_fields(const std::vector<uint8_t> &p) {
     resets += (i ? "," : "") + r.str();
   }
   o.add("resets", resets + "]");
+  // Trailing u8 (D26); null when an older payload ends after the resets.
+  o.add("calibrationState", off < p.size() ? num(uint32_t{p[off]}) : std::string("null"));
   return o.str();
 }
 
@@ -221,6 +223,7 @@ std::string build_golden_json() {
                                     d.resets.push_back({40, 9, true, "brownout"});
                                     d.resets.push_back({41, 1, false, "power-on"});
                                     d.resets.push_back({42, 3, false, "software"});
+                                    d.calibration_state = CalibrationService::CALIBRATION_NEEDED;
                                     return d;
                                   }});
   espp::Dispatcher dispatcher;

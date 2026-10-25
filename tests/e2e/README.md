@@ -5,8 +5,9 @@ console in headless Chrome, using the Chrome DevTools Protocol. It runs in CI
 ([e2e_tests.yml](../../.github/workflows/e2e_tests.yml), job `sim-console-e2e`)
 and can be run by hand.
 
-It exercises: connecting and the hello, the first-boot calibration prompts, the
-`calibrate` pattern, the virtual stick (keyboard and pointer, right and up), a
+It exercises: connecting and the hello, the notice for a stick with no usable
+calibration, calibrating it from the console with the `calibrate` pattern (the
+notice then clears), the virtual stick (keyboard and pointer, right and up), a
 nudge click, re-running calibration from the console, a deadzone override
 (accepted in range, refused out of range), the switch to XAC mode with the
 automatic reconnect, a `no_response` sensor fault and recovery, a firmware
