@@ -13,7 +13,7 @@ hardware: USB (a localhost WebSocket instead), the HID output (reported to the
 page instead of moving your cursor), flash partitions (a two-slot fake), and
 restarts (the firmware state is rebuilt in the same process).
 
-Nothing here proves the hardware works. The simulator is for the logic and the
+Nothing here proves the hardware works: the console's WebUSB reconnect after an update was broken on a real stick (fixed in #56) and the simulator's WebSocket transport could not show it. The simulator is for the logic and the
 console; see [docs/status.md](status.md) for what has been tried on a device.
 
 ## Running it
