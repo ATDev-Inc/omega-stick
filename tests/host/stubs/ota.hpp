@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string>
 #include <system_error>
@@ -28,6 +29,15 @@ public:
       : config_(config) {}
 
   bool begin(size_t image_size, std::error_code &ec) {
+    if (before_begin) {
+      before_begin();
+    }
+    if (pending_verify) {
+      // esp_ota_begin() refuses with ESP_ERR_OTA_ROLLBACK_INVALID_STATE,
+      // which the real espp::Ota reports as io_error.
+      ec = std::make_error_code(std::errc::io_error);
+      return false;
+    }
     if (fail_next_begin) {
       fail_next_begin = false;
       ec = std::make_error_code(std::errc::io_error);
@@ -114,6 +124,8 @@ public:
   bool fail_next_write{false};
   bool fail_next_finish{false};
   bool fail_mark_valid{false};
+  /// Runs at the start of every begin(), where the real engine erases the slot.
+  std::function<void()> before_begin;
   std::atomic<bool> restart_called{false};
   int begin_calls{0};
   int finish_calls{0};

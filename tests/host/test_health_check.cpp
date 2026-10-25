@@ -1,6 +1,7 @@
 // FirmwareHealthCheck: never confirms a pending OTA image itself (the host does,
-// with the console's MARK_VALID), rolls it back past the deadline, and stands
-// down once the host has confirmed it.
+// with the console's MARK_VALID), except the one the crash-loop handover booted;
+// past the deadline it asks for a neutral output hold, then the rollback; and it
+// stands down once the host has confirmed the image.
 
 #include <chrono>
 #include <vector>
@@ -18,7 +19,7 @@ struct FakeClock {
   using time_point = std::chrono::time_point<FakeClock>;
   static inline time_point current{};
   static time_point now() { return current; }
-  static void advance(std::chrono::seconds s) { current += s; }
+  static void advance(duration d) { current += d; }
 };
 
 using Health = espp::FirmwareHealthCheck<FakeClock>;
@@ -47,18 +48,76 @@ TEST(health_pending_image_is_not_confirmed_by_the_firmware) {
 }
 
 TEST(health_unconfirmed_image_rolls_back_once_at_the_deadline) {
+  using Action = Health::Action;
   Fixture ota_fx(true);
   auto &ota = ota_fx.ota;
   Health health(ota);
+  int holds = 0;
+  int rollbacks = 0;
+  int hold_at = -1;
   for (int i = 0; i < 300; i++) {
     FakeClock::advance(std::chrono::seconds(1));
-    health.tick();
-    if (i + 1 < Health::ROLLBACK_DEADLINE.count()) {
+    switch (health.tick()) {
+    case Action::HOLD_OUTPUT:
+      ++holds;
+      hold_at = i + 1;
+      // The output is held neutral first: no rollback in the same tick.
       CHECK_EQ(ota.rollback_calls, 0);
+      break;
+    case Action::ROLL_BACK:
+      ++rollbacks;
+      health.rollback_now();
+      break;
+    case Action::NONE:
+      break;
     }
   }
+  CHECK_EQ(holds, 1);
+  CHECK_EQ(hold_at, static_cast<int>(Health::ROLLBACK_DEADLINE.count()));
+  CHECK_EQ(rollbacks, 1);
   CHECK_EQ(ota.rollback_calls, 1);
   CHECK_EQ(ota.mark_valid_calls, 0);
+}
+
+// D22 rule 1: between the deadline and the rollback the loop gets ROLLBACK_HOLD
+// to send neutral reports; tick() itself never rolls back.
+TEST(health_rollback_waits_for_the_output_hold) {
+  using Action = Health::Action;
+  Fixture ota_fx(true);
+  auto &ota = ota_fx.ota;
+  Health health(ota);
+  FakeClock::advance(Health::ROLLBACK_DEADLINE);
+  CHECK(health.tick() == Action::HOLD_OUTPUT);
+  const auto step = std::chrono::milliseconds(10);
+  for (auto held = step; held < Health::ROLLBACK_HOLD; held += step) {
+    FakeClock::advance(step);
+    CHECK(health.tick() == Action::NONE);
+  }
+  FakeClock::advance(step);
+  CHECK(health.tick() == Action::ROLL_BACK);
+  CHECK_EQ(ota.rollback_calls, 0);
+  health.rollback_now();
+  CHECK_EQ(ota.rollback_calls, 1);
+  // Once only, even if the rollback returned (failed).
+  for (int i = 0; i < 300; i++) {
+    FakeClock::advance(std::chrono::seconds(1));
+    CHECK(health.tick() == Action::NONE);
+  }
+}
+
+TEST(health_rollback_now_stands_down_when_confirmed_during_the_hold) {
+  using Action = Health::Action;
+  Fixture ota_fx(true);
+  auto &ota = ota_fx.ota;
+  Health health(ota);
+  FakeClock::advance(Health::ROLLBACK_DEADLINE);
+  CHECK(health.tick() == Action::HOLD_OUTPUT);
+  std::error_code ec;
+  CHECK(ota.mark_app_valid(ec)); // MARK_VALID arrives just in time
+  FakeClock::advance(Health::ROLLBACK_HOLD);
+  CHECK(health.tick() == Action::ROLL_BACK);
+  health.rollback_now();
+  CHECK_EQ(ota.rollback_calls, 0);
 }
 
 TEST(health_host_confirm_is_not_undone) {
@@ -214,4 +273,69 @@ TEST(health_crash_loop_threshold_is_adjustable_and_zero_disables) {
   CHECK(Health::revert_if_crash_looping(fx.ota, crashes, 1));
   CHECK(!Health::revert_if_crash_looping(fx.ota, crashes, 0));
   CHECK_EQ(esp_ota_fake().set_boot_calls, 1);
+}
+
+// ---- crash-loop handover marker ----
+
+TEST(health_handover_marker_is_read_once_and_remembered_until_power_on) {
+  uint32_t marker = 0;
+  auto m = Health::take_handover_marker(marker, false);
+  CHECK(!m.booted_by_handover);
+  CHECK(!m.handed_over_since_power_on);
+  CHECK_EQ(marker, 0u);
+
+  // The handover leaves HANDOVER_REQUESTED before its restart.
+  marker = Health::HANDOVER_REQUESTED;
+  m = Health::take_handover_marker(marker, false);
+  CHECK(m.booted_by_handover);
+  CHECK(m.handed_over_since_power_on);
+  CHECK_EQ(marker, Health::HANDOVER_DONE);
+
+  // Later software resets: no longer "booted by the handover", but no second
+  // handover either.
+  m = Health::take_handover_marker(marker, false);
+  CHECK(!m.booted_by_handover);
+  CHECK(m.handed_over_since_power_on);
+  CHECK_EQ(marker, Health::HANDOVER_DONE);
+
+  // A power-on clears it, whatever the memory holds.
+  marker = Health::HANDOVER_REQUESTED;
+  m = Health::take_handover_marker(marker, true);
+  CHECK(!m.booted_by_handover);
+  CHECK(!m.handed_over_since_power_on);
+  CHECK_EQ(marker, 0u);
+
+  // Garbage is no marker.
+  marker = 0xDEADBEEF;
+  m = Health::take_handover_marker(marker, false);
+  CHECK(!m.handed_over_since_power_on);
+  CHECK_EQ(marker, 0u);
+}
+
+TEST(health_accept_after_handover_confirms_a_pending_image) {
+  Fixture fx(true);
+  CHECK(Health::accept_after_handover(fx.ota, true));
+  CHECK_EQ(fx.ota.mark_valid_calls, 1);
+  CHECK(!fx.ota.pending_verify);
+}
+
+TEST(health_accept_after_handover_leaves_a_confirmed_image_alone) {
+  Fixture fx(false);
+  CHECK(!Health::accept_after_handover(fx.ota, true));
+  CHECK_EQ(fx.ota.mark_valid_calls, 0);
+}
+
+TEST(health_accept_after_handover_needs_the_marker) {
+  // An ordinary update boots pending too; only the console may confirm that one.
+  Fixture fx(true);
+  CHECK(!Health::accept_after_handover(fx.ota, false));
+  CHECK_EQ(fx.ota.mark_valid_calls, 0);
+  CHECK(fx.ota.pending_verify);
+}
+
+TEST(health_accept_after_handover_reports_a_failed_confirm) {
+  Fixture fx(true);
+  fx.ota.fail_mark_valid = true;
+  CHECK(!Health::accept_after_handover(fx.ota, true));
+  CHECK(fx.ota.pending_verify);
 }

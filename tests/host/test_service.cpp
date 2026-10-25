@@ -577,6 +577,41 @@ TEST(service_get_fw_info_previous_slot_states) {
   }
 }
 
+// An aborted or expired upload leaves the start of an image in the other slot:
+// its descriptor reads (so the version is still shown) but the image does not
+// verify, so REVERT would fail. FW_INFO says "partial" instead of the stale
+// otadata state.
+TEST(service_get_fw_info_reports_a_partial_previous_slot) {
+  OtaFixture fx("svc_fwinfo_partial");
+  auto &fake = esp_ota_fake();
+  fake.other_verifies = false;
+  fake.other_state = ESP_OTA_IMG_UNDEFINED;
+  auto strs = fw_info_strings(fx.request(Msg::GetFwInfo));
+  CHECK_EQ(strs.size(), 13u);
+  if (strs.size() == 13) {
+    CHECK(strs[8] == "ota_1");
+    CHECK(strs[9] == "0.0.9-prev");
+    CHECK(strs[10] == "Jan  2 2026");
+    CHECK(strs[11] == "01:02:03");
+    CHECK(strs[12] == "partial");
+  }
+  CHECK_EQ(fake.verify_calls, 1);
+
+  // A complete image is still reported by its otadata state.
+  fake.other_verifies = true;
+  fake.other_state = ESP_OTA_IMG_VALID;
+  strs = fw_info_strings(fx.request(Msg::GetFwInfo));
+  CHECK(strs.size() == 13u && strs[12] == "valid");
+
+  // While an upload runs, the slot it writes is partial by definition; the
+  // image is not read.
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(64)), Msg::Ok));
+  const int calls = fake.verify_calls;
+  strs = fw_info_strings(fx.request(Msg::GetFwInfo));
+  CHECK(strs.size() == 13u && strs[12] == "partial");
+  CHECK_EQ(fake.verify_calls, calls);
+}
+
 TEST(service_revert_errors) {
   OtaFixture none("svc_revert_none", /*wire_ota=*/false);
   auto reply = none.request(Msg::Revert);
@@ -787,6 +822,8 @@ TEST(service_expire_stale_update) {
   // Not idle long enough yet.
   CHECK(!fx.service.expire_stale_update(std::chrono::hours(1)));
   CHECK(fx.ota.session_active());
+  CHECK(!fx.service.expire_stale_update(CalibrationService::OTA_IDLE_TIMEOUT));
+  CHECK(fx.ota.session_active());
 
   CHECK(fx.service.expire_stale_update(milliseconds(0)));
   CHECK(!fx.ota.session_active());
@@ -806,6 +843,39 @@ TEST(service_mark_valid_clears_pending_verify) {
   CHECK(is(fx.request(Msg::MarkValid), Msg::Error));
 }
 
+// The console may confirm an image that is already valid (a retry, or a second
+// console): that is a plain OK and leaves it valid.
+TEST(service_mark_valid_on_a_confirmed_image_is_a_no_op_ok) {
+  OtaFixture fx("svc_markvalid_noop");
+  fx.ota.pending_verify = false;
+  const auto reply = fx.request(Msg::MarkValid);
+  CHECK(is(reply, Msg::Ok));
+  CHECK_EQ(stream::get_u32(reply.payload), 0u);
+  CHECK(!fx.ota.pending_verify);
+  CHECK(!fx.held());
+  CHECK_EQ(fx.ota.rollback_calls, 0);
+}
+
+// esp_ota_begin() refuses while the running image is pending, and espp::Ota
+// would only report io_error; the service says why instead.
+TEST(service_ota_begin_refused_while_the_running_image_is_pending) {
+  OtaFixture fx("svc_ota_pending");
+  fx.ota.pending_verify = true;
+  const auto reply = fx.request(Msg::OtaBegin, u32le(64));
+  CHECK(is(reply, Msg::Error));
+  CHECK_EQ(stream::get_u32(reply.payload),
+           static_cast<uint32_t>(std::errc::operation_not_permitted));
+  CHECK(support::error_message(reply).find("not confirmed yet") != std::string::npos);
+  CHECK(support::error_message(reply).find("MARK_VALID") != std::string::npos);
+  CHECK_EQ(fx.ota.begin_calls, 0);
+  CHECK(!fx.ota.session_active());
+  CHECK(!fx.held());
+
+  // Once confirmed, the upload can start.
+  CHECK(is(fx.request(Msg::MarkValid), Msg::Ok));
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(64)), Msg::Ok));
+}
+
 TEST(service_restart_requires_callback_and_empty_payload) {
   OtaFixture none("svc_restart_none", /*wire_ota=*/false, /*wire_restart=*/false);
   CHECK(is(none.request(Msg::Restart), Msg::Error));
@@ -819,7 +889,65 @@ TEST(service_restart_requires_callback_and_empty_payload) {
   CHECK(fx.restart_ran.load());
 }
 
+// The polling loops pass OTA_IDLE_TIMEOUT. Its value is what
+// docs/firmware-updates.md documents, and the session survives right up to it.
+TEST(service_expire_stale_update_at_the_real_idle_timeout) {
+  using namespace std::chrono;
+  CHECK(CalibrationService::OTA_IDLE_TIMEOUT == seconds(30));
+  OtaFixture fx("svc_expire_timeout");
+  const auto timeout = CalibrationService::OTA_IDLE_TIMEOUT;
+  const auto begin_sent = steady_clock::now();
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(64)), Msg::Ok));
+
+  // Idle for just under the timeout (measured from before the request, so the
+  // real last activity is no earlier than that): kept.
+  CHECK(!fx.service.expire_stale_update(timeout, begin_sent + timeout - milliseconds(1)));
+  CHECK(fx.ota.session_active());
+  CHECK(fx.held());
+
+  // OTA_DATA restarts the idle time.
+  const auto data_sent = steady_clock::now();
+  CHECK(is(fx.request(Msg::OtaData, ota_data(0, {1, 2})), Msg::Ok));
+  const auto data_done = steady_clock::now();
+  CHECK(!fx.service.expire_stale_update(timeout, data_sent + timeout - milliseconds(1)));
+  CHECK(fx.ota.session_active());
+
+  // At the timeout (measured from after the last request): aborted.
+  CHECK(fx.service.expire_stale_update(timeout, data_done + timeout));
+  CHECK(!fx.ota.session_active());
+  CHECK_EQ(fx.ota.abort_calls, 1);
+  CHECK(!fx.held());
+}
+
 // ---- output hold (D22 rule 1) ---------------------------------------------------
+
+// begin() erases the slot, which takes seconds on the device: the hold must be
+// up before it starts, and come down again if no session began.
+TEST(service_output_hold_is_raised_before_ota_begin_erases) {
+  OtaFixture fx("svc_hold_before_begin");
+  bool held_in_begin = false;
+  fx.ota.before_begin = [&] { held_in_begin = fx.held(); };
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(64)), Msg::Ok));
+  CHECK(held_in_begin);
+  CHECK(fx.held());
+  CHECK(is(fx.request(Msg::OtaAbort), Msg::Ok));
+  CHECK(!fx.held());
+
+  // A begin() that fails releases the hold it raised.
+  held_in_begin = false;
+  fx.ota.fail_next_begin = true;
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(64)), Msg::Error));
+  CHECK(held_in_begin);
+  CHECK(!fx.held());
+
+  // After a takeover the hold was already up; a failed restart of the upload
+  // ends the stale session and the hold with it.
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(64)), Msg::Ok));
+  fx.ota.fail_next_begin = true;
+  CHECK(is(fx.request(Msg::OtaBegin, u32le(64)), Msg::Error));
+  CHECK(!fx.ota.session_active());
+  CHECK(!fx.held());
+}
 
 TEST(service_output_hold_follows_an_ota_session) {
   OtaFixture fx("svc_hold_session");
@@ -978,4 +1106,40 @@ TEST(service_output_hold_is_released_when_the_deferred_reboot_is_dropped) {
   CHECK(svc.handle_frame(static_cast<uint8_t>(Msg::Restart), {}));
   CHECK_EQ(raised, 1); // raised for the reboot...
   CHECK(!held);        // ...and lowered again once the reply was refused
+}
+
+// A reply that was not queued drops its deferred reboot, but an upload this
+// link is still running keeps the output held until the upload ends.
+TEST(service_dropped_reboot_reply_keeps_the_hold_of_a_running_upload) {
+  TempDir dir("svc_hold_dropped_upload");
+  OmegaStore::Config cfg;
+  cfg.calibration_path = dir.file("omega_calibration.cfg");
+  cfg.settings_path = dir.file("omega_settings.cfg");
+  OmegaStore store(cfg);
+  espp::Ota ota(espp::Ota::Config{});
+  esp_ota_fake().reset();
+  int holds = 0;
+  bool accept = true;
+  std::atomic<bool> restarted{false};
+  CalibrationService svc({.store = store,
+                          .send = [&](std::span<const uint8_t>) { return accept; },
+                          .restart = [&] { restarted = true; },
+                          .ota = &ota,
+                          .output_hold = [&](bool hold) { holds += hold ? 1 : -1; }});
+  const auto size = u32le(64);
+  CHECK(svc.handle_frame(static_cast<uint8_t>(Msg::OtaBegin), size));
+  CHECK(ota.session_active());
+  CHECK_EQ(holds, 1);
+
+  accept = false; // the transport refuses the RESTART's OK
+  CHECK(svc.handle_frame(static_cast<uint8_t>(Msg::Restart), {}));
+  CHECK_EQ(holds, 1); // the upload still needs it
+  CHECK(ota.session_active());
+
+  // The upload ending releases it as usual.
+  accept = true;
+  CHECK(svc.expire_stale_update(std::chrono::milliseconds(0)));
+  CHECK_EQ(holds, 0);
+  std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+  CHECK(!restarted.load()); // the dropped reboot never runs
 }

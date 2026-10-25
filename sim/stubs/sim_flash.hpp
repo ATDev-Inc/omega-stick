@@ -9,9 +9,16 @@
 // (and a simulator restart).
 //
 // What it models of the bootloader (boot()): rollback is enabled, so a freshly
-// activated image (NEW) runs as PENDING_VERIFY; an image that is still
-// PENDING_VERIFY at the next boot was never confirmed and is rolled back to the
-// other slot (state ABORTED) when that slot holds an image.
+// activated image (NEW) runs as PENDING_VERIFY; every image that is still
+// PENDING_VERIFY at the next boot was never confirmed and becomes ABORTED, and
+// when that was the boot slot the device rolls back to the other slot if that
+// slot holds a complete image.
+//
+// Of esp_ota_begin(): the slot that is not running is erased and loses its
+// otadata state. Once the first bytes of an upload carry an app descriptor the
+// slot reads as an image again, but a "partial" one that does not verify
+// (esp_image_verify(), esp_ota_set_boot_partition()) until OTA_FINISH
+// completes it. An aborted or expired upload leaves it that way.
 //
 // What it does not model: image signatures, flash contents (an uploaded image
 // is kept only as its app descriptor), partition tables, secure boot.
@@ -56,6 +63,8 @@ typedef int esp_err_t;
 #define ESP_OK 0
 #define ESP_FAIL -1
 #define ESP_ERR_NOT_FOUND 0x105
+#define ESP_ERR_IMAGE_INVALID 0x2002
+#define ESP_ERR_OTA_VALIDATE_FAILED 0x1503
 
 inline const char *esp_err_to_name(esp_err_t err) {
   switch (err) {
@@ -65,6 +74,10 @@ inline const char *esp_err_to_name(esp_err_t err) {
     return "ESP_FAIL";
   case ESP_ERR_NOT_FOUND:
     return "ESP_ERR_NOT_FOUND";
+  case ESP_ERR_IMAGE_INVALID:
+    return "ESP_ERR_IMAGE_INVALID";
+  case ESP_ERR_OTA_VALIDATE_FAILED:
+    return "ESP_ERR_OTA_VALIDATE_FAILED";
   default:
     return "UNKNOWN ERROR";
   }
@@ -72,7 +85,26 @@ inline const char *esp_err_to_name(esp_err_t err) {
 
 struct esp_partition_t {
   char label[17];
+  uint32_t address;
+  uint32_t size;
 };
+
+// ---- esp_image_format.h ----------------------------------------------------
+
+typedef struct {
+  uint32_t offset;
+  uint32_t size;
+} esp_partition_pos_t;
+
+typedef enum {
+  ESP_IMAGE_VERIFY,
+  ESP_IMAGE_VERIFY_SILENT,
+} esp_image_load_mode_t;
+
+typedef struct {
+  uint32_t start_addr;
+  uint32_t image_len;
+} esp_image_metadata_t;
 
 typedef enum {
   ESP_OTA_IMG_NEW = 0,
@@ -86,7 +118,16 @@ typedef enum {
 namespace sim {
 
 /// How an image flashed through the console behaves once it has booted.
-enum class NextImage { OK, FAIL_SELF_TEST, CRASH_LOOP, SLOW_SENSOR_START, SLOW_SENSOR_FAIL };
+enum class NextImage {
+  OK,
+  FAIL_SELF_TEST,
+  CRASH_LOOP,
+  SLOW_SENSOR_START,
+  SLOW_SENSOR_FAIL,
+  /// Runs normally while pending, so the console can confirm it; once confirmed it crashes on
+  /// every boot (a confirmed image that crash-loops, for the crash-loop handover).
+  CRASH_WHEN_CONFIRMED,
+};
 
 inline const char *next_image_name(NextImage b) {
   switch (b) {
@@ -98,6 +139,8 @@ inline const char *next_image_name(NextImage b) {
     return "slow_sensor_start";
   case NextImage::SLOW_SENSOR_FAIL:
     return "slow_sensor_fail";
+  case NextImage::CRASH_WHEN_CONFIRMED:
+    return "crash_when_confirmed";
   case NextImage::OK:
   default:
     return "ok";
@@ -106,7 +149,8 @@ inline const char *next_image_name(NextImage b) {
 
 inline bool parse_next_image(const std::string &name, NextImage &out) {
   for (const NextImage b : {NextImage::OK, NextImage::FAIL_SELF_TEST, NextImage::CRASH_LOOP,
-                            NextImage::SLOW_SENSOR_START, NextImage::SLOW_SENSOR_FAIL}) {
+                            NextImage::SLOW_SENSOR_START, NextImage::SLOW_SENSOR_FAIL,
+                            NextImage::CRASH_WHEN_CONFIRMED}) {
     if (name == next_image_name(b)) {
       out = b;
       return true;
@@ -231,6 +275,9 @@ public:
     bool has_image{false};
     /// The image this simulator binary itself stands for (not an upload).
     bool native{false};
+    /// The start of an upload that never finished: the descriptor reads, the image does
+    /// not verify.
+    bool partial{false};
     esp_app_desc_t desc{};
     esp_ota_img_states_t state{ESP_OTA_IMG_UNDEFINED};
     NextImage behavior{NextImage::OK};
@@ -239,6 +286,10 @@ public:
   Flash() {
     std::snprintf(slots_[0].part.label, sizeof(slots_[0].part.label), "ota_0");
     std::snprintf(slots_[1].part.label, sizeof(slots_[1].part.label), "ota_1");
+    // partitions.csv: two 1920 KB app slots.
+    slots_[0].part.address = 0x10000;
+    slots_[1].part.address = 0x1F0000;
+    slots_[0].part.size = slots_[1].part.size = 0x1E0000;
   }
 
   /// Version string of the image the simulator binary itself stands for.
@@ -278,11 +329,17 @@ public:
   bool boot() {
     std::lock_guard<std::mutex> lock(mu_);
     bool rolled_back = false;
-    Slot &s = slots_[boot_];
-    if (s.state == ESP_OTA_IMG_PENDING_VERIFY) {
-      s.state = ESP_OTA_IMG_ABORTED;
+    // As the real bootloader does, every image still pending was never confirmed, not
+    // only the boot slot's (a REVERT from a pending image leaves the running one so).
+    const bool boot_was_pending = slots_[boot_].state == ESP_OTA_IMG_PENDING_VERIFY;
+    for (Slot &s : slots_) {
+      if (s.state == ESP_OTA_IMG_PENDING_VERIFY) {
+        s.state = ESP_OTA_IMG_ABORTED;
+      }
+    }
+    if (boot_was_pending) {
       const int other = 1 - boot_;
-      if (slots_[other].has_image) {
+      if (slots_[other].has_image && !slots_[other].partial) {
         boot_ = other;
         rolled_back = true;
       }
@@ -336,6 +393,9 @@ public:
     if (idx < 0 || !slots_[idx].has_image) {
       return ESP_ERR_NOT_FOUND;
     }
+    if (slots_[idx].partial) {
+      return ESP_ERR_OTA_VALIDATE_FAILED; // the real one verifies the image first
+    }
     slots_[idx].state = ESP_OTA_IMG_NEW;
     boot_ = idx;
     if (boot_ != running_) {
@@ -378,12 +438,29 @@ public:
     save_locked();
   }
 
+  /// esp_image_verify(): ESP_OK when the slot at `pos` holds a complete image.
+  esp_err_t verify(const esp_partition_pos_t *pos) const {
+    std::lock_guard<std::mutex> lock(mu_);
+    for (const Slot &s : slots_) {
+      if (pos && s.part.address == pos->offset) {
+        return s.has_image && !s.partial ? ESP_OK : ESP_ERR_IMAGE_INVALID;
+      }
+    }
+    return ESP_ERR_IMAGE_INVALID;
+  }
+
   /// Marks the running image invalid and points the next boot at the other
-  /// slot. False (nothing changed) when the other slot holds no image.
+  /// slot. False (nothing changed) when no rollback is possible, judged as
+  /// esp_ota_check_rollback_is_possible() does: the other slot needs a valid
+  /// otadata entry (not INVALID or ABORTED; UNDEFINED is no entry) and an
+  /// image that verifies.
   bool mark_invalid_and_rollback() {
     std::lock_guard<std::mutex> lock(mu_);
     const int other = 1 - running_;
-    if (!slots_[other].has_image) {
+    const Slot &o = slots_[other];
+    const bool entry_valid = o.state == ESP_OTA_IMG_NEW || o.state == ESP_OTA_IMG_PENDING_VERIFY ||
+                             o.state == ESP_OTA_IMG_VALID;
+    if (!o.has_image || o.partial || !entry_valid) {
       return false;
     }
     slots_[running_].state = ESP_OTA_IMG_INVALID;
@@ -391,6 +468,35 @@ public:
     restart_reason_ = "rollback";
     save_locked();
     return true;
+  }
+
+  /// esp_ota_begin(): erases the slot that is not running and drops its otadata
+  /// entry. A boot slot that pointed there falls back to the running slot.
+  void begin_upload() {
+    std::lock_guard<std::mutex> lock(mu_);
+    const int target = 1 - running_;
+    Slot &s = slots_[target];
+    s.has_image = false;
+    s.native = false;
+    s.partial = false;
+    s.desc = {};
+    s.state = ESP_OTA_IMG_UNDEFINED;
+    s.behavior = NextImage::OK;
+    if (boot_ == target) {
+      boot_ = running_;
+    }
+    save_locked();
+  }
+
+  /// The upload's first bytes carried an app descriptor: the slot now reads as an image,
+  /// but a partial one until commit_image().
+  void upload_descriptor(const esp_app_desc_t &desc) {
+    std::lock_guard<std::mutex> lock(mu_);
+    Slot &s = slots_[1 - running_];
+    s.has_image = true;
+    s.partial = true;
+    s.desc = desc;
+    save_locked();
   }
 
   /// Stores a validated upload in the slot that is not running, makes it the
@@ -401,6 +507,7 @@ public:
     Slot &s = slots_[target];
     s.has_image = true;
     s.native = false;
+    s.partial = false;
     s.desc = desc;
     s.state = ESP_OTA_IMG_NEW;
     s.behavior = next_image_;
@@ -468,6 +575,7 @@ private:
     for (Slot &s : slots_) {
       s.has_image = false;
       s.native = false;
+      s.partial = false;
       s.desc = {};
       s.state = ESP_OTA_IMG_UNDEFINED;
       s.behavior = NextImage::OK;
@@ -496,6 +604,7 @@ private:
       const std::string p = "slot" + std::to_string(i) + ".";
       out << p << "has=" << (s.has_image ? 1 : 0) << "\n"
           << p << "native=" << (s.native ? 1 : 0) << "\n"
+          << p << "partial=" << (s.partial ? 1 : 0) << "\n"
           << p << "state=" << static_cast<int>(s.state) << "\n"
           << p << "behavior=" << next_image_name(s.behavior) << "\n"
           << p << "version=" << s.desc.version << "\n"
@@ -543,6 +652,7 @@ private:
       Slot &s = slots_[i];
       s.has_image = geti(p + "has", 0) != 0;
       s.native = geti(p + "native", 0) != 0;
+      s.partial = geti(p + "partial", 0) != 0;
       s.state = static_cast<esp_ota_img_states_t>(geti(p + "state", -1));
       if (kv.count(p + "behavior") != 0) {
         parse_next_image(kv[p + "behavior"], s.behavior);
@@ -606,4 +716,14 @@ inline esp_err_t esp_ota_get_state_partition(const esp_partition_t *part,
 
 inline esp_err_t esp_ota_set_boot_partition(const esp_partition_t *part) {
   return sim::flash().set_boot(part);
+}
+
+inline esp_err_t esp_image_verify(esp_image_load_mode_t, const esp_partition_pos_t *part,
+                                  esp_image_metadata_t *data) {
+  const esp_err_t err = sim::flash().verify(part);
+  if (err == ESP_OK && data) {
+    data->start_addr = part->offset;
+    data->image_len = part->size;
+  }
+  return err;
 }

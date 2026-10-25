@@ -284,8 +284,8 @@ void Host::handle_control(const json::Value &msg) {
   } else if (type == "next_image") {
     NextImage b;
     if (!parse_next_image(msg.string_or("behavior"), b)) {
-      reject("next_image: behavior must be ok, fail_self_test, crash_loop, slow_sensor_start or "
-             "slow_sensor_fail");
+      reject("next_image: behavior must be ok, fail_self_test, crash_loop, slow_sensor_start, "
+             "slow_sensor_fail or crash_when_confirmed");
       return;
     }
     flash().set_next_image(b);

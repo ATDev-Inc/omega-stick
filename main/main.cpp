@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "esp_app_desc.h" // esp_app_get_description() -- firmware version banner at boot
+#include "esp_attr.h"     // RTC_NOINIT_ATTR -- the crash-loop handover marker
 #include "esp_ota_ops.h"  // esp_ota_get_running_partition() -- slot tag in the reset log
 #include "esp_system.h" // esp_restart() -- used to apply a live mode switch (see on_mode_changed below)
 
@@ -339,7 +340,31 @@ static bool reset_reason_is_abnormal(esp_reset_reason_t reason) {
 // closed) keeps the OTA engine claimed, which blocks a retry and REVERT. The
 // polling loops drop such a session after this long without OTA traffic (see
 // CalibrationService::expire_stale_update()).
-static constexpr auto OTA_IDLE_TIMEOUT = 30s;
+static constexpr auto OTA_IDLE_TIMEOUT = espp::CalibrationService::OTA_IDLE_TIMEOUT;
+
+#if CONFIG_OMEGA_STICK_OTA
+// The crash-loop handover's note to the boot it starts, in memory that a
+// software reset keeps and a power-on loses. See
+// FirmwareHealthCheck::take_handover_marker().
+static RTC_NOINIT_ATTR uint32_t crash_loop_handover_marker;
+
+// Acts on FirmwareHealthCheck::tick() once per polling-loop iteration. Past the
+// deadline the output is held neutral for ROLLBACK_HOLD before the rollback
+// reboots, so the host is not left with a deflection (D22 rule 1).
+static void run_health_check(espp::FirmwareHealthCheck<> &health, std::atomic<int> &output_holds) {
+  switch (health.tick()) {
+  case espp::FirmwareHealthCheck<>::Action::HOLD_OUTPUT:
+    output_holds.fetch_add(1);
+    break;
+  case espp::FirmwareHealthCheck<>::Action::ROLL_BACK:
+    health.rollback_now(); // only returns if the host confirmed meanwhile or it failed
+    output_holds.fetch_sub(1);
+    break;
+  case espp::FirmwareHealthCheck<>::Action::NONE:
+    break;
+  }
+}
+#endif
 
 // Runs entirely on the dedicated "omega-stick" task (see app_main below),
 // not on the small default main-task stack. Matches espp::Task's callback
@@ -407,12 +432,24 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   // A confirmed image that has crashed on its last few boots hands the device
   // to the other slot (D18 amendment); a pending one is the bootloader's job.
   // It runs here, before any peripheral is touched, because a crash loop in
-  // the I2C or sensor setup is exactly the case it exists for.
-  if (espp::FirmwareHealthCheck<>::revert_if_crash_looping(
-          ota, espp::FirmwareHealthCheck<>::crashes_while_running(boots, running_slot_label))) {
+  // the I2C or sensor setup is exactly the case it exists for. At most once
+  // per power-on: if the image it hands over to crash-loops too, both are
+  // broken, and swapping between them would only wear out the otadata sectors.
+  using HealthCheck = espp::FirmwareHealthCheck<>;
+  const auto handover = HealthCheck::take_handover_marker(crash_loop_handover_marker,
+                                                          esp_reset_reason() == ESP_RST_POWERON);
+  if (!handover.handed_over_since_power_on &&
+      HealthCheck::revert_if_crash_looping(
+          ota, HealthCheck::crashes_while_running(boots, running_slot_label))) {
+    crash_loop_handover_marker = HealthCheck::HANDOVER_REQUESTED;
     std::this_thread::sleep_for(100ms); // let the message leave the console
     esp_restart();
   }
+  // The handover boots the other image pending (esp_ota_set_boot_partition()
+  // writes it as NEW), and with no console attached nothing would confirm it:
+  // the deadline would roll it back into the crash loop. It ran before and was
+  // not rejected, so it is accepted now: the one image the firmware confirms.
+  HealthCheck::accept_after_handover(ota, handover.booted_by_handover);
 #else
   // Firmware updates over USB are off in this build (D25): no OTA engine, so
   // the console's update messages reply function_not_supported, and there is
@@ -577,10 +614,10 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
               printf("WARNING: failed to save settings before restart: %s\n",
                      save_ec.message().c_str());
             }
-            // CalibrationService sends the OK before calling this; give it a
-            // moment to actually go out over USB before the reset tears the
-            // link down.
-            std::this_thread::sleep_for(200ms);
+            // CalibrationService queues the OK before calling this; give it
+            // the same time to go out over USB as the other console reboots
+            // before the reset tears the link down.
+            std::this_thread::sleep_for(espp::CalibrationService::REPLY_FLUSH_DELAY);
             esp_restart();
           },
       .log_level = espp::Logger::Verbosity::ERROR,
@@ -916,7 +953,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 #endif
     while (true) {
 #if CONFIG_OMEGA_STICK_OTA
-      fw_health.tick();
+      run_health_check(fw_health, output_holds);
 #endif
       // Cheap when idle: a try_lock and a timestamp compare per service.
       calibration_vendor.expire_stale_update(OTA_IDLE_TIMEOUT);
@@ -1095,7 +1132,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 #endif
     while (true) {
 #if CONFIG_OMEGA_STICK_OTA
-      fw_health.tick();
+      run_health_check(fw_health, output_holds);
 #endif
       // Cheap when idle: a try_lock and a timestamp compare per service.
       calibration_vendor.expire_stale_update(OTA_IDLE_TIMEOUT);
