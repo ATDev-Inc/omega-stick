@@ -130,8 +130,9 @@ Research documents are point-in-time snapshots and are not maintained.
 ## Firmware updates and versioning
 
 **v0.1.0 does not update over USB.** Install it, and any later version, from
-the flash page below; that erases saved calibration and settings, so calibrate
-again afterwards. The rest of this section describes builds with
+the flash page below; that erases saved calibration and settings. After a first
+flash the stick stays still (no cursor or gamepad movement) until it is
+calibrated from the console. The rest of this section describes builds with
 `CONFIG_OMEGA_STICK_OTA=y` (see [decision D25](docs/decisions.md)), which come
 back in a later 0.x release.
 
@@ -153,7 +154,8 @@ it after verifying its size and SHA-256. The device holds its output neutral
 while an update is in flight. Versions are `MAJOR.MINOR.PATCH` from `version.txt` (release builds
 report exactly that; other builds append `+<commit>`). Please paste the
 console's Copy line in bug reports. A first flash erases saved calibration and
-settings; console updates keep them. Details are in
+settings, and the stick then stays still until it is calibrated from the
+console; console updates keep them. Details are in
 [docs/firmware-updates.md](docs/firmware-updates.md).
 
 ## Hardware
@@ -263,17 +265,21 @@ Initializing TMAG5273...
 TMAG5273 initialized successfully!
 ```
 
-On a board with no saved calibration, the firmware then runs an interactive
-center calibration followed by a range calibration and prints the results.
-Follow its prompts: leave the stick alone while the center is measured, then
-move it slowly through a complete circle. The calibration is saved to the
-`littlefs` partition and loaded on later boots (`Loaded existing calibration.`).
+A board with a usable saved calibration prints `Loaded existing calibration.`
+A board without one (a first flash, or a saved calibration whose range is too
+small for the stick's resting noise) prints `No usable calibration` and starts
+quiet: USB and the console come up, but the output is held neutral until a
+calibration succeeds (decision D26). Calibrate it from the console with
+"Re-run calibration" (connect over Web Serial to see the prompts): leave the
+stick alone while the center is measured, then move it slowly through a
+complete circle. The result is checked, saved to the `littlefs` partition and
+loaded on later boots.
 
 That is the last the monitor shows. The firmware's log goes to the built-in USB
 Serial/JTAG port, which disappears as soon as TinyUSB takes over the USB
 connection, so the lines printed after that (`Waiting for USB host...`,
 `HID ready: yes`) are not visible and the monitor loses its port. The stick is
-working when the cursor moves.
+working when the cursor moves, once it is calibrated.
 
 If you see `ERROR: TMAG5273 initialization failed`, check the Qwiic cable (with USB
 unplugged) and confirm the sensor's address strap (the firmware expects `0x35`).
@@ -293,8 +299,10 @@ file in a Chromium-based browser (Chrome, Edge, Opera) from `file://`,
 - view live calibration and settings, and adjust the manual center offset,
   deadzone overrides, and nudge-click tuning;
 - switch between mouse and XAC mode;
-- re-run the full center and range calibration (use Web Serial to see the
-  prompts; the button stays disabled until the result arrives);
+- run the full center and range calibration (use Web Serial to see the
+  prompts; the button stays disabled until the result arrives). A stick with
+  no usable calibration holds its output neutral, and the console shows a
+  notice next to this button until a calibration succeeds;
 - save the current settings to flash.
 
 ### Build options

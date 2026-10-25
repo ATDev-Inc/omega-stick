@@ -99,6 +99,16 @@ in `version.txt`.
 
 ### Changed
 
+- **A stick with no usable calibration stays still until it is calibrated
+  from the console.** After a first flash, or with a saved calibration whose
+  range is too small for the stick's resting noise (as a first-boot sweep of
+  an untouched stick produces), the firmware no longer runs the sweep at boot
+  or halts. USB and the console start, the output is held neutral, and the
+  console shows a notice next to "Re-run calibration". A calibration is only
+  accepted when its usable range is at least three times its center noise, so
+  an untouched sweep is refused instead of turning noise into cursor
+  movement. GET_DIAGNOSTICS ends with a new calibration state byte (D26).
+  ([#NN](https://github.com/ATDev-Inc/omega-stick/pull/NN))
 - **espp 1.3.8 throughout.** Every espp component moves from 1.3.6 to 1.3.8,
   still one release across the board (D20). For this firmware the only code
   change is in the bundled hid-rp headers, which now include what they use, so

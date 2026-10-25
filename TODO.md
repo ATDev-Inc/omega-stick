@@ -42,12 +42,10 @@ Last reviewed: 2026-10-18.
 
 ## Firmware defects
 
-- [ ] A failed calibration at first boot halts the firmware before USB starts
-      (`main.cpp`), so a partial first sweep leaves a board that never
-      enumerates until a full circle is swept at boot, with prompts nobody can
-      see. Decide between starting USB with output held neutral so the console
-      can recalibrate, retrying the sweep, or keeping the halt (raised on
-      #44).
+- [x] A failed calibration at first boot halted the firmware before USB
+      started (raised on #44). Decided in D26: a stick without a usable
+      calibration boots quiet, output held neutral, and is calibrated from the
+      console.
 - [ ] `OmegaStore` saves in place (truncate, write), with no temporary file
       and rename, so a power loss mid-save can lose the file. Make the save
       atomic (noticed in #49).
