@@ -39,7 +39,9 @@ The firmware exposes the console on two USB interfaces, and either one works:
   device's USB id, `0x1209:0x0d32` by default. If the firmware's id changes,
   update `DEFAULT_VID` / `DEFAULT_PID` in the page to match `OMEGA_USB_VID` /
   `OMEGA_USB_PID` in [main/main.cpp](../../main/main.cpp), or tick "show all
-  USB devices".
+  USB devices". Every stick reports its own USB serial number (its factory MAC),
+  so an existing stick looks like a new device to the OS and browser once after
+  this firmware, and Chrome asks for USB access again.
 - **Connect Web Serial** uses the CDC serial port at 115200 baud. The firmware
   console log shares that port, so its output appears in the page's log pane.
   Use this connection when recalibrating, because the calibration prompts are
