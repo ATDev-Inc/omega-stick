@@ -92,6 +92,49 @@ TEST(service_get_state_encodes_snapshot) {
   CHECK_NEAR(support::get_f32(p, 70), 0.75f, 1e-6);
   CHECK_EQ(stream::get_u32(std::span<const uint8_t>(p).subspan(74)), 120u);
   CHECK_EQ(p[78], 1); // XAC
+  CHECK_EQ(p[79], 1); // nudge clicks on (the default)
+}
+
+TEST(service_state_reports_nudge_enabled_as_the_last_byte) {
+  Fixture fx("svc_state_nudge");
+  fx.store.set_nudge_enabled(false);
+  auto reply = fx.request(Msg::GetState);
+  CHECK(is(reply, Msg::State));
+  CHECK_EQ(reply.payload.size(), size_t{80});
+  CHECK_EQ(reply.payload[79], 0);
+
+  fx.store.set_nudge_enabled(true);
+  reply = fx.request(Msg::GetState);
+  CHECK_EQ(reply.payload[79], 1);
+}
+
+TEST(service_set_nudge_enabled_toggles_the_switch_and_keeps_tuning) {
+  Fixture fx("svc_nudge_enabled");
+  fx.store.set_nudge_settings(0.45f, 0.75f, std::chrono::milliseconds(120));
+
+  auto reply = fx.request(Msg::SetNudgeEnabled, {0});
+  CHECK(is(reply, Msg::Ok));
+  CHECK_EQ(stream::get_u32(reply.payload), 0u);
+  auto s = fx.store.settings();
+  CHECK(!s.nudge_enabled);
+  CHECK_NEAR(s.nudge_distance_threshold, 0.45f, 1e-6);
+  CHECK_NEAR(s.nudge_exit_threshold, 0.75f, 1e-6);
+  CHECK_EQ(s.nudge_hold_time.count(), 120);
+
+  CHECK(is(fx.request(Msg::SetNudgeEnabled, {1}), Msg::Ok));
+  CHECK(fx.store.settings().nudge_enabled);
+}
+
+TEST(service_set_nudge_enabled_rejects_other_values_and_lengths) {
+  Fixture fx("svc_nudge_enabled_bad");
+  for (const auto &payload : std::vector<std::vector<uint8_t>>{{}, {2}, {0xFF}, {0, 0}, {1, 1}}) {
+    const auto reply = fx.request(Msg::SetNudgeEnabled, payload);
+    CHECK(is(reply, Msg::Error));
+    CHECK_EQ(stream::get_u32(reply.payload), static_cast<uint32_t>(std::errc::invalid_argument));
+    CHECK(support::error_message(reply).find("SET_NUDGE_ENABLED") != std::string::npos);
+  }
+  // The rejected requests left the default in place.
+  CHECK(fx.store.settings().nudge_enabled);
 }
 
 TEST(service_set_manual_offset_updates_store_and_replies_ok) {

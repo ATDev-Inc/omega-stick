@@ -1,5 +1,8 @@
 // OmegaStore: load-on-construct, live setters, change callbacks, save.
 
+#include <fstream>
+#include <iterator>
+#include <string>
 #include <vector>
 
 #include "file_system.hpp"
@@ -166,6 +169,53 @@ TEST(store_save_to_flash_persists_both_files) {
   CHECK_NEAR(reloaded.center().manual_offset_x, 0.25f, 1e-6);
   CHECK_NEAR(reloaded.settings().manual_range_deadzone.value_or(0), 0.07f, 1e-5);
   CHECK(reloaded.settings().input_mode == OmegaStore::InputMode::XAC);
+}
+
+TEST(store_nudge_enabled_saves_and_loads) {
+  TempDir dir("store_nudge_enabled");
+  auto cfg = config_for(dir);
+  {
+    OmegaStore store(cfg);
+    CHECK(store.settings().nudge_enabled); // default on
+    store.set_nudge_settings(0.3f, 0.6f, std::chrono::milliseconds(80));
+    store.set_nudge_enabled(false);
+    CHECK(!store.settings().nudge_enabled);
+    std::error_code ec;
+    CHECK(store.save_to_flash(ec));
+    CHECK(!ec);
+  }
+  {
+    std::ifstream in(cfg.settings_path);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(text.find("nudge_enabled=0\n") != std::string::npos);
+  }
+  OmegaStore reloaded(cfg);
+  const auto s = reloaded.settings();
+  CHECK(!s.nudge_enabled);
+  // Switching nudge clicks off keeps the tuning.
+  CHECK_NEAR(s.nudge_distance_threshold, 0.3f, 1e-6);
+  CHECK_NEAR(s.nudge_exit_threshold, 0.6f, 1e-6);
+  CHECK_EQ(s.nudge_hold_time.count(), 80);
+
+  reloaded.set_nudge_enabled(true);
+  std::error_code ec;
+  CHECK(reloaded.save_to_flash(ec));
+  OmegaStore again(cfg);
+  CHECK(again.settings().nudge_enabled);
+}
+
+// A settings file from firmware before the switch has no nudge_enabled key.
+TEST(store_settings_file_without_nudge_enabled_loads_as_enabled) {
+  TempDir dir("store_nudge_missing");
+  auto cfg = config_for(dir);
+  {
+    std::ofstream out(cfg.settings_path);
+    out << "schema=1\nnudge_distance_threshold=0.4\nnudge_exit_threshold=0.7\n"
+           "nudge_hold_time_ms=90\ninput_mode=0\n";
+  }
+  OmegaStore store(cfg);
+  CHECK(store.settings().nudge_enabled);
+  CHECK_NEAR(store.settings().nudge_distance_threshold, 0.4f, 1e-6);
 }
 
 TEST(store_save_to_flash_reports_unwritable_path) {

@@ -212,6 +212,14 @@ public:
     settings_.nudge_hold_time = time_window;
   }
 
+  /// Turns nudge clicks on or off live, keeping the tuning values. No
+  /// change-notification is fired: the control loop reads settings() every
+  /// iteration and releases a held nudge as soon as it sees false.
+  void set_nudge_enabled(bool enabled) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    settings_.nudge_enabled = enabled;
+  }
+
   /// Sets the input mode live and fires on_mode_changed() (outside the
   /// lock) so the application can act on it -- see ModeChangedFn. Setting
   /// the mode that is already active does nothing.

@@ -170,6 +170,8 @@ std::string state_fields(const std::vector<uint8_t> &p) {
   o.add("nudgeExitThreshold", num(get_f32(p, 70)));
   o.add("nudgeTimeMs", num(stream::get_u32(std::span<const uint8_t>(p).subspan(74))));
   o.add("inputMode", std::to_string(p[78]));
+  // Trailing u8 added after the first release; null for a 79-byte payload.
+  o.add("nudgeEnabled", p.size() > 79 ? std::string(p[79] ? "true" : "false") : "null");
   return o.str();
 }
 
@@ -287,6 +289,11 @@ std::string build_golden_json() {
                       type_of(Msg::SetInputMode),
                       {0},
                       Obj().add("mode", "0").str()});
+  requests.push_back({"SET_NUDGE_ENABLED_OFF",
+                      module,
+                      type_of(Msg::SetNudgeEnabled),
+                      {0},
+                      Obj().add("enabled", "false").str()});
   requests.push_back({"GET_STATE_AFTER", module, type_of(Msg::GetState), {}, "{}"});
   requests.push_back({"SAVE_TO_FLASH", module, type_of(Msg::SaveToFlash), {}, "{}"});
   requests.push_back({"START_CALIBRATION", module, type_of(Msg::StartCalibration), {}, "{}"});

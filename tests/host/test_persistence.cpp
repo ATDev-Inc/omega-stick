@@ -160,6 +160,7 @@ TEST(settings_round_trip_with_overrides_set) {
   in.nudge_exit_threshold = 0.7f;
   in.nudge_hold_time = std::chrono::milliseconds(250);
   in.input_mode = OmegaCalibration::InputMode::XAC;
+  in.nudge_enabled = false;
 
   std::error_code ec;
   CHECK(OmegaCalibration::DeviceSettings::save(in, path, ec));
@@ -174,6 +175,7 @@ TEST(settings_round_trip_with_overrides_set) {
   CHECK_NEAR(out.nudge_exit_threshold, 0.7f, 1e-5);
   CHECK_EQ(out.nudge_hold_time.count(), 250);
   CHECK(out.input_mode == OmegaCalibration::InputMode::XAC);
+  CHECK(!out.nudge_enabled);
 }
 
 TEST(settings_round_trip_with_overrides_cleared) {
@@ -199,9 +201,11 @@ TEST(settings_partial_file_falls_back_to_defaults) {
     out << "input_mode=1\n";
   }
   OmegaCalibration::DeviceSettings out;
+  out.nudge_enabled = false; // a missing key restores the default, it does not keep this
   std::error_code ec;
   CHECK(OmegaCalibration::DeviceSettings::load(out, path, ec));
   CHECK(out.input_mode == OmegaCalibration::InputMode::XAC);
+  CHECK(out.nudge_enabled);
   CHECK_NEAR(out.nudge_distance_threshold, 0.5f, 1e-6);
   CHECK_NEAR(out.nudge_exit_threshold, 0.8f, 1e-6);
   CHECK_EQ(out.nudge_hold_time.count(), 100);

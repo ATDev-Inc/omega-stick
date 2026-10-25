@@ -122,6 +122,13 @@
 //   0x5F GET_DIAGNOSTICS        : no payload. Reply: DIAGNOSTICS, or ERROR
 //                                 (function_not_supported) when
 //                                 Config::diagnostics is unset.
+//   0x60 SET_NUDGE_ENABLED      : payload: u8 enabled (0 = nudge clicks off,
+//                                 1 = on). Applied live and kept in the
+//                                 settings; SAVE_TO_FLASH persists it like
+//                                 the nudge tuning, which it leaves as is.
+//                                 Reply: OK / ERROR (invalid_argument for any
+//                                 other value or payload length). Older
+//                                 firmware ignores the frame (no reply).
 //
 // Message types & payloads (device -> host), same module, reply flag set:
 //   0xD3 DIAGNOSTICS : payload (see build_diagnostics_payload() below):
@@ -146,7 +153,7 @@
 //                                           older firmware ends the payload
 //                                           after the reset list, and hosts
 //                                           must ignore any bytes after it)
-//   0xD0 STATE - payload: fixed 79-byte little-endian struct, in this exact
+//   0xD0 STATE - payload: fixed 80-byte little-endian struct, in this exact
 //                order (see build_state_payload() below):
 //                  f32 center_x, center_y, center_noise_radius,
 //                  f32 center_deadzone                 (calibration-derived)
@@ -163,6 +170,11 @@
 //                  f32 nudge_exit_threshold             (absolute)
 //                  u32 nudge_time_ms                    (measurement window)
 //                  u8  input_mode                       (0 = mouse, 1 = XAC)
+//                  u8  nudge_enabled                    (0/1; added after the
+//                                                        first release: older
+//                                                        firmware sends 79
+//                                                        bytes, which hosts
+//                                                        read as enabled)
 //   0xD2 FW_INFO : payload: u8 pending_verify (0/1), u8 session_active
 //                (0/1), then length-prefixed strings (u8 len + bytes, at
 //                most 255 bytes each, no terminator) in this order:
@@ -313,8 +325,9 @@ public:
     MarkValid = 0x5D,           ///< confirm running image (cancel rollback)
     Revert = 0x5E,              ///< boot the other OTA slot (previous firmware), then reboot
     GetDiagnostics = 0x5F,      ///< request the sensor fault status and reset log
+    SetNudgeEnabled = 0x60,     ///< u8: turn nudge clicks off (0) or on (1)
     // device -> host
-    State = 0xD0,             ///< fixed 79-byte calibration + settings struct
+    State = 0xD0,             ///< fixed 80-byte calibration + settings struct
     CalibrationResult = 0xD1, ///< UNSOLICITED: outcome of an async StartCalibration
     FwInfo = 0xD2,            ///< u8 pending_verify, u8 session_active, str project, str version
     Diagnostics = 0xD3,       ///< variable-length sensor fault status + reset log
@@ -346,7 +359,7 @@ public:
 
   /// Wire size of the STATE payload (see the header comment for the exact
   /// field layout).
-  static constexpr size_t kStatePayloadSize = 79;
+  static constexpr size_t kStatePayloadSize = 80;
 
   /**
    * @brief Function used to transmit one encoded reply frame to the host.
@@ -953,6 +966,18 @@ protected:
       reply = build_ok();
       return true;
     }
+    case Msg::SetNudgeEnabled: {
+      if (payload.size() != 1 || payload[0] > 1) {
+        reply =
+            build_error(std::errc::invalid_argument, "SET_NUDGE_ENABLED needs u8 enabled (0 or 1)");
+        return true;
+      }
+      const bool enabled = payload[0] == 1;
+      store_.set_nudge_enabled(enabled);
+      logger_.info("SET_NUDGE_ENABLED {}", enabled ? "on" : "off");
+      reply = build_ok();
+      return true;
+    }
     case Msg::SetInputMode: {
       if (payload.size() != 1 || payload[0] > 1) {
         reply = build_error(std::errc::invalid_argument, "SET_INPUT_MODE needs u8 mode (0 or 1)");
@@ -1014,7 +1039,7 @@ protected:
     }
   }
 
-  /// Encode a Snapshot into the fixed 79-byte STATE payload (see the header
+  /// Encode a Snapshot into the fixed 80-byte STATE payload (see the header
   /// comment for the exact field order).
   static std::vector<uint8_t> build_state_payload(const OmegaStore::Snapshot &snap) {
     std::vector<uint8_t> payload;
@@ -1048,6 +1073,7 @@ protected:
     put_f32(payload, settings.nudge_exit_threshold);
     espp::stream_frame::put_u32(payload, static_cast<uint32_t>(settings.nudge_hold_time.count()));
     payload.push_back(static_cast<uint8_t>(settings.input_mode));
+    payload.push_back(settings.nudge_enabled ? 1 : 0);
 
     return payload;
   }
