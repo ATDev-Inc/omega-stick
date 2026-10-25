@@ -310,6 +310,79 @@ TEST(flash_bootloader_rolls_back_an_image_that_reboots_unconfirmed) {
   CHECK(st == ESP_OTA_IMG_ABORTED);
 }
 
+// Like the real bootloader: every slot still pending at boot was never confirmed,
+// not only the boot slot (here: REVERT from a pending image).
+TEST(flash_bootloader_aborts_every_pending_slot) {
+  Flash f;
+  f.load_or_format("");
+  esp_app_desc_t desc{};
+  CHECK(parse_image_desc(make_image("9.9.9"), desc));
+  f.commit_image(desc);
+  CHECK(!f.boot());
+  CHECK(f.pending_verify());                              // ota_1 pending
+  CHECK(f.set_boot(f.next_update_partition()) == ESP_OK); // REVERT to ota_0, unconfirmed
+  CHECK(!f.boot());
+  CHECK_EQ(f.running_label(), std::string("ota_0"));
+  esp_ota_img_states_t st{};
+  CHECK(f.state_of(f.next_update_partition(), &st) == ESP_OK);
+  CHECK(st == ESP_OTA_IMG_ABORTED);
+}
+
+// esp_ota_check_rollback_is_possible(): no rollback to a slot without a complete image
+// and a valid otadata entry.
+TEST(flash_rollback_needs_a_bootable_other_slot) {
+  Flash f;
+  f.load_or_format("");
+  esp_app_desc_t desc{};
+  CHECK(parse_image_desc(make_image("9.9.9"), desc));
+  f.commit_image(desc);
+  CHECK(!f.boot());
+  f.mark_valid(); // ota_1 confirmed
+  // The next update lands in ota_0 and is rejected: back to ota_1 (VALID) works.
+  f.commit_image(desc);
+  CHECK(!f.boot());
+  CHECK_EQ(f.running_label(), std::string("ota_0"));
+  CHECK(f.mark_invalid_and_rollback());
+  CHECK(!f.boot());
+  CHECK_EQ(f.running_label(), std::string("ota_1"));
+  // Now ota_0 is INVALID: no rollback to it.
+  CHECK(!f.mark_invalid_and_rollback());
+}
+
+// esp_ota_begin() erases the other slot; the first bytes of an upload make it read as an
+// image again, but one that does not verify until the upload is finished.
+TEST(flash_an_unfinished_upload_leaves_a_partial_slot) {
+  Flash f;
+  f.load_or_format("");
+  esp_app_desc_t desc{};
+  CHECK(parse_image_desc(make_image("9.9.9"), desc));
+  f.commit_image(desc);
+  CHECK(!f.boot());
+  f.mark_valid();
+  CHECK_EQ(f.running_label(), std::string("ota_1"));
+  const esp_partition_t *other = f.next_update_partition();
+  const esp_partition_pos_t pos{.offset = other->address, .size = other->size};
+  CHECK(f.verify(&pos) == ESP_OK); // ota_0 holds the native image
+
+  f.begin_upload();
+  esp_app_desc_t got{};
+  CHECK(f.describe(other, &got) == ESP_ERR_NOT_FOUND); // erased
+  esp_app_desc_t next{};
+  CHECK(parse_image_desc(make_image("10.0.0"), next));
+  f.upload_descriptor(next);
+  CHECK(f.describe(other, &got) == ESP_OK);
+  CHECK_EQ(std::string(got.version), std::string("10.0.0"));
+  esp_ota_img_states_t st{};
+  CHECK(f.state_of(other, &st) == ESP_ERR_NOT_FOUND); // otadata entry dropped
+  CHECK(f.verify(&pos) == ESP_ERR_IMAGE_INVALID);
+  CHECK(f.set_boot(other) == ESP_ERR_OTA_VALIDATE_FAILED); // REVERT fails
+  CHECK(!f.mark_invalid_and_rollback());
+
+  // Finishing the upload completes it.
+  f.commit_image(next);
+  CHECK(f.verify(&pos) == ESP_OK);
+}
+
 TEST(flash_saved_state_keeps_the_uploaded_descriptor_whole) {
   namespace fs = std::filesystem;
   const fs::path dir = fs::temp_directory_path() / "omega_sim_flash_desc_test";

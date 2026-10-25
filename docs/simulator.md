@@ -99,7 +99,7 @@ Page to simulator:
 | `{"type":"fault","sensor":"no_response"}` | Set the sensor fault (`ok`, `no_response`, `stuck_counter`, `weak_magnet`) |
 | `{"type":"drift","rate":0.02}` | Center drift in stick units per minute, 0 for none |
 | `{"type":"noise","sigma":0.002}` | Sensor noise, in stick units |
-| `{"type":"next_image","behavior":"fail_self_test"}` | How the next firmware image flashed through the console behaves after its restart: `ok`, `fail_self_test` (the sensor fails reads on the new image, so GET_DIAGNOSTICS reports a fault, the console refuses to confirm and the deadline rolls it back), `crash_loop` (crashes on boot, reverted), `slow_sensor_start` (starts polling the sensor 3 s after boot, then runs normally: until then GET_DIAGNOSTICS reports sensor_fault 3, "not observed"), `slow_sensor_fail` (starts polling late and then every read fails) |
+| `{"type":"next_image","behavior":"fail_self_test"}` | How the next firmware image flashed through the console behaves after its restart: `ok`, `fail_self_test` (the sensor fails reads on the new image, so GET_DIAGNOSTICS reports a fault, the console refuses to confirm and the deadline rolls it back), `crash_loop` (crashes on boot, reverted), `slow_sensor_start` (starts polling the sensor 3 s after boot, then runs normally: until then GET_DIAGNOSTICS reports sensor_fault 3, "not observed"), `slow_sensor_fail` (starts polling late and then every read fails), `crash_when_confirmed` (runs normally while pending, so it can be confirmed, then crashes on every boot once confirmed: a confirmed image that crash-loops, handed over to the other slot). |
 | `{"type":"reset"}` | Power-cycle the simulated stick |
 | `{"type":"wipe"}` | Erase the simulated flash and power-cycle (a new board) |
 
@@ -210,7 +210,9 @@ motion; below that it reads `none`.
 
 Scenarios kept in [sim/scenarios/](../sim/scenarios/) run headless in CI.
 `update_never_confirmed.json` flashes a good image that nobody confirms and
-checks that the deadline rolls it back.
+checks that the deadline rolls it back. `update_crash_loop_after_confirm.json`
+confirms an image that then crash-loops and checks that the crash-loop handover
+sticks with no console attached.
 
 ## How it differs from the firmware
 
@@ -230,6 +232,21 @@ checks that the deadline rolls it back.
   confirmed image crash-looping is reverted with reason `revert`.
 - Restarts triggered by RESTART, REVERT and OTA_FINISH happen 750 ms of real
   time after the reply, as on the device (`CalibrationService` waits in a real
-  thread). Headless runs wait for that before simulated time moves on.
+  thread). Headless runs wait for that before simulated time moves on. An
+  input-mode switch also waits 750 ms of real time, on the thread that fed the
+  request.
+- The crash-loop handover marker, which the device keeps in RTC memory, is a
+  process-level variable; a simulated power-on (`reset`, `wipe`, a fresh start)
+  clears it.
+- The bootloader fake marks every pending slot aborted at boot, and a rollback
+  needs the other slot to hold a complete image whose state is new, pending or
+  valid, as `esp_ota_check_rollback_is_possible()` requires. A fresh board's
+  `ota_0` counts as valid. (A board flashed over serial starts with blank
+  otadata, and on the Omega Stick the first update's deadline rollback still
+  ran at runtime, so the fake treats that case the same way.)
+- OTA_BEGIN erases the other slot and drops its state; once an upload's
+  descriptor has arrived the slot reads as `partial` until OTA_FINISH, so an
+  aborted or expired upload cannot be reverted to. OTA_BEGIN is refused while
+  the running image is pending, as on the device.
 
 A manual end-to-end check that drives the real simulator through the real console in headless Chrome is in [tests/e2e/](../tests/e2e/README.md).

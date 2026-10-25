@@ -158,13 +158,16 @@ the page reconnects and reports what the stick runs.
 
 ### Neutral output during an update
 
-From an accepted OTA_BEGIN until the reboot, and before every console-initiated
-reboot (OTA_FINISH, REVERT, RESTART, an input-mode switch), the device sends
-neutral reports: stick centered, no motion, buttons released. A user driving a
-pointer never has the device vanish mid-motion. If the upload ends without a
-reboot (abort, the 30 s idle expiry, a failed write or finish, a lost
-transport), normal output resumes. This is D22 rule 1
-(`Config::output_hold` in `calibration_service.hpp`).
+From OTA_BEGIN until the reboot, and before every console-initiated reboot
+(OTA_FINISH, REVERT, RESTART, an input-mode switch), the device sends neutral
+reports: stick centered, no motion, buttons released. A user driving a pointer
+never has the device vanish mid-motion. The hold goes up before OTA_BEGIN erases
+the inactive slot, since the erase takes seconds and stalls the polling loop
+between flash operations. If the upload ends without a reboot (abort, the 30 s
+idle expiry, a failed begin, write or finish, a lost transport), normal output
+resumes. This is D22 rule 1 (`Config::output_hold` in `calibration_service.hpp`).
+The deadline rollback (see [Rollback and the health check](#rollback-and-the-health-check))
+holds the output neutral for 100 ms before it reboots, for the same reason.
 
 ### Interrupted uploads
 
@@ -204,7 +207,7 @@ These live in the calibration module (see the protocol comment at the top of
 | Type | Name | Payload |
 | --- | --- | --- |
 | `0x57` | RESTART | none. Replies OK, then reboots about 750 ms later |
-| `0x58` | OTA_BEGIN | u32 image size |
+| `0x58` | OTA_BEGIN | u32 image size. ERROR (operation_not_permitted) while the running image is still pending verify: the bootloader would refuse the upload, so confirm the image (MARK_VALID) or let it roll back first |
 | `0x59` | OTA_DATA | u32 offset + raw image bytes. The offset must equal the bytes written so far. Replies with the total written |
 | `0x5A` | OTA_FINISH | none. Validates and activates the image, replies OK, then reboots |
 | `0x5B` | OTA_ABORT | none. Aborts an upload begun by this service |
@@ -213,10 +216,23 @@ These live in the calibration module (see the protocol comment at the top of
 | `0x5E` | REVERT | none. Makes the other OTA slot (the previous firmware) the boot partition, replies OK, then reboots about 750 ms later. ERROR if an upload is in progress, the other slot has no app image, or the bootloader selection could not be written |
 | `0xD2` | FW_INFO (reply) | u8 pending_verify, u8 session_active, then length-prefixed strings: project, version, build date, build time, ESP-IDF version, running partition, 8-char ELF SHA, boot partition, previous slot label, previous version, previous build date, previous build time, previous state |
 
-The previous state is one of `valid`, `new`, `pending_verify`, `invalid`, `aborted`,
-`undefined`, or `empty` when the other slot holds no readable image (the previous
-version, date and time strings are then empty). Older firmware sends fewer strings,
-so hosts treat missing ones as empty.
+The previous state is one of:
+
+- `valid`, `new`, `pending_verify`, `invalid`, `aborted`: the slot's otadata state.
+- `undefined`: a complete image with no otadata entry, such as the image a serial
+  flash left in `ota_0`.
+- `partial`: the slot starts with an app descriptor, so the previous version, date
+  and time are still reported, but the image does not verify. This is what an
+  upload that was aborted or expired leaves behind (OTA_BEGIN erases the slot and
+  drops its otadata entry; the descriptor is in the first bytes written), and what
+  the slot holds while an upload runs. REVERT to it would fail, so hosts treat it
+  like `empty`. Firmware before this value reported such a slot as `undefined`.
+- `empty`: the other slot holds no readable image (the previous version, date and
+  time strings are then empty).
+
+Telling `partial` apart reads the whole other slot (`esp_image_verify()`), a
+fraction of a second per GET_FW_INFO. Older firmware sends fewer strings, so hosts
+treat missing ones as empty.
 
 A build without an OTA engine wired in replies ERROR to the OTA messages.
 
@@ -309,9 +325,12 @@ The bootloader is built with app rollback enabled. A freshly installed image
 boots in the **pending verify** state, and the bootloader reverts to the previous
 image at the next reset unless the application confirms itself.
 
-The firmware never confirms a new image itself. After the update's reboot the
-console reconnects and checks the image, then sends MARK_VALID (0x5D). It
-confirms only when all of these hold:
+The firmware never confirms a new image itself, with two exceptions: a build
+with updates turned off (D25) accepts an image that arrived by update at boot,
+since its console cannot confirm anything, and an image booted by the crash-loop
+handover is accepted at once (see below). After the update's reboot the console
+reconnects and checks the image, then sends MARK_VALID (0x5D). It confirms only
+when all of these hold:
 
 - The running image's version and SHA match what the console flashed, and it is
   pending verify.
@@ -339,7 +358,9 @@ The firmware keeps a backstop. `FirmwareHealthCheck` in
 `components/omega_calibration/include/firmware_health_check.hpp` (used by
 `main/main.cpp`) marks an image that is still pending at `ROLLBACK_DEADLINE`
 (120 seconds) invalid and reboots into the previous image, rather than limping
-along until a power cycle happens to trigger the rollback. The deadline is
+along until a power cycle happens to trigger the rollback. It first holds the
+output neutral for 100 ms (`ROLLBACK_HOLD`), so the last reports the host sees
+before the device vanishes are neutral ones. The deadline is
 generous so the console's confirm lands first in normal use. It exists because
 some users depend on the stick to operate their computer and may not be able to
 unplug or power-cycle it themselves.
@@ -374,10 +395,27 @@ Things to know:
   this slot were crashes (panic, watchdog, CPU lockup; brownouts do not count,
   since the other image would not survive them either) and the other slot holds
   an app image that has not already been rejected, it switches the boot
-  partition and restarts. The other image then boots pending, under the usual
-  rules. One crash does nothing beyond the core dump. A crash in the other
-  image is charged to that image (the reset that starts a boot ended the
-  previous one), so the two slots cannot bounce the device between them.
+  partition and restarts. One crash does nothing beyond the core dump. A crash
+  in the other image is charged to that image (the reset that starts a boot
+  ended the previous one), so the two slots cannot bounce the device between
+  them.
+- **The image the crash-loop handover boots is confirmed at once.**
+  `esp_ota_set_boot_partition()` makes it boot pending, and with no console
+  attached nothing would confirm it: the deadline would mark it invalid and
+  reboot into the crashing image, which could then never hand over again (the
+  handover skips a rejected slot), so the device would crash-loop for good. That
+  image ran before and was not rejected, so the firmware accepts it itself. The
+  handover leaves a marker in RTC memory that survives the software reset but
+  not a power-on (`FirmwareHealthCheck::take_handover_marker()`), and the boot it
+  starts sees it and confirms the image (`accept_after_handover()`). At most one
+  handover happens per power-on: if the accepted image crash-loops too, both
+  images are broken, and the device stays put rather than swapping back and
+  forth and wearing out the otadata sectors. Unplugging it allows one more
+  handover. The fallback image has to contain this code: an older OTA-on build
+  in the other slot does not read the marker, so it still rejects itself at
+  the deadline and the device returns to the crashing image. A stick is
+  protected against a crash loop once both slots hold firmware with this
+  change, that is after the second update from it.
 
 ### Going back deliberately
 

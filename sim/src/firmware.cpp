@@ -15,10 +15,12 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <thread>
 #include <vector>
 
 #include "calibration_service.hpp"
@@ -41,13 +43,17 @@ namespace {
 
 constexpr uint8_t TMAG_ADDRESS = 0x35;
 constexpr size_t RESET_LOG_ENTRIES = 16;
-constexpr auto OTA_IDLE_TIMEOUT = 30s;
 constexpr int64_t SLOW_SENSOR_START_NS = 3'000'000'000;
 constexpr float MANUAL_OFFSET_X = 0.0f;
 constexpr float MANUAL_OFFSET_Y = 0.0f;
 const std::string CALIBRATION_FILE_NAME = "omega_calibration.cfg";
 
 using Health = espp::FirmwareHealthCheck<SimSteady>;
+
+// sim: main.cpp keeps the crash-loop handover marker in RTC_NOINIT memory, which a
+// software reset keeps and a power-on loses. The simulator restarts in-process, so a
+// process-level variable stands in for it; boot() treats a power-on reset as clearing it.
+uint32_t crash_loop_handover_marker = 0;
 
 // ---- reset-reason helpers (mirror of main.cpp, keyed on esp_reset_reason_t values) ----
 
@@ -322,16 +328,25 @@ std::string boot(Host &host, int reset_reason) {
   }
 
   // A confirmed image that has crashed on its last few boots hands the device to
-  // the other slot (D18 amendment).
+  // the other slot (D18 amendment), at most once per power-on.
+  const auto handover =
+      Health::take_handover_marker(crash_loop_handover_marker, reset_reason == kRstPoweron);
   // cppcheck-suppress knownConditionTrueFalse ; null under --no-ota, set in another file
-  if (ota && Health::revert_if_crash_looping(
-                 *ota, Health::crashes_while_running(boots, running_slot_label))) {
+  if (ota && !handover.handed_over_since_power_on &&
+      Health::revert_if_crash_looping(*ota,
+                                      Health::crashes_while_running(boots, running_slot_label))) {
+    crash_loop_handover_marker = Health::HANDOVER_REQUESTED;
     sim::flash().take_restart_reason();
     return "revert";
   }
+  // The image the handover booted is pending, and with no console attached the deadline
+  // would send the device back into the crash loop: it ran before, so accept it now.
+  // cppcheck-suppress knownConditionTrueFalse ; null under --no-ota, set in another file
+  if (ota) {
+    Health::accept_after_handover(*ota, handover.booted_by_handover);
+  }
   {
     const esp_app_desc_t *app = esp_app_get_description();
-    // cppcheck-suppress knownConditionTrueFalse ; null under --no-ota, set in another file
     const char *pending = ota && sim::flash().pending_verify() ? " [PENDING VERIFY]" : "";
     host.console_text(format("Firmware %s %s (built %s %s, idf %s) running from %s%s",
                              app->project_name, app->version, app->date, app->time, app->idf_ver,
@@ -341,6 +356,13 @@ std::string boot(Host &host, int reset_reason) {
   // records the boot, before the application starts.
   if (sim::flash().running_behavior() == NextImage::CRASH_LOOP) {
     host.console_text("PANIC: simulated crash on boot (next_image crash_loop)");
+    return "crash";
+  }
+  // sim: next_image=crash_when_confirmed runs normally until it has been confirmed, then
+  // crashes the same way on every boot.
+  if (sim::flash().running_behavior() == NextImage::CRASH_WHEN_CONFIRMED &&
+      !sim::flash().pending_verify()) {
+    host.console_text("PANIC: simulated crash on boot (next_image crash_when_confirmed)");
     return "crash";
   }
   const NextImage behavior = sim::flash().running_behavior();
@@ -419,6 +441,9 @@ std::string boot(Host &host, int reset_reason) {
               host.console_text("WARNING: failed to save settings before restart: " +
                                 save_ec.message());
             }
+            // As main.cpp: the OK was queued just before this runs; give it the same time to
+            // reach the wire as the other console reboots (real time, like theirs).
+            std::this_thread::sleep_for(espp::CalibrationService::REPLY_FLUSH_DELAY);
             host.request_restart("mode switch");
           },
       .log_level = espp::Logger::Verbosity::ERROR,
@@ -632,9 +657,20 @@ std::string boot(Host &host, int reset_reason) {
       return host.take_restart_reason();
     }
     if (fw_health) {
-      fw_health->tick();
+      // As main.cpp: past the deadline, neutral output first, then the rollback.
+      switch (fw_health->tick()) {
+      case Health::Action::HOLD_OUTPUT:
+        output_holds.fetch_add(1);
+        break;
+      case Health::Action::ROLL_BACK:
+        fw_health->rollback_now(); // sim: throws RestartRequest unless the rollback failed
+        output_holds.fetch_sub(1);
+        break;
+      case Health::Action::NONE:
+        break;
+      }
     }
-    calibration.expire_stale_update(OTA_IDLE_TIMEOUT);
+    calibration.expire_stale_update(espp::CalibrationService::OTA_IDLE_TIMEOUT);
 
     const bool hold = output_holds.load() > 0;
     const bool recal = !hold && recalibration_gate.take();

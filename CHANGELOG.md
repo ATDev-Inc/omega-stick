@@ -147,6 +147,26 @@ in `version.txt`.
 
 ### Fixed
 
+- **A crash-loop handover is no longer undone by the rollback deadline.** When a
+  confirmed image crashed three boots in a row, the stick switched to the other
+  image, but with no console attached that image was rejected 120 s later and
+  the stick went back to the crashing one for good. The image the handover
+  boots is now accepted at once, and at most one handover happens per power-on.
+  Builds with updates over USB on only. ([#57](https://github.com/ATDev-Inc/omega-stick/pull/57))
+- **Firmware upload refused with a clear reason while an update is unconfirmed.**
+  Starting an upload while the running image still waits for confirmation used
+  to fail with a bare "io error"; it now says to confirm the image or wait for
+  the rollback. ([#57](https://github.com/ATDev-Inc/omega-stick/pull/57))
+- **A half-finished upload is no longer offered as the previous firmware.** After
+  an aborted or expired upload, GET_FW_INFO reported the other slot's version
+  as if it could be reverted to, and REVERT then failed. It now reports the slot
+  as `partial`. ([#57](https://github.com/ATDev-Inc/omega-stick/pull/57))
+- **Neutral output around more reboots and flash erases.** The output hold now
+  goes up before an upload erases the inactive slot, the deadline rollback sends
+  neutral reports for 100 ms before it reboots, the mode switch waits the same
+  750 ms as the other console reboots, and a reboot reply that could not be sent
+  no longer drops the hold of an upload still running. ([#57](https://github.com/ATDev-Inc/omega-stick/pull/57))
+
 - **Automatic reconnect after an update now works over WebUSB and Web Serial.** The console handed its own candidate record to the USB and serial open calls instead of the device, so every reconnect attempt failed with "device.open is not a function" and a good update rolled back at the deadline. Found on the first hardware update. ([#56](https://github.com/ATDev-Inc/omega-stick/pull/56))
 - **The console keeps a firmware update locked until it is settled.** Connect,
   Disconnect, Flash, Revert, Restart and the input mode switch stay off from

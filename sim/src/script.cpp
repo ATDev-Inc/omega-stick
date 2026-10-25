@@ -172,8 +172,8 @@ Step parse_step(const json::Value &s, size_t index) {
     st.kind = Step::Kind::NextImage;
     NextImage ignored;
     if (!body->is_string() || !parse_next_image(body->as_string(), ignored)) {
-      fail(index, "next_image must be ok, fail_self_test, crash_loop, slow_sensor_start or "
-                  "slow_sensor_fail");
+      fail(index, "next_image must be ok, fail_self_test, crash_loop, slow_sensor_start, "
+                  "slow_sensor_fail or crash_when_confirmed");
     }
     st.name = body->as_string();
   } else if (body_key == "expect") {
