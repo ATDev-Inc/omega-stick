@@ -19,8 +19,9 @@ Last reviewed: 2026-10-25.
         sensor unplugged mid-session (expect a centered stick, then recovery).
   - [ ] Console over WebUSB and over Web Serial: state, diagnostics,
         recalibration, deadzone overrides, mode switch and reconnect. (WebUSB
-        connect, the protocol, a recalibration and the manual center offset are
-        verified in XAC mode, 2026-10-25; the rest, and mouse mode, are not.) A sweep
+        connect and the protocol are verified in XAC mode, and a recalibration,
+        the manual center offset and an update in mouse mode, 2026-10-25; Web
+        Serial, the overrides and the mode switch from the page are not.) A sweep
         that covers only a small arc must be refused and reported; a full slow
         circle must still be accepted.
   - [ ] Sensor driver after DEF-1 to DEF-3: the boot log names the detected
