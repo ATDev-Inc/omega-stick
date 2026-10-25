@@ -508,6 +508,7 @@
                   <option value="ok">ok</option>
                   <option value="fail_self_test">fail_self_test (rolls back)</option>
                   <option value="crash_loop">crash_loop (reverted)</option>
+
                   <option value="slow_sensor_start">slow_sensor_start (sensor polled 3 s late)</option>
                   <option value="slow_sensor_fail">slow_sensor_fail (polled late, then fails)</option>
                 </select>
@@ -702,6 +703,7 @@
           </dl>
           <button id="fwRevertBtn" class="danger" disabled title="No previous firmware in the other slot">Revert to previous firmware</button>
         </div>
+        <p id="fwRevertNote" class="muted" style="margin: 0 0 6px;" hidden></p>
         <div class="latest" aria-labelledby="latestHeading">
           <h3 id="latestHeading" style="margin: 0 0 6px; font-size: 14px;">Latest release</h3>
           <div class="edit-row">
@@ -733,6 +735,7 @@
           <button id="flashBtn" class="danger" disabled>Flash firmware</button>
         </div>
         <p id="fwFileInfo" class="muted" aria-live="polite" style="margin: 6px 0 0;"></p>
+        <p id="fwFlashNote" class="warn-text" style="margin: 6px 0 0;" hidden></p>
         <div id="confirmPanel" class="confirm-panel" role="dialog" aria-labelledby="confirmTitle"
              aria-describedby="confirmBody" tabindex="-1" hidden>
           <h3 id="confirmTitle"></h3>
@@ -750,6 +753,7 @@
           <p id="updateDetail" class="muted" aria-hidden="true"></p>
           <p id="updateError" role="alert"></p>
           <button id="fwReconnectBtn" hidden>Reconnect to the device</button>
+          <button id="fwRestartNowBtn" class="primary" hidden>Restart now</button>
         </div>
       </fieldset>
 
@@ -1186,7 +1190,13 @@
       if (walkOk) {
         fail("not_app_image", "This is an ESP32 image but not an application (it could be a bootloader). Choose the application .bin file (omega_stick.bin).");
       }
-    } else if (bytes.length >= APP_DESC_OFFSET + APP_DESC_SIZE) {
+    } else if (bytes.length < APP_DESC_OFFSET + APP_DESC_SIZE) {
+      // The descriptor starts but the file ends inside it: there is no version
+      // or project to read, so it must not pass as a usable app image.
+      if (walkOk) {
+        fail("truncated", "The file ends inside the firmware's description block, so it is incomplete. Build it again or copy it again.");
+      }
+    } else {
       const d = APP_DESC_OFFSET;
       info.appDesc = {
         secureVersion: v.getUint32(d + 4, true),
@@ -1303,13 +1313,35 @@
     return plan;
   }
 
+  // Previous-slot states FW_INFO reports that can be reverted to. "empty" (no
+  // image) and "partial" (an interrupted upload left an image that cannot be
+  // verified) cannot, nor can an unknown state from older firmware.
+  const REVERTIBLE_STATES = ["valid", "new", "pending_verify", "invalid", "aborted", "undefined"];
+  const PARTIAL_SLOT_NOTE = "An interrupted upload left a partial image in the other slot, so there is no previous " +
+    "firmware to go back to. Upload new firmware to replace it.";
+  // info: parsed FW_INFO or null. Returns { usable, reason } for the Revert button.
+  function revertAvailability(info) {
+    if (!info) return { usable: false, reason: "The firmware information has not been read from the device." };
+    const st = info.prevState || "";
+    if (REVERTIBLE_STATES.includes(st)) return { usable: true, reason: "" };
+    if (st === "partial") return { usable: false, reason: PARTIAL_SLOT_NOTE };
+    return { usable: false, reason: "No previous firmware in the other slot" };
+  }
+  // The "Previous state" field: FW_INFO's state name, explained where it needs it.
+  function describePrevState(state) {
+    if (state === "partial") return "partial (an interrupted upload, cannot be used)";
+    if (state === "empty") return "empty (no firmware)";
+    return state || "n/a";
+  }
+
   // prev: { version, label, state } from FW_INFO. Used for the Revert panel.
   function buildRevertPlan(running, prev) {
     const warnings = [], errors = [];
     const pv = (prev && prev.version) || "";
-    if (!pv) errors.push({ code: "no_previous", message: "The other slot has no firmware to go back to." });
+    if (prev && prev.state === "partial") errors.push({ code: "partial_previous", message: PARTIAL_SLOT_NOTE });
+    else if (!pv) errors.push({ code: "no_previous", message: "The other slot has no firmware to go back to." });
     const plan = { blocked: errors.length > 0, errors, warnings, kind: "unknown", kindLabel: "", headline: "" };
-    if (!pv) return plan;
+    if (plan.blocked) return plan;
     const rv = (running && running.version) || "unknown";
     plan.headline = "Running " + rv + " -> Previous " + pv;
     const cmp = compareFirmware(running || {}, { version: pv, sha: "" });
@@ -1331,12 +1363,23 @@
 
   // Compares the build the page expects after a reboot with what FW_INFO now
   // reports. expected: { kind: "flash" | "revert", version, sha? (short or
-  // full), before: { version, sha } }. after: parsed FW_INFO
-  // ({ version, sha, pending }) or null when nothing could be read.
-  // state: confirming | confirmed | rolled_back | unexpected | same_build | no_device.
+  // full), before: { version, sha }, uncertain? }. uncertain is set when the
+  // OTA_FINISH reply was lost with the link, so it is not known whether the
+  // image was installed. after: parsed FW_INFO ({ version, sha, pending,
+  // running?, boot? }) or null when nothing could be read.
+  // state: confirming | confirmed | rolled_back | not_restarted | unexpected | same_build | no_device.
+  // not_restarted: the boot slot was switched but the device still runs the
+  // old image (the reply and the restart were lost); a restart starts it.
   function decideOutcome(expected, after) {
     const before = expected.before || {};
-    const noun = expected.kind === "revert" ? "Reverted to" : "Updated to";
+    const revert = expected.kind === "revert";
+    const noun = revert ? "Reverted to" : "Updated to";
+    const notRestarted = () => ({
+      state: "not_restarted",
+      message: (revert ? "The previous firmware is" : "The new firmware is") +
+               " installed, but the device has not restarted into it yet. Use Restart now: the device then starts it, " +
+               "and this page checks and confirms it.",
+    });
     if (!after || !after.version) {
       return { state: "no_device", message: "The device did not come back, or its firmware version could not be read." };
     }
@@ -1348,11 +1391,13 @@
     };
     const isNew = sameAs(after, expected);
     const isOld = sameAs(after, before);
+    const switched = !after.pending && !!after.boot && !!after.running && after.boot !== after.running;
     if (isNew && isOld) {
       // Reflashing the identical build: only the pending flag tells.
       if (after.pending) {
         return { state: "confirming", message: noun + " " + after.version + ". Checking it works..." };
       }
+      if (switched) return notRestarted();
       return { state: "same_build", message: "The device is running " + after.version +
                ", the same build as before, so it cannot be told whether the new copy started." };
     }
@@ -1361,6 +1406,16 @@
       return { state: "confirmed", message: "Update confirmed. The device is running " + after.version + "." };
     }
     if (isOld) {
+      if (switched) return notRestarted();
+      if (revert) {
+        return { state: "rolled_back",
+                 message: "The device is running " + after.version + " again, not the previous firmware (" +
+                          (expected.version || "unknown") + "). The previous firmware did not start, or it was not confirmed." };
+      }
+      if (expected.uncertain) {
+        return { state: "rolled_back",
+                 message: "The update did not complete, so the device is still running " + after.version + "." };
+      }
       return { state: "rolled_back",
                message: "The new firmware was not confirmed, so the device went back to " + after.version + "." };
     }
@@ -1480,6 +1535,134 @@
     return judgeConfirmCheck(id, await gather());
   }
 
+  // ---- Update flow state (upd.phase in the page) ----
+  // running: writing the image or sending REVERT. rebooting: waiting for the
+  // device to restart and come back. confirming: the checks before MARK_VALID.
+  // waiting_rollback: a check failed; the device goes back at its deadline.
+  // switched_no_restart: the boot slot changed but the OTA_FINISH or REVERT
+  // reply was lost, and with it the restart. link_lost: Disconnect was used
+  // during one of the last three; the next connect picks the update up again.
+  // done (or no update at all): nothing in flight.
+  // The page keeps listening for the device this long after the link dropped.
+  // The firmware goes back to the previous image 120 s after a pending boot,
+  // and its boot flash window (OMEGA_STICK_BOOT_FLASH_WINDOW_S) can hold USB
+  // back for up to 60 s, so 40 s was too short.
+  const RECONNECT_WINDOW_MS = 110000;
+  function updateActive(phase) { return !!phase && phase !== "done"; }
+  function resumesOnReconnect(phase) { return phase === "rebooting" || phase === "link_lost"; }
+  function reconnectDeadline(droppedAt) { return droppedAt + RECONNECT_WINDOW_MS; }
+  // Status text while the page waits for the device after a restart.
+  function reconnectWaitText(leftMs, elapsedMs) {
+    const left = Math.max(0, Math.round(leftMs / 1000));
+    let t = "Waiting for the device to come back (" + left + " s left).";
+    if (elapsedMs >= 15000) t += " After a restart it can take up to a minute to appear again.";
+    return t;
+  }
+
+  const LOCK_REASON = {
+    running: "An update is in progress. These controls come back when it has finished.",
+    waiting_rollback: "The new firmware was not confirmed, and the device is about to go back to the previous firmware. " +
+      "Wait for that to finish, then try again.",
+    switched_no_restart: "The new firmware is installed but the device has not restarted into it. Use Restart now first.",
+  };
+  const PENDING_FLASH_REASON = "The running firmware is waiting to be confirmed, and the device refuses a new update until it is. " +
+    "Use \"Mark running image valid\" to keep it, or wait for the device to go back to the previous firmware.";
+
+  // Which update controls are usable. s: { connected, busy, latestBusy, phase
+  // (upd.phase or null), reconnecting, pending (FW_INFO pending_verify),
+  // revert (revertAvailability) }. Returns { connectLocked, modeLocked, flash,
+  // install, revert, restart, markValid }; each control is { disabled, reason }
+  // with reason "" when there is nothing to explain. While an update is in
+  // flight anything that restarts the device or starts another update stays
+  // locked, since any of them would force the pending image to roll back.
+  function updateControls(s) {
+    const phase = updateActive(s.phase) ? s.phase : "done";
+    const active = phase !== "done";
+    const conn = !!s.connected, busy = !!s.busy;
+    const on = () => ({ disabled: false, reason: "" });
+    const off = (reason) => ({ disabled: true, reason: reason || "" });
+    const lock = active ? off(LOCK_REASON[phase] || LOCK_REASON.running) : null;
+    let flash;
+    if (!conn) flash = off("");
+    else if (lock) flash = lock;
+    else if (s.pending) flash = off(PENDING_FLASH_REASON);
+    else flash = busy ? off("") : on();
+    const install = flash.disabled ? flash : (s.latestBusy ? off("") : on());
+    const rv = s.revert || { usable: false, reason: "" };
+    let revert;
+    if (conn && lock) revert = lock;
+    else if (!rv.usable) revert = off(rv.reason);
+    else revert = (!conn || busy) ? off("") : on();
+    const restart = (!conn || busy) ? off("") : (lock && phase !== "switched_no_restart") ? lock : on();
+    const markValid = (!conn || busy) ? off("") : (lock && phase !== "waiting_rollback") ? lock : on();
+    const connectLocked = ["running", "confirming", "waiting_rollback", "switched_no_restart"].includes(phase) ||
+      (phase === "rebooting" && (conn || !!s.reconnecting));
+    return { connectLocked, modeLocked: active, flash, install, revert, restart, markValid };
+  }
+
+  // What happens to an update when the link goes away while the device is up
+  // but the update is not settled. manual: the page's Disconnect was used (it is
+  // locked during an update, so this is a fallback). Returns null when the
+  // phase is not affected, else { phase, reconnect (start the automatic
+  // reconnect), message }.
+  function afterLinkLoss(phase, manual) {
+    if (phase === "confirming") {
+      return manual
+        ? { phase: "link_lost", reconnect: false,
+            message: "Disconnected before the new firmware was confirmed. The device goes back to the previous firmware by " +
+                     "itself unless this page confirms it within about two minutes of its restart. Reconnect so this page can finish its checks." }
+        : { phase: "rebooting", reconnect: true,
+            message: "The connection dropped while the new firmware was being checked. Reconnecting to find out which firmware the device is running..." };
+    }
+    if (phase === "waiting_rollback") {
+      return manual
+        ? { phase: "link_lost", reconnect: false,
+            message: "Disconnected. The new firmware was not confirmed, so the device goes back to the previous firmware by " +
+                     "itself within about two minutes of its restart. Reconnect to see which firmware it runs." }
+        : { phase: "rebooting", reconnect: true,
+            message: "The connection dropped; the device is probably going back to the previous firmware. Reconnecting to find out which firmware it is running..." };
+    }
+    if (phase === "switched_no_restart") {
+      return manual
+        ? { phase: "link_lost", reconnect: false,
+            message: "Disconnected. The new firmware is installed but has not started yet. Reconnect, then use Restart now so " +
+                     "this page can check and confirm it. If the device restarts without this page, it goes back to the current firmware about two minutes later." }
+        : { phase: "rebooting", reconnect: true,
+            message: "The connection dropped. Reconnecting to find out which firmware the device is running..." };
+    }
+    return null;
+  }
+
+  // OTA_FINISH or REVERT got no reply in time. The firmware switches the boot
+  // slot before it replies and only the delayed restart goes with the lost
+  // reply, so the page reads FW_INFO again. kind: flash | revert. info: parsed
+  // FW_INFO ({ running, boot }) or null. state: switched | not_switched | unknown.
+  function decideAfterFinishTimeout(kind, info) {
+    const what = kind === "revert" ? "the previous firmware" : "the new firmware";
+    if (!info || !info.running || !info.boot) {
+      return { state: "unknown",
+               message: "The device stopped answering, and it is not known whether " + what + " was installed. " +
+                        "Reconnect and check the Boot partition field before trying again." };
+    }
+    if (info.boot !== info.running) {
+      return { state: "switched",
+               message: (kind === "revert" ? "The previous firmware is" : "The new firmware is") +
+                        " installed, but the device did not restart into it. Use Restart now: the device then starts it, " +
+                        "and this page checks and confirms it." };
+    }
+    return { state: "not_switched",
+             message: kind === "revert"
+               ? "The device stopped answering and is still set to start the running firmware, so nothing was changed. Try again."
+               : "The device stopped answering while it checked the new firmware, and it is still set to start the running firmware, so nothing was installed. Try again." };
+  }
+
+  // Whether closing or reloading the page now would leave an update half done.
+  // s: { phase, uploading, downloading }.
+  function shouldWarnBeforeUnload(s) {
+    if (s.uploading || s.downloading) return true;
+    return ["running", "rebooting", "confirming", "switched_no_restart", "link_lost"].includes(s.phase);
+  }
+
   // Wording shown when a check failed and MARK_VALID was not sent.
   function confirmFailureNotice(message) {
     return message + " The new firmware was not confirmed. The device goes back to the previous firmware by " +
@@ -1535,6 +1718,14 @@
     if (has(/transport lost|disconnected|upload cancelled|NetworkError|device has been lost/i)) {
       return out("lost", "The connection to the device was lost.",
         "Unplug the device, plug it in again, reconnect, and check which firmware it runs before trying again. A half-written update never replaces the working firmware.");
+    }
+    // Firmware that refuses a new upload while the running image is pending
+    // says why; show its words rather than the generic "would not start".
+    const refusal = /OTA_BEGIN refused: (the running image is not confirmed yet[^:]*)/i.exec(t);
+    if (refusal) {
+      const why = refusal[1].trim().replace(/[.;,]+$/, "");
+      return out("not_confirmed", "The device refused the update: " + why + ".",
+        "Confirm the running firmware with \"Mark running image valid\", or wait for the device to go back to the previous firmware, then try again.");
     }
     if (has(/timed out/i)) {
       return out("timeout", /OTA_BEGIN/.test(t) ? "The device took too long to get ready for the update."
@@ -1605,6 +1796,45 @@
   const PAGES_BASE = "/omega-stick/";
   const RELEASES_URL = "https://github.com/ATDev-Inc/omega-stick/releases";
   const NOTES_PREFIX = RELEASES_URL + "/";
+
+  // Why a fetch() of the feed or the image threw. Browsers report a request
+  // blocked by CORS and a network failure the same way, so "offline" is used
+  // only when the browser says it has no connection. online: the onLine flag.
+  // kind: timeout | offline | unreachable.
+  function classifyFetchError(error, online) {
+    if (error && error.name === "AbortError") return "timeout";
+    if (online === false) return "offline";
+    return "unreachable";
+  }
+  // Plain wording for a failed feed check. kind: classifyFetchError's kinds,
+  // or missing | http | invalid.
+  function describeFeedFailure(kind, status) {
+    switch (kind) {
+      case "offline": return "This computer is offline, so the release server could not be reached. Check your internet connection and try again.";
+      case "timeout": return "The release server did not answer in time. Try again later.";
+      case "unreachable": return "The release server could not be reached. The network, a firewall or proxy, or the browser's security " +
+        "settings may have blocked it. Try again later, or look at the releases on GitHub.";
+      case "missing": return "No release has been published yet.";
+      case "http": return "The release server returned an error (" + status + "). Try again later.";
+      default: return "The release information could not be read, so nothing was changed.";
+    }
+  }
+  // Plain wording for a failed firmware download. kind: classifyFetchError's
+  // kinds, or http | size | sha | nohash.
+  function describeDownloadFailure(kind, status) {
+    switch (kind) {
+      case "offline": return "This computer is offline, so the firmware could not be downloaded. Nothing was changed.";
+      case "timeout": return "The download stopped making progress, so it was cancelled. Nothing was changed. Try again.";
+      case "unreachable": return "The firmware file could not be reached. The network, a firewall or proxy, or the browser's " +
+        "security settings may have blocked it. Nothing was changed.";
+      case "http": return "The release server could not provide the file (error " + status + "). Try again later.";
+      case "size": return "The downloaded file is not the size the release says it should be, so it was not installed. Try again.";
+      case "sha": return "The downloaded file did not match its checksum, so it was not installed. Try again, and if it keeps " +
+        "happening, download the release from GitHub instead.";
+      case "nohash": return "This browser cannot check the download, so it was not installed. Download the release from GitHub and choose the file instead.";
+      default: return "The download failed, so nothing was changed.";
+    }
+  }
 
   // Where to read the feed from. Served from the project's own Pages site the
   // feed is a sibling path, so it stays same-origin; anywhere else (file://,
@@ -1681,6 +1911,21 @@
   // serial?, isSaved } where isSaved is true for the exact port or device
   // object that was connected before. Never guesses between several sticks.
   // reason: exact | only-match | ambiguous | none.
+  // Arbitrates between the automatic reconnect loop and a connect the person
+  // started (the Reconnect button's picker, or a Connect button). The manual
+  // attempt owns connection setup while it runs: the device it is opening is
+  // already marked opened but is not the transport yet, so a loop that kept
+  // scanning would see the other stick as the only free match and open it too.
+  // s: { transportPresent, manualInProgress, manualSucceeded (a manual connect
+  // succeeded since the loop started) }. Returns "stop" (end the loop for good),
+  // "wait" (open nothing; check again on the next wake) or "try" (the loop may
+  // look for a device and open it). The loop asks again after every await.
+  function autoReconnectStep(s) {
+    if (s.transportPresent || s.manualSucceeded) return "stop";
+    if (s.manualInProgress) return "wait";
+    return "try";
+  }
+
   function pickReconnectCandidate(link, candidates) {
     const free = (candidates || []).filter((c) => c && !c.opened && c.kind === link.kind);
     const saved = free.find((c) => c.isSaved);
@@ -1994,11 +2239,15 @@
   const OmegaProtocol = {
     SIM_PATTERNS, SIM_FAULTS, SIM_NEXT_IMAGE,
     encodeSimMessage, parseSimMessage, validateSimScript, createHidAccumulator,
-    pickReconnectCandidate,
+    pickReconnectCandidate, autoReconnectStep,
     FEED_URL, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
     OTA_SLOT_SIZE, CHIP_ID_ESP32S3, DEFAULT_PROJECT, KIND_LABEL,
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
     decideOutcome, CONFIRM_CHECKS, judgeConfirmCheck, awaitSensorHealthy, runConfirmCheck, confirmFailureNotice,
+    REVERTIBLE_STATES, PARTIAL_SLOT_NOTE, revertAvailability, describePrevState,
+    RECONNECT_WINDOW_MS, updateActive, resumesOnReconnect, reconnectDeadline, reconnectWaitText,
+    PENDING_FLASH_REASON, updateControls, afterLinkLoss, decideAfterFinishTimeout, shouldWarnBeforeUnload,
+    classifyFetchError, describeFeedFailure, describeDownloadFailure,
     SENSOR_NOT_OBSERVED, SENSOR_POLL_MS, SENSOR_WAIT_MS, SENSOR_DWELL_MS, describeSensorState,
     describeUpdateError, formatProgress, formatBytes,
     FIRST_FLASH_URL, NO_USB_UPDATES_NOTE, usbUpdatesUnavailable, decideOutcomeNoUpdates,
@@ -2030,6 +2279,9 @@
       buildFrame, FrameParser, readU32, parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
       encodeSetManualOffset, encodeSetDeadzoneOverride, encodeSetNudgeSettings, encodeSetInputMode,
       inspectImage, buildFlashPlan, buildRevertPlan, decideOutcome, CONFIRM_CHECKS, runConfirmCheck, confirmFailureNotice, describeSensorState,
+      revertAvailability, describePrevState, reconnectDeadline, reconnectWaitText, resumesOnReconnect,
+      PENDING_FLASH_REASON, updateControls, afterLinkLoss, decideAfterFinishTimeout, shouldWarnBeforeUnload,
+      RECONNECT_WINDOW_MS, classifyFetchError, describeFeedFailure, describeDownloadFailure,
       describeUpdateError, formatProgress, formatBytes,
       FIRST_FLASH_URL, NO_USB_UPDATES_NOTE, usbUpdatesUnavailable, decideOutcomeNoUpdates,
       DEFAULT_PROJECT, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
@@ -2068,6 +2320,7 @@
                       "latestCheckBtn", "latestInstallBtn", "latestAuto", "latestResult", "latestNotes",
                       "fwDrop", "fwFileInfo", "confirmPanel", "confirmTitle", "confirmBody", "confirmOkBtn", "confirmCancelBtn",
                       "updateStatus", "updateSteps", "updateMessage", "updateDetail", "updateError", "fwReconnectBtn",
+                      "fwRestartNowBtn", "fwFlashNote", "fwRevertNote",
                       "logFrames", "clearLogBtn", "log", "unsupported"]) {
       els[id] = document.getElementById(id);
     }
@@ -2313,6 +2566,7 @@
     async function disconnect() {
       if (!transport) return;
       const t = transport;
+      if (confirmResolve) closeConfirm(false);
       if (uploading) {
         // Release the device's upload session before the link goes away, or it
         // stays claimed until the firmware's idle expiry. Fail the in-flight
@@ -2322,6 +2576,7 @@
         try { await transact(TYPE.OTA_ABORT, null, [TYPE.OK], 2000, 0); } catch (_) { }
       }
       if (transport === t) transport = null;
+      linkDroppedAt = Date.now();
       calibrationModule = MODULE_CALIBRATION;
       failPending(new Error("disconnected"));
       await t.close();
@@ -2330,10 +2585,12 @@
       updateUI();
       setStatus("", "Disconnected");
       logLine("sys", "Disconnected.");
+      onUpdateManualDisconnect();
     }
     function onTransportGone(t) {
       if (transport !== t) return;
       transport = null;
+      linkDroppedAt = Date.now();
       calibrationModule = MODULE_CALIBRATION;
       state = null; haveState = false; recalPending = false;
       failPending(new Error("transport lost"));
@@ -2349,8 +2606,7 @@
     els.usbBtn.addEventListener("click", async () => {
       if (transport) { await disconnect(); return; }
       try {
-        const t = await connectUsb();
-        if (t) onConnected(t);
+        await manualConnect(async () => { const t = await connectUsb(); if (t) onConnected(t); return !!t; });
       } catch (e) {
         logLine("err", "WebUSB connect failed: " + e.message);
         setStatus("error", "Connect failed");
@@ -2359,8 +2615,7 @@
     els.serialBtn.addEventListener("click", async () => {
       if (transport) { await disconnect(); return; }
       try {
-        const t = await connectSerial();
-        if (t) onConnected(t);
+        await manualConnect(async () => { const t = await connectSerial(); if (t) onConnected(t); return !!t; });
       } catch (e) {
         logLine("err", "Web Serial connect failed: " + e.message);
         setStatus("error", "Connect failed");
@@ -2399,8 +2654,10 @@
           : { kind: "serial", port: t.port, info: (t.port.getInfo ? t.port.getInfo() : {}) };
       parser.reset();
       consoleCarry = "";
-      // Whatever was known about the last device is stale now.
+      // Whatever was known about the last device is stale now, including its
+      // firmware record: a flash or revert must never plan from another device.
       state = null; haveState = false; recalPending = false;
+      fwInfo = null;
       updateUI();
       if (t.kind === "sim") simOnConnected(t);
       setStatus("connected", "Connected");
@@ -2418,7 +2675,7 @@
         return refreshFwInfo().then((ok) => {
           if (ok) {
             logLine("sys", fwSummary());
-            if (fwInfo.pending && !(upd && upd.phase === "rebooting")) {
+            if (fwInfo.pending && !(upd && resumesOnReconnect(upd.phase))) {
               logLine("sys", "The running firmware is pending verification and will be replaced by the previous " +
                 "one unless it is confirmed. Use \"Mark running image valid\" to confirm it (this skips the console's checks).");
             }
@@ -2440,12 +2697,22 @@
       els.usbBtn.classList.toggle("primary", !(connected && transport.kind === "usb"));
       els.serialBtn.classList.toggle("danger", connected && transport.kind === "serial");
       els.serialBtn.classList.toggle("primary", !(connected && transport.kind === "serial"));
-      if (navigator.usb) els.usbBtn.disabled = (connected && transport.kind !== "usb") || simConnecting;
-      if (navigator.serial) els.serialBtn.disabled = (connected && transport.kind !== "serial") || simConnecting;
+      // While an update is in flight the link must stay as it is: a Disconnect
+      // during the checks would leave the new image unconfirmed (it then goes
+      // back by itself), and a second Connect would race the automatic reconnect.
+      const uc = updateControls({
+        connected, busy, latestBusy, reconnecting, phase: upd ? upd.phase : null,
+        pending: !!(fwInfo && fwInfo.pending), revert: revertAvailability(fwInfo),
+      });
+      const linkLocked = uc.connectLocked;
+      const linkTitle = linkLocked ? "Not available while a firmware update is in progress" : "";
+      if (navigator.usb) els.usbBtn.disabled = (connected && transport.kind !== "usb") || simConnecting || linkLocked;
+      if (navigator.serial) els.serialBtn.disabled = (connected && transport.kind !== "serial") || simConnecting || linkLocked;
+      els.usbBtn.title = linkTitle; els.serialBtn.title = linkTitle; els.simBtn.title = linkTitle;
       els.simBtn.textContent = connected && transport.kind === "sim" ? "Disconnect" : "Connect Simulator";
       els.simBtn.classList.toggle("danger", connected && transport.kind === "sim");
       els.simBtn.classList.toggle("primary", !(connected && transport.kind === "sim"));
-      els.simBtn.disabled = (connected && transport.kind !== "sim") || simConnecting;
+      els.simBtn.disabled = (connected && transport.kind !== "sim") || simConnecting || linkLocked;
       els.simUrl.disabled = connected || simConnecting;
       els.simPanel.hidden = !(connected && transport.kind === "sim");
       els.anyDevice.disabled = connected;
@@ -2455,19 +2722,28 @@
       els.zeroOffsetBtn.disabled = !connected || busy || !haveState;
       els.applyDeadzoneBtn.disabled = !connected || busy || !haveState;
       els.applyNudgeBtn.disabled = !connected || busy || !haveState;
-      els.modeMouseBtn.disabled = !connected || busy || !haveState;
-      els.modeXacBtn.disabled = !connected || busy || !haveState;
+      // A mode switch restarts the device, which would undo a pending update.
+      els.modeMouseBtn.disabled = !connected || busy || !haveState || uc.modeLocked;
+      els.modeXacBtn.disabled = !connected || busy || !haveState || uc.modeLocked;
       els.recalibrateBtn.disabled = !connected || busy || recalPending;
       els.diagRefreshBtn.disabled = !connected || busy;
-      els.flashBtn.disabled = !connected || busy;
+      // Update controls: decided by OmegaProtocol.updateControls (unit tested).
+      els.flashBtn.disabled = uc.flash.disabled;
+      els.flashBtn.title = uc.flash.reason;
+      els.fwFlashNote.textContent = uc.flash.reason;
+      els.fwFlashNote.hidden = !uc.flash.reason;
       els.latestCheckBtn.disabled = latestBusy || busy;
-      els.latestInstallBtn.disabled = !connected || busy || latestBusy;
+      els.latestInstallBtn.disabled = uc.install.disabled;
+      els.latestInstallBtn.title = uc.install.reason;
       els.fwDrop.setAttribute("aria-disabled", busy ? "true" : "false");
-      els.restartBtn.disabled = !connected || busy;
-      els.markValidBtn.disabled = !connected || busy;
-      const canRevert = connected && !busy && prevSlotUsable();
-      els.fwRevertBtn.disabled = !canRevert;
-      els.fwRevertBtn.title = prevSlotUsable() ? "" : "No previous firmware in the other slot";
+      els.restartBtn.disabled = uc.restart.disabled;
+      els.restartBtn.title = uc.restart.reason;
+      els.markValidBtn.disabled = uc.markValid.disabled;
+      els.fwRevertBtn.disabled = uc.revert.disabled;
+      els.fwRevertBtn.title = uc.revert.reason;
+      // A partial image in the other slot is worth saying out loud, not only in a tooltip.
+      els.fwRevertNote.textContent = (fwInfo && fwInfo.prevState === "partial") ? revertAvailability(fwInfo).reason : "";
+      els.fwRevertNote.hidden = !els.fwRevertNote.textContent;
       if (!connected) { els.devInfo.textContent = "Not connected."; els.recalInfo.textContent = ""; }
     }
 
@@ -2878,11 +3154,16 @@
       }
     });
 
+    // The last FW_INFO read from the connected device; null after a connect or
+    // a failed read, so nothing plans from a stale record.
     let fwInfo = null;
 
-    const REVERTIBLE_STATES = ["valid", "new", "pending_verify", "invalid", "aborted", "undefined"];
     function prevSlotUsable() {
-      return !!fwInfo && REVERTIBLE_STATES.includes(fwInfo.prevState);
+      return revertAvailability(fwInfo).usable;
+    }
+    // FW_INFO as decideOutcome and the confirm checks want it.
+    function afterInfo() {
+      return { version: fwInfo.version, sha: fwInfo.sha, pending: fwInfo.pending, running: fwInfo.running, boot: fwInfo.boot };
     }
 
     function fwSummary() {
@@ -2920,13 +3201,15 @@
         els.fwPrevSlot.textContent = v(f.prevLabel);
         els.fwPrevVersion.textContent = v(f.prevVersion);
         els.fwPrevBuild.textContent = (f.prevDate || f.prevTime) ? (f.prevDate + " " + f.prevTime).trim() : "n/a";
-        els.fwPrevState.textContent = f.prevState;
+        els.fwPrevState.textContent = describePrevState(f.prevState);
         els.fwCopyBtn.disabled = false;
         updateUI();
         els.fwPending.hidden = !pending;
         els.markValidBtn.hidden = !pending;
         return true;
       } catch (e) {
+        fwInfo = null;
+        updateUI();
         if (usbUpdatesUnavailable(e)) {
           setUsbUpdates(false);
           els.fwRunning.textContent = discoveryFw ? "omega_stick " + discoveryFw : "-";
@@ -2980,6 +3263,7 @@
       if (ok && !fwInfo.pending && upd && upd.phase === "waiting_rollback") {
         upd.phase = "done";
         finishStatus("warn", "The new firmware was confirmed by hand, without the console's checks. The device is running " + fwInfo.version + ".");
+        updateUI();
       }
     });
 
@@ -2988,7 +3272,6 @@
     // Pure decisions live in OmegaProtocol (inspectImage, buildFlashPlan,
     // buildRevertPlan, decideOutcome, describeUpdateError, formatProgress).
     // ===================================================================
-    const RECONNECT_TIMEOUT_MS = 40000;
     const DROP_WAIT_MS = 15000;
     const STEP_SETS = {
       flash: [["check", "Checking file"], ["erase", "Erasing"], ["write", "Writing"], ["verify", "Verifying"],
@@ -2998,10 +3281,12 @@
       download: [["download", "Downloading"], ["verify", "Checking download"]],
     };
     // upd: the update or revert in progress, kept in memory for this page session.
-    //   { kind, before: {version, sha}, expected: {kind, version, sha, before}, phase }
-    // phase: running | rebooting | confirming | done
+    //   { kind, before: {version, sha}, expected: {kind, version, sha, before, uncertain?}, phase }
+    // phase: running | rebooting | confirming | waiting_rollback | switched_no_restart | link_lost | done
+    // (described with OmegaProtocol.updateControls).
     let upd = null;
     let lastLink = null;       // how the current or last transport was opened
+    let linkDroppedAt = 0;     // when the last transport went away (Date.now())
     let reconnectWake = null;  // set while waiting; the 'connect' events call it
     let stepList = [], stepTimer = null, stepStart = 0;
 
@@ -3043,6 +3328,7 @@
       els.updateError.textContent = "";
       els.updateDetail.textContent = "";
       els.fwReconnectBtn.hidden = true;
+      els.fwRestartNowBtn.hidden = true;
       renderSteps(stepList[0][0]);
     }
     function setStep(id, message, indeterminateSeconds) {
@@ -3085,8 +3371,10 @@
       const d = describeUpdateError(raw);
       showStatusBox();
       finishStatus("err", d.title + " " + d.advice);
+      els.fwRestartNowBtn.hidden = true;
       if (!transport) els.fwReconnectBtn.hidden = false;
       if (upd) upd.phase = "done";
+      updateUI();
     }
 
     // ---- Inline confirm panel (replaces window.confirm for Flash and Revert) ----
@@ -3246,11 +3534,22 @@
       upd = null;
       beginStatus("flash");
       setStep("check", "Checking the firmware file...");
-      let img, plan;
+      // Plan only from what this device reports now, never from an older record.
+      if (!(await refreshFwInfo())) {
+        finishStatus("err", "The device did not report which firmware it runs, so nothing was flashed. Reconnect and try again.");
+        endBusy();
+        return;
+      }
+      if (fwInfo.pending) {
+        // The firmware refuses OTA_BEGIN while the running image is pending.
+        bailOut("Not flashed. " + PENDING_FLASH_REASON);
+        endBusy();
+        return;
+      }
+      let img, plan, insp;
       try {
-        await refreshFwInfo();
         img = await loadBytes();
-        const insp = inspectImage(img, { expectedProject: expectedProject() });
+        insp = inspectImage(img, { expectedProject: expectedProject() });
         plan = buildFlashPlan(insp, runningForCompare(), { name: fileName, size: img.length });
         for (const w of plan.warnings) logLine("warn", "Firmware check: " + w.message);
         for (const x of plan.errors) logLine("err", "Firmware check: " + x.message);
@@ -3260,7 +3559,13 @@
         return;
       }
       const pl = planLines(plan);
-      const app = plan.blocked ? null : (inspectImage(img, { expectedProject: expectedProject() }).info.appDesc);
+      const app = plan.blocked ? null : (insp.info && insp.info.appDesc);
+      if (!plan.blocked && !app) {
+        // inspectImage blocks such a file; this keeps busy from sticking if it ever does not.
+        bailOut("Not flashed. The file has no readable firmware description. Choose the application .bin file (omega_stick.bin).");
+        endBusy();
+        return;
+      }
       const confirmed = await askConfirm({
         title: plan.blocked ? "This file cannot be flashed" : "Flash this firmware?",
         headline: plan.headline,
@@ -3292,6 +3597,8 @@
       lastUpdate = upd;
       setStatus("busy", "Flashing...");
       beginStatus("flash");
+      updateUI();
+      let finishSent = false;
       try {
         const begin = new Uint8Array(4);
         new DataView(begin.buffer).setUint32(0, img.length, true);
@@ -3319,10 +3626,12 @@
 
         setStep("verify", "Verifying the new firmware on the device...", true);
         logLine("sys", "OTA: validating and activating...");
+        finishSent = true;
         await transact(TYPE.OTA_FINISH, null, [TYPE.OK], OTA_FINISH_TIMEOUT_MS, 0);
         uploading = false;
         logLine("sys", "Firmware accepted. The device is restarting; the page will reconnect.");
       } catch (e) {
+        if (finishSent && await handleLostFinishReply(e)) return;
         failUpdate("Flash", e);
         // disconnect() clears `uploading` after sending its own OTA_ABORT.
         if (uploading && transport) {
@@ -3334,14 +3643,99 @@
         return;
       }
       uploading = false;
+      // busy is released, but upd.phase keeps the update controls and the
+      // connection locked until the update reaches a terminal phase.
       endBusy();
       afterReboot();
     }
+
+    // OTA_FINISH or REVERT failed after it was sent. A timeout or a dropped
+    // link does not mean nothing happened: the firmware switches the boot slot
+    // before it replies, and only the delayed restart goes with a lost reply.
+    // Returns true when this took over the failure.
+    async function handleLostFinishReply(e) {
+      const raw = (e && e.message) ? e.message : String(e);
+      const category = describeUpdateError(raw).category;
+      if (!upd || (category !== "timeout" && category !== "lost")) return false;
+      const step = upd.kind === "revert" ? "REVERT" : "OTA_FINISH";
+      logLine("err", step + " got no reply (" + raw + "). Checking which firmware the device will start.");
+      uploading = false;
+      if (!transport) {
+        // The link went with the reply, so the device may have restarted into
+        // the new image. Reconnect and decide from what it reports.
+        upd.expected.uncertain = true;
+        endBusy();
+        afterReboot();
+        return true;
+      }
+      const ok = await refreshFwInfo();
+      const d = decideAfterFinishTimeout(upd.kind, ok ? fwInfo : null);
+      logLine(d.state === "switched" ? "warn" : "err", d.message);
+      if (d.state === "switched") {
+        endBusy();
+        showNotRestarted(d.message);
+        return true;
+      }
+      if (d.state === "not_switched" && upd.kind === "flash" && transport) {
+        // Release the upload session rather than wait for its idle expiry.
+        try { await transact(TYPE.OTA_ABORT, null, [TYPE.OK], CMD_TIMEOUT_MS, 0); } catch (_) { }
+      }
+      upd.phase = "done";
+      showStatusBox();
+      finishStatus("err", d.message);
+      if (!transport) els.fwReconnectBtn.hidden = false;
+      endBusy();
+      return true;
+    }
+    // The boot slot is switched but the device still runs the old image.
+    // Restart now starts it; the usual reconnect and confirm then follow.
+    function showNotRestarted(message) {
+      if (!upd) return;
+      upd.phase = "switched_no_restart";
+      showStatusBox();
+      renderSteps("restart");
+      finishStatus("warn", message);
+      els.fwReconnectBtn.hidden = true;
+      els.fwRestartNowBtn.hidden = false;
+      updateUI();
+    }
+    async function restartIntoNewImage() {
+      if (!transport || busy || !upd || upd.phase !== "switched_no_restart") return;
+      busy = true;
+      els.fwRestartNowBtn.hidden = true;
+      upd.phase = "rebooting";
+      updateUI();
+      showStatusBox();
+      els.updateStatus.className = "update-status";
+      els.updateError.textContent = "";
+      let sent = false;
+      try {
+        await transact(TYPE.RESTART, null, [TYPE.OK], CMD_TIMEOUT_MS, 0);
+        sent = true;
+      } catch (e) { logLine("err", "RESTART failed: " + e.message); }
+      endBusy();
+      if (!sent && transport) {
+        showNotRestarted("The device did not accept the restart. Press Restart now again, or unplug the device and plug it in again.");
+        return;
+      }
+      logLine("sys", "Restarting into the installed firmware; the page will reconnect.");
+      afterReboot();
+    }
+    els.fwRestartNowBtn.addEventListener("click", restartIntoNewImage);
+
+    // Closing the page mid-update would leave the new image unconfirmed (it
+    // then goes back by itself) or an upload half written.
+    window.addEventListener("beforeunload", (e) => {
+      if (!shouldWarnBeforeUnload({ phase: upd ? upd.phase : null, uploading, downloading: latestBusy && busy })) return;
+      e.preventDefault();
+      e.returnValue = "";
+    });
 
     // ---- Latest release: check the published feed, download, verify, then
     // hand the bytes to runFlash (same inspect + confirm panel as a picked file).
     const LATEST_PREF_KEY = "omega.checkOnConnect";
     const FEED_TIMEOUT_MS = 15000;
+    const DOWNLOAD_STALL_MS = 20000; // no data for this long cancels a firmware download
     let latestRelease = null;   // parsed release from the last good check
     let autoCheckDone = false;  // the automatic check runs once per page session
 
@@ -3375,14 +3769,6 @@
       els.latestInstallBtn.textContent = "Download and install " + r.version;
       setLatestNotes(r.notesUrl);
     }
-    function latestFailure(kind, status) {
-      switch (kind) {
-        case "offline": return "Could not reach the release server. Check your internet connection and try again.";
-        case "missing": return "No release has been published yet.";
-        case "http": return "The release server returned an error (" + status + "). Try again later.";
-        default: return "The release information could not be read, so nothing was changed.";
-      }
-    }
     async function fetchWithTimeout(url, ms) {
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), ms);
@@ -3401,7 +3787,7 @@
         const url = feedUrlFor(location.href);
         let resp;
         try { resp = await fetchWithTimeout(url, FEED_TIMEOUT_MS); }
-        catch (e) { throw { kind: "offline", detail: e && e.message }; }
+        catch (e) { throw { kind: classifyFetchError(e, navigator.onLine), detail: e && e.message }; }
         if (resp.status === 404) throw { kind: "missing" };
         if (!resp.ok) throw { kind: "http", status: resp.status };
         let json;
@@ -3420,7 +3806,7 @@
         els.latestResult.className = "muted";
         els.latestResult.textContent = auto
           ? "Could not check for new firmware just now. You can check by hand."
-          : latestFailure(failure.kind, failure.status);
+          : describeFeedFailure(failure.kind, failure.status);
       } finally {
         latestBusy = false; updateUI();
       }
@@ -3469,31 +3855,34 @@
       setStep("download", "Downloading firmware " + rel.version + "...");
       setProgress(0, "Downloading");
       let bytes = null;
+      // Cancel the download if no data arrives for DOWNLOAD_STALL_MS, so a stalled
+      // connection cannot leave busy and latestBusy set.
+      const ctl = new AbortController();
+      let stall = null;
+      const poke = () => { clearTimeout(stall); stall = setTimeout(() => ctl.abort(), DOWNLOAD_STALL_MS); };
+      poke();
       try {
         let resp;
-        try { resp = await fetch(rel.appUrl, { cache: "no-cache" }); }
-        catch (e) { throw { kind: "offline" }; }
+        try { resp = await fetch(rel.appUrl, { cache: "no-cache", signal: ctl.signal }); }
+        catch (e) { throw { kind: classifyFetchError(e, navigator.onLine) }; }
         if (!resp.ok) throw { kind: "http", status: resp.status };
         bytes = await readBody(resp, rel.size, (n) => {
+          poke();
           const t = "Downloading " + Math.floor((n * 100) / rel.size) + "% (" + formatBytes(n) + " of " + formatBytes(rel.size) + ")";
           setProgress(n / rel.size, t);
           els.updateDetail.textContent = t;
         });
+        clearTimeout(stall);
         setStep("verify", "Checking the download...");
         if (bytes.length !== rel.size) throw { kind: "size" };
         if (!(globalThis.crypto && crypto.subtle)) throw { kind: "nohash" };
         const digest = hex(await crypto.subtle.digest("SHA-256", bytes));
         if (digest !== rel.sha256) throw { kind: "sha" };
       } catch (e) {
-        const kind = e && e.kind;
+        clearTimeout(stall);
+        const kind = (e && e.kind) || (ctl.signal.aborted ? "timeout" : undefined);
         logLine("err", "Download failed (" + (kind || "error") + "): " + ((e && (e.status || e.message)) || ""));
-        const msg = kind === "offline" ? "The download could not be reached. Check your internet connection and try again."
-          : kind === "http" ? "The release server could not provide the file (error " + e.status + "). Try again later."
-          : kind === "size" ? "The downloaded file is not the size the release says it should be, so it was not installed. Try again."
-          : kind === "sha" ? "The downloaded file did not match its checksum, so it was not installed. Try again, and if it keeps happening, download the release from GitHub instead."
-          : kind === "nohash" ? "This browser cannot check the download, so it was not installed. Download the release from GitHub and choose the file instead."
-          : "The download failed, so nothing was changed.";
-        finishStatus("err", msg);
+        finishStatus("err", describeDownloadFailure(kind, e && e.status));
         latestBusy = false; endBusy();
         return;
       }
@@ -3505,13 +3894,20 @@
 
     els.fwRevertBtn.addEventListener("click", async () => {
       if (!transport || busy || !prevSlotUsable()) return;
+      busy = true; updateUI();
+      upd = null;
+      // Plan only from what this device reports now.
+      if (!(await refreshFwInfo()) || !prevSlotUsable()) {
+        bailOut(fwInfo ? "Not reverted. " + revertAvailability(fwInfo).reason
+                       : "The device did not report its firmware, so nothing was changed. Reconnect and try again.");
+        endBusy();
+        return;
+      }
       const f = fwInfo;
       const prev = { version: f.prevVersion, label: f.prevLabel, state: f.prevState };
       const plan = buildRevertPlan({ version: f.version, sha: f.sha }, prev);
       const pl = planLines(plan);
       const build = (f.prevDate || f.prevTime) ? (f.prevDate + " " + f.prevTime).trim() : "unknown build";
-      busy = true; updateUI();
-      upd = null;
       const confirmed = await askConfirm({
         title: plan.blocked ? "Nothing to go back to" : "Go back to the previous firmware?",
         headline: plan.headline,
@@ -3537,10 +3933,12 @@
       beginStatus("revert");
       setStatus("busy", "Reverting...");
       setStep("revert", "Switching to the previous firmware (" + f.prevVersion + ")...");
+      updateUI();
       try {
         await transact(TYPE.REVERT, null, [TYPE.OK], CMD_TIMEOUT_MS, 0);
         logLine("sys", "Reverting to " + f.prevVersion + " (" + (f.prevLabel || "?") + "). The device is restarting; the page will reconnect.");
       } catch (e) {
+        if (await handleLostFinishReply(e)) return;
         failUpdate("Revert", e);
         endBusy();
         return;
@@ -3587,33 +3985,101 @@
     }
     async function openGranted(link, cand) {
       const t = link.kind === "sim" ? await connectSim(cand.url)
-        : link.kind === "usb" ? await connectUsb(cand) : await connectSerial(cand);
+        : link.kind === "usb" ? await connectUsb(cand.ref) : await connectSerial(cand.ref);
       if (t) onConnected(t);
       return !!t;
     }
-    // Reopens the device that was granted earlier, without the picker.
-    async function autoReconnect(timeoutMs) {
+    // A connect the person started. It owns connection setup while it runs:
+    // an automatic open already in flight is let finish first, and the
+    // automatic loop opens nothing until this settles (autoReconnectStep). A
+    // success ends the loop for good; a cancel or failure lets it resume.
+    let manualConnecting = false;
+    let manualConnects = 0;   // successful manual connects so far
+    let autoOpen = null;      // the automatic loop's open in flight, if any
+    async function manualConnect(open) {
+      manualConnecting = true;
+      try {
+        if (autoOpen) { try { await autoOpen; } catch (_) { } }
+        if (transport) return true;
+        const ok = await open();
+        if (ok) manualConnects++;
+        return ok;
+      } finally {
+        manualConnecting = false;
+        if (reconnectWake) reconnectWake();
+      }
+    }
+
+    // Reopens the device that was granted earlier, without the picker. Keeps
+    // trying (and wakes on the browser's 'connect' events) until `deadline`
+    // (Date.now() based, see OmegaProtocol.reconnectDeadline). When several
+    // sticks could be the one, it shows the Reconnect button at once so the
+    // person can pick, and keeps listening in case the others go away.
+    async function autoReconnect(deadline) {
       const link = lastLink;
       if (!link) return false;
-      const deadline = Date.now() + timeoutMs;
+      const start = linkDroppedAt || Date.now();
       let failures = 0;
+      let ambiguousShown = false;
+      const manualAtStart = manualConnects;
+      const step = () => OmegaProtocol.autoReconnectStep({
+        transportPresent: !!transport, manualInProgress: manualConnecting,
+        manualSucceeded: manualConnects !== manualAtStart,
+      });
       reconnecting = true;
+      updateUI();
       try {
         while (Date.now() < deadline) {
-          if (transport) return true;
-          let found = null;
-          try { found = await findGranted(link); } catch (_) { }
-          reconnectAmbiguous = !!found && found.reason === "ambiguous";
-          if (found && found.candidate) {
-            try { if (await openGranted(link, found.candidate)) return true; }
-            catch (e) { if (failures++ % 5 === 0) logLine("sys", "Reconnect attempt failed (" + e.message + "); retrying..."); }
+          if (step() === "stop") return !!transport;
+          if (step() === "try") {
+            let found = null;
+            try { found = await findGranted(link); } catch (_) { }
+            // A manual connect may have started while the devices were listed.
+            const now = step();
+            if (now === "stop") return !!transport;
+            if (now === "try") {
+              reconnectAmbiguous = !!found && found.reason === "ambiguous";
+              if (reconnectAmbiguous && !ambiguousShown) {
+                ambiguousShown = true;
+                els.updateError.textContent = AMBIGUOUS_MSG;
+                els.fwReconnectBtn.hidden = false;
+              }
+              if (found && found.candidate) {
+                autoOpen = openGranted(link, found.candidate);
+                try { if (await autoOpen) return true; }
+                catch (e) { if (failures++ % 5 === 0) logLine("sys", "Reconnect attempt failed (" + e.message + "); retrying..."); }
+                finally { autoOpen = null; }
+              }
+            }
           }
-          els.updateDetail.textContent = "Waiting for the device to come back. " +
-            Math.max(0, Math.round((deadline - Date.now()) / 1000)) + " s left.";
+          if (transport) return true;
+          els.updateDetail.textContent = reconnectWaitText(deadline - Date.now(), Date.now() - start);
           await wakeOrSleep(700);
         }
         return !!transport;
-      } finally { reconnecting = false; }
+      } finally {
+        // The countdown is only true while waiting; the device is back (or the
+        // window ran out), so it must not sit under the Confirming step.
+        els.updateDetail.textContent = "";
+        reconnecting = false; updateUI();
+      }
+    }
+    // The reconnect window ran out without the device.
+    function showReconnectGaveUp() {
+      stopStepTimer();
+      hideProgress();
+      els.updateStatus.className = "update-status warn";
+      els.updateDetail.textContent = "";
+      els.updateMessage.textContent = "";
+      els.updateError.textContent = reconnectAmbiguous
+        ? AMBIGUOUS_MSG
+        : "The device has not come back, so this page could not reconnect to it by itself. Unplug it and plug it in " +
+          "again if it does not appear, then press Reconnect. New firmware that is not confirmed goes back to the " +
+          "previous firmware by itself about two minutes after the restart.";
+      els.fwReconnectBtn.hidden = false;
+      els.fwReconnectBtn.focus();
+      logLine("err", "Automatic reconnect timed out.");
+      updateUI();
     }
 
     async function afterReboot() {
@@ -3633,41 +4099,35 @@
       }
       setStep("reconnect", "Reconnecting to the device...");
       setProgress(null, "Reconnecting");
-      const ok = await autoReconnect(RECONNECT_TIMEOUT_MS);
-      if (!ok && upd && upd.phase === "rebooting") {
-        hideProgress();
-        els.updateStatus.className = "update-status warn";
-        els.updateDetail.textContent = "";
-        els.updateMessage.textContent = "";
-        els.updateError.textContent = reconnectAmbiguous
-          ? AMBIGUOUS_MSG
-          : "The device has restarted but this page could not reconnect to it by itself. " +
-            "Unplug it and plug it in again if it does not appear, then press Reconnect.";
-        els.fwReconnectBtn.hidden = false;
-        els.fwReconnectBtn.focus();
-        logLine("err", "Automatic reconnect timed out.");
-      }
+      const ok = await autoReconnect(reconnectDeadline(linkDroppedAt || Date.now()));
+      if (!ok && upd && upd.phase === "rebooting") showReconnectGaveUp();
     }
 
     els.fwReconnectBtn.addEventListener("click", async () => {
-      if (transport || reconnecting) return;
+      // While the automatic reconnect runs, the button is only offered when it
+      // cannot tell several sticks apart; then the person picks one.
+      if (transport || (reconnecting && !reconnectAmbiguous)) return;
       els.updateError.textContent = "";
       els.updateMessage.textContent = "Reconnecting to the device...";
       const link = lastLink;
       let done = false;
-      if (link) {
-        try {
-          const found = await findGranted(link);
-          if (found.candidate) done = await openGranted(link, found.candidate);
-        } catch (e) { logLine("sys", "Reconnect failed: " + e.message); }
-      }
-      if (!done && !transport && !(link && link.kind === "sim")) {
-        // Nothing already permitted is available: fall back to the browser's picker.
-        try {
-          const t = (link && link.kind === "serial") ? await connectSerial() : await connectUsb();
-          if (t) { onConnected(t); done = true; }
-        } catch (e) { logLine("err", "Reconnect failed: " + e.message); }
-      }
+      // manualConnect holds the automatic loop off until this attempt settles.
+      await manualConnect(async () => {
+        if (link) {
+          try {
+            const found = await findGranted(link);
+            if (found.candidate) done = await openGranted(link, found.candidate);
+          } catch (e) { logLine("sys", "Reconnect failed: " + e.message); }
+        }
+        if (!done && !transport && !(link && link.kind === "sim")) {
+          // Nothing already permitted is available: fall back to the browser's picker.
+          try {
+            const t = (link && link.kind === "serial") ? await connectSerial() : await connectUsb();
+            if (t) { onConnected(t); done = true; }
+          } catch (e) { logLine("err", "Reconnect failed: " + e.message); }
+        }
+        return done || !!transport;
+      });
       if (!done && !transport) {
         els.updateMessage.textContent = "";
         els.updateError.textContent = "Still not connected. Check the cable, then press Reconnect, or use the Connect buttons at the top.";
@@ -3677,8 +4137,9 @@
     // Called after every successful connect once FW_INFO has been tried.
     let reporting = false;
     async function onUpdateReconnected(infoOk) {
-      if (!upd || upd.phase !== "rebooting" || reporting) return;
+      if (!upd || !resumesOnReconnect(upd.phase) || reporting) return;
       reporting = true;
+      els.updateDetail.textContent = ""; // the device is back: drop the reconnect countdown
       let runChecks = false;
       try {
         let ok = infoOk;
@@ -3687,7 +4148,7 @@
           ok = await refreshFwInfo();
         }
         els.fwReconnectBtn.hidden = true;
-        const after = ok ? { version: fwInfo.version, sha: fwInfo.sha, pending: fwInfo.pending } : null;
+        const after = ok ? afterInfo() : null;
         // An image built without USB updates accepts itself at boot and answers
         // GET_FW_INFO with function_not_supported: installed, nothing to confirm.
         const o = (!ok && transport && !usbUpdates) ? decideOutcomeNoUpdates(discoveryFw)
@@ -3709,11 +4170,14 @@
             upd.phase = "done";
             finishStatus("err", o.message);
             break;
+          case "not_restarted":
+            showNotRestarted(o.message);
+            break;
           default:
             upd.phase = "done";
             finishStatus(o.state === "no_device" ? "err" : "warn", o.message);
         }
-      } finally { reporting = false; }
+      } finally { reporting = false; updateUI(); }
       // After the finally so a drop while checking can be handled by a reconnect.
       if (runChecks) await confirmFlashedImage();
     }
@@ -3731,7 +4195,7 @@
       const gather = {
         firmware: async () => {
           const ok = await refreshFwInfo();
-          return { expected: upd.expected, after: ok ? { version: fwInfo.version, sha: fwInfo.sha, pending: fwInfo.pending } : null };
+          return { expected: upd.expected, after: ok ? afterInfo() : null };
         },
         protocol: async () => {
           try { await transact(TYPE.GET_STATE, null, [TYPE.STATE], CMD_TIMEOUT_MS, 1); return { error: "" }; }
@@ -3806,35 +4270,47 @@
       upd.phase = "done";
       finishStatus("ok", "Update confirmed. The device is running " + fwInfo.version + ".");
     }
-    // The link dropped while the checks ran, before MARK_VALID was sent or
-    // confirmed. The device usually rebooted (a reset while pending goes back
-    // to the previous firmware); otherwise it will go back at its deadline.
-    // Reconnect and decide again from what it reports.
+    // The link dropped (cable, reset, rollback reboot) while the device was up
+    // but the update was not settled: during the checks, while waiting for the
+    // rollback, or with the new image installed but not started. Reconnect
+    // automatically and decide again from what the device reports
+    // (OmegaProtocol.afterLinkLoss).
     function onUpdateTransportGone() {
       if (confirmResolve) closeConfirm(false);
-      if (upd && (upd.phase === "confirming" || upd.phase === "waiting_rollback") && !reconnecting) {
-        const rolling = upd.phase === "waiting_rollback";
-        upd.phase = "rebooting";
-        logLine("sys", rolling
-          ? "The connection dropped after the new firmware was refused; the device is probably going back to the previous firmware. Reconnecting."
-          : "The connection dropped while the new firmware was being checked; reconnecting.");
-        setStep("reconnect", "The connection dropped. Reconnecting to find out which firmware the device is running...");
-        setProgress(null, "Reconnecting");
-        autoReconnect(RECONNECT_TIMEOUT_MS).then((ok) => {
-          if (!ok && upd && upd.phase === "rebooting") {
-            hideProgress();
-            els.updateStatus.className = "update-status warn";
-            els.updateError.textContent = reconnectAmbiguous
-              ? AMBIGUOUS_MSG
-              : "The device restarted but this page could not reconnect to it by itself. Press Reconnect.";
-            els.fwReconnectBtn.hidden = false;
-          }
-        });
-      }
+      if (!upd || reconnecting) return;
+      const next = afterLinkLoss(upd.phase, false);
+      if (!next) return;
+      upd.phase = next.phase;
+      logLine("sys", next.message);
+      showStatusBox();
+      els.updateStatus.className = "update-status";
+      els.fwRestartNowBtn.hidden = true;
+      setStep("reconnect", next.message);
+      setProgress(null, "Reconnecting");
+      autoReconnect(reconnectDeadline(linkDroppedAt || Date.now())).then((ok) => {
+        if (!ok && upd && upd.phase === "rebooting") showReconnectGaveUp();
+      });
+    }
+    // Disconnect was used while the update was not settled (the button is
+    // locked then, so this is a fallback). Nothing reconnects by itself; the
+    // next connect picks the update up again (resumesOnReconnect).
+    function onUpdateManualDisconnect() {
+      if (!upd) return;
+      const next = afterLinkLoss(upd.phase, true);
+      if (!next) return;
+      upd.phase = next.phase;
+      logLine("sys", next.message);
+      showStatusBox();
+      finishStatus("warn", next.message);
+      els.fwRestartNowBtn.hidden = true;
+      els.fwReconnectBtn.hidden = false;
+      updateUI();
     }
 
     els.restartBtn.addEventListener("click", async () => {
       if (!transport || busy) return;
+      // With the new image installed but not started, this is "Restart now".
+      if (upd && upd.phase === "switched_no_restart") { restartIntoNewImage(); return; }
       if (!window.confirm("Restart the device now? Unsaved live changes (offsets, deadzones, " +
         "nudge tuning) will be lost. You'll need to reconnect."))
         return;
@@ -3918,7 +4394,7 @@
       if (simReviving) return;
       simReviving = true;
       setStatus("busy", "Restarting...");
-      const deadline = Date.now() + RECONNECT_TIMEOUT_MS;
+      const deadline = Date.now() + RECONNECT_WINDOW_MS;
       try {
         while (Date.now() < deadline) {
           await sleepMs(500);
