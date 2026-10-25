@@ -147,7 +147,7 @@ versus Web Serial) is refused as busy.
 ### Check for latest firmware
 
 The "Check for latest firmware" button reads
-`https://atdev-inc.github.io/omega-stick/firmware/latest.json` (the copy of the
+`https://atdev-inc.github.io/omega-stick/firmware/latest.json` (which appears with the first full release; the copy of the
 console on the Pages site reads its own sibling `firmware/latest.json`; there is
 no way to point it elsewhere from the page address), says whether an
 update is available, and links the release notes. "Download and install" fetches
@@ -226,8 +226,9 @@ Pages is already set up for this repository (Settings > Pages > Source:
 GitHub Actions, and the `github-pages` environment allows `main` and `v*`
 tags). A fork needs the same two settings before its first release can
 deploy. The site goes live with the first full release whose tag contains the
-Pages workflow; until then the flash page, the hosted console and the feed
-are not there, and the console's latest-release check shows an error.
+Pages workflow; until then (2026-10-25: both URLs return 404) the flash page,
+the hosted console and the feed are not there, and the console's
+latest-release check reports the feed as unreachable.
 
 ## First flash and recovery
 
@@ -258,7 +259,8 @@ settings.** Normal updates go through the console and keep them.
    prompts nobody can see, so open the console over Web Serial afterwards and
    choose "Re-run calibration", following its prompts.
 
-These download-mode steps are the standard ESP32-S3 procedure. They still need
+The boot-window path is verified on the Omega Stick (esptool, no BOOT button).
+The `BOOT` and `RESET` steps are the standard ESP32-S3 procedure and still need
 confirming on the Omega Stick hardware.
 
 `idf.py -p PORT flash` remains the developer path.
@@ -457,17 +459,20 @@ update that needs a serial flash (a partition table change) at the top.
 - **First flash is a separate path.** It uses the [flash
   page](#first-flash-and-recovery) or `idf.py`, and erases calibration and
   settings.
-- **Download mode is unverified on this hardware.** The flash page's BOOT/RESET
-  steps are the standard ESP32-S3 procedure and still need confirming on the
-  Omega Stick.
+- **The BOOT-button download-mode steps are unverified on this hardware.** The
+  boot-window path is verified: on 2026-10-18 esptool flashed the board over its
+  USB Serial/JTAG port with no BOOT button. The flash page's BOOT/RESET steps
+  are the standard ESP32-S3 procedure and still need confirming on the Omega
+  Stick.
 - **Images are checked, not signed.** The console verifies the size and SHA-256
   of a downloaded image against the feed, which catches a corrupt download but
   not a compromised site, because the feed and the image come from the same
   place. Secure boot and image signing are deferred (see D22 in
   [decisions.md](decisions.md#d22-update-safety-rules-and-a-register-of-deferred-security-controls)).
-- **The update flow is not hardware-tested.** Neutral output, the image checks,
-  automatic reconnect, the console's confirm step and the latest-release check
-  are covered by host and Node tests only. The console is now the only thing
-  standing between an update and a rollback, so the first hardware update test
-  should exercise this flow end to end, including pulling the cable during
-  "Confirming".
+- **Hardware-tested on 2026-10-25, with the console from #56.** Update,
+  automatic reconnect, confirm, deadline rollback, bootloader rollback and
+  revert all ran on a stick (XAC mode, WebUSB). The console before #56 never
+  reconnected after an update (it passed its own record to the device open
+  call), so every update with it rolled back at the deadline. Still untested on
+  hardware: the latest-release check (no feed exists until the first full
+  release) and pulling the cable during "Confirming".

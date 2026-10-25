@@ -18,7 +18,9 @@ Last reviewed: 2026-10-18.
   - [ ] Mouse mode: slow movements, held positions, rapid direction changes,
         sensor unplugged mid-session (expect a centered stick, then recovery).
   - [ ] Console over WebUSB and over Web Serial: state, diagnostics,
-        recalibration, deadzone overrides, mode switch and reconnect. A sweep
+        recalibration, deadzone overrides, mode switch and reconnect. (WebUSB
+        connect and the protocol are verified in XAC mode, 2026-10-25; the
+        rest, and mouse mode, are not.) A sweep
         that covers only a small arc must be refused and reported; a full slow
         circle must still be accepted.
   - [ ] Sensor driver after DEF-1 to DEF-3: the boot log names the detected
@@ -32,8 +34,14 @@ Last reviewed: 2026-10-18.
         over an existing install.
   - [ ] Gamepad mode plugged straight into a Windows PC, no XAC: it appears in
         the Game Controllers panel (`joy.cpl`), X/Y track the stick, and it
-        rests at center.
+        rests at center. It enumerates (checked 2026-10-25: "HID-compliant game
+        controller", the vendor interface and the CDC port), but reports
+        reaching an application are unconfirmed: the CDC port showed a
+        continuous stream of "HID send failed: No more processes" from the XAC
+        loop, which may mean the interrupt IN reports were refused. Open
+        observation, not a conclusion.
   - [ ] First-flash page: the BOOT and RESET steps are unverified on the board.
+        The boot-window route (esptool, no BOOT button) is verified.
   - [ ] Loop timing after the stack protector was enabled.
 - [ ] Tag `v0.1.0` on a clean tree, confirm the Pages site, the release feed and
       that the first-flash page installs the tagged build. Closes #5.
@@ -47,7 +55,10 @@ Last reviewed: 2026-10-18.
       enumerates until a full circle is swept at boot, with prompts nobody can
       see. Decide between starting USB with output held neutral so the console
       can recalibrate, retrying the sweep, or keeping the halt (raised on
-      #44).
+      #44). Evidence from the board: a blind first-boot calibration (stick
+      untouched) gave a usable range smaller than its noise radius, so in
+      mouse mode the cursor jitters continuously and no deadzone override hides
+      it (the center override caps at 0.5).
 - [ ] `OmegaStore` saves in place (truncate, write), with no temporary file
       and rename, so a power loss mid-save can lose the file. Make the save
       atomic (noticed in #49).
