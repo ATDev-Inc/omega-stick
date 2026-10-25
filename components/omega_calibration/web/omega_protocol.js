@@ -1125,6 +1125,21 @@
   // serial?, isSaved } where isSaved is true for the exact port or device
   // object that was connected before. Never guesses between several sticks.
   // reason: exact | only-match | ambiguous | none.
+  // Arbitrates between the automatic reconnect loop and a connect the person
+  // started (the Reconnect button's picker, or a Connect button). The manual
+  // attempt owns connection setup while it runs: the device it is opening is
+  // already marked opened but is not the transport yet, so a loop that kept
+  // scanning would see the other stick as the only free match and open it too.
+  // s: { transportPresent, manualInProgress, manualSucceeded (a manual connect
+  // succeeded since the loop started) }. Returns "stop" (end the loop for good),
+  // "wait" (open nothing; check again on the next wake) or "try" (the loop may
+  // look for a device and open it). The loop asks again after every await.
+  function autoReconnectStep(s) {
+    if (s.transportPresent || s.manualSucceeded) return "stop";
+    if (s.manualInProgress) return "wait";
+    return "try";
+  }
+
   function pickReconnectCandidate(link, candidates) {
     const free = (candidates || []).filter((c) => c && !c.opened && c.kind === link.kind);
     const saved = free.find((c) => c.isSaved);
@@ -1144,8 +1159,7 @@
   // validate uploaded scripts, and accumulate HID output for the output view.
   const SIM_PATTERNS = ["rest", "circle", "calibrate", "nudge_right", "nudge_left", "nudge_up", "nudge_down", "wander"];
   const SIM_FAULTS = ["ok", "no_response", "stuck_counter", "weak_magnet"];
-  const SIM_NEXT_IMAGE = ["ok", "fail_self_test", "crash_loop", "slow_sensor_start", "slow_sensor_fail",
-    "crash_when_confirmed"];
+  const SIM_NEXT_IMAGE = ["ok", "fail_self_test", "crash_loop", "slow_sensor_start", "slow_sensor_fail"];
   const SIM_SOURCE_KINDS = ["manual", "pattern", "script"];
   const SIM_REPLIES = ["ok", "busy", "invalid", "unsupported", "error"];
   const SIM_ACTIONS = ["recalibrate", "save", "restart", "set_mode", "set_deadzone", "flash", "revert", "mark_valid", "fw_info",
@@ -1442,7 +1456,7 @@
   const OmegaProtocol = {
     SIM_PATTERNS, SIM_FAULTS, SIM_NEXT_IMAGE,
     encodeSimMessage, parseSimMessage, validateSimScript, createHidAccumulator,
-    pickReconnectCandidate,
+    pickReconnectCandidate, autoReconnectStep,
     FEED_URL, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
     OTA_SLOT_SIZE, CHIP_ID_ESP32S3, DEFAULT_PROJECT, KIND_LABEL,
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,

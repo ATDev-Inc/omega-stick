@@ -479,6 +479,51 @@ test("reconnect: USB without a known serial and several matches is ambiguous", (
 
 // ---- the sensor check over time (D22: "not observed" is not "healthy") ------
 
+test("autoReconnectStep: a manual connect owns connection setup; a success ends the loop for good", () => {
+  const s = (o) => P.autoReconnectStep(Object.assign({ transportPresent: false, manualInProgress: false, manualSucceeded: false }, o));
+  assert.equal(s({}), "try");
+  assert.equal(s({ manualInProgress: true }), "wait");
+  assert.equal(s({ transportPresent: true }), "stop");
+  assert.equal(s({ transportPresent: true, manualInProgress: true }), "stop");
+  assert.equal(s({ manualSucceeded: true }), "stop"); // even if that link has dropped again
+});
+
+// Two granted sticks that share the default USB serial. The person picks A
+// while the automatic loop is scanning; connectUsb(A) is still awaiting
+// claimInterface() (A is opened, not yet the transport) across a loop tick.
+test("reconnect race: the automatic loop never opens stick B while a manual open of A is pending", () => {
+  const link = { kind: "usb", vid: 0x1209, pid: 0x0d32, serial: "123456" };
+  const A = { ref: "A", kind: "usb", opened: false, vid: 0x1209, pid: 0x0d32, serial: "123456", isSaved: false };
+  const B = Object.assign({}, A, { ref: "B" });
+  const world = { transport: null, manualInProgress: false, manualSucceeded: false, opened: [] };
+  // One wake of the automatic loop, as the page runs it: ask, list, ask again, open.
+  const autoTick = () => {
+    const ask = () => P.autoReconnectStep({ transportPresent: !!world.transport,
+      manualInProgress: world.manualInProgress, manualSucceeded: world.manualSucceeded });
+    if (ask() !== "try") return ask();
+    const found = P.pickReconnectCandidate(link, [A, B]);
+    if (ask() !== "try") return ask();
+    if (found.candidate) { found.candidate.opened = true; world.opened.push(found.candidate.ref); }
+    return found.reason;
+  };
+  assert.equal(autoTick(), "ambiguous"); // both free: nothing opened, the picker is offered
+  world.manualInProgress = true; A.opened = true; // picker chose A, open pending
+  assert.equal(autoTick(), "wait");
+  assert.equal(autoTick(), "wait");
+  world.transport = "A"; world.manualInProgress = false; world.manualSucceeded = true;
+  assert.equal(autoTick(), "stop");
+  world.transport = null; // A drops again later: the loop still must not reach for B
+  assert.equal(autoTick(), "stop");
+  assert.deepEqual(world.opened, []);
+  // Without the arbitration the same sequence would have opened B.
+  assert.equal(P.pickReconnectCandidate(link, [A, B]).candidate.ref, "B");
+});
+
+test("reconnect race: a cancelled manual connect lets the loop resume", () => {
+  assert.equal(P.autoReconnectStep({ transportPresent: false, manualInProgress: true, manualSucceeded: false }), "wait");
+  assert.equal(P.autoReconnectStep({ transportPresent: false, manualInProgress: false, manualSucceeded: false }), "try");
+});
+
 function fakeClock() {
   const c = { t: 0, sleeps: 0 };
   c.now = () => c.t;
