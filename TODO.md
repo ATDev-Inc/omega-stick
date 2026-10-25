@@ -5,7 +5,7 @@ Working task list for the maintainers. The milestone view is
 GitHub issues. Tick items here in the pull request that does them, and move
 anything that stops being true.
 
-Last reviewed: 2026-10-18.
+Last reviewed: 2026-10-25.
 
 ## Now: get to v0.1.0
 
@@ -19,8 +19,8 @@ Last reviewed: 2026-10-18.
         sensor unplugged mid-session (expect a centered stick, then recovery).
   - [ ] Console over WebUSB and over Web Serial: state, diagnostics,
         recalibration, deadzone overrides, mode switch and reconnect. (WebUSB
-        connect and the protocol are verified in XAC mode, 2026-10-25; the
-        rest, and mouse mode, are not.) A sweep
+        connect, the protocol, a recalibration and the manual center offset are
+        verified in XAC mode, 2026-10-25; the rest, and mouse mode, are not.) A sweep
         that covers only a small arc must be refused and reported; a full slow
         circle must still be accepted.
   - [ ] Sensor driver after DEF-1 to DEF-3: the boot log names the detected
@@ -58,7 +58,13 @@ Last reviewed: 2026-10-18.
       #44). Evidence from the board: a blind first-boot calibration (stick
       untouched) gave a usable range smaller than its noise radius, so in
       mouse mode the cursor jitters continuously and no deadzone override hides
-      it (the center override caps at 0.5).
+      it (the center override caps at 0.5). The same symptom follows any later
+      movement: with a noise-sized range an axis reads pinned near 1.0, and a
+      held nudge never releases, so the right button stays down. A real
+      calibration with the stick swept to its edges fixes it (done on the
+      board 2026-10-25 from the console, with spoken cues). A slow drift at
+      rest just outside the auto deadzone is what the manual center offset is
+      for (Y +0.3 raw fixed it on that board).
 - [ ] `OmegaStore` saves in place (truncate, write), with no temporary file
       and rename, so a power loss mid-save can lose the file. Make the save
       atomic (noticed in #49).
@@ -85,7 +91,7 @@ Check `build-ota/sdkconfig` reads `CONFIG_OMEGA_STICK_OTA=y`. See
       the image stays confirmed across a power cycle. Done 2026-10-25 on the
       Omega Stick (XAC mode, WebUSB, 0.1.0+c846376 to 0.1.0+b44eca1): upload
       about 12 s, automatic reconnect about 16 s after the restart, confirmed
-      about 20 s after it. Needs the console from #56; the console before it
+      about 20 s after it. The console in this tree (since #56) reconnects; the console before it
       never reconnected after an update (its reconnect passed its own record
       instead of the USB device), so the first attempt rolled back at the
       deadline. Revert with re-confirm also done.
