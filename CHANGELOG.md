@@ -112,7 +112,7 @@ in `version.txt`.
   release (this reverses the "off" choice in D25). The first-flash page remains
   the way to install the first OTA-capable firmware and to recover a stick. A
   build can still opt out with the `sdkconfig.no_ota` fragment, which CI builds.
-  ([#NN](https://github.com/ATDev-Inc/omega-stick/pull/NN))
+  ([#62](https://github.com/ATDev-Inc/omega-stick/pull/62))
 - **A stick with no usable calibration stays still until it is calibrated
   from the console.** After a first flash, or with a saved calibration whose
   range is too small for the stick's resting noise (as a first-boot sweep of
