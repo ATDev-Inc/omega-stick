@@ -120,7 +120,8 @@ boot flash window (`OMEGA_STICK_BOOT_FLASH_WINDOW_S`) can hold USB back for up
 to a minute, Windows can be slow to enumerate the device again, and the
 firmware goes back to the previous image 120 seconds after a pending boot. It
 takes the exact port it was using first, then a single granted device with the
-same USB id (matching the USB serial number when it has one). It never guesses
+same USB id and, when it knows it, the same USB serial number (every stick reports its
+own, the factory MAC as 12 lowercase hex digits). It never guesses
 between several sticks: if more than one could be the one it just flashed, it
 offers the Reconnect button at once so you choose, and keeps looking meanwhile.
 Once reconnected it
@@ -550,9 +551,9 @@ update that needs a serial flash (a partition table change) at the top.
   not a compromised site, because the feed and the image come from the same
   place. Secure boot and image signing are deferred (see D22 in
   [decisions.md](decisions.md#d22-update-safety-rules-and-a-register-of-deferred-security-controls)).
-- **Hardware-tested on 2026-10-25, with the console from #56.** Update,
+- **Hardware-tested on 2026-10-25.** Update,
   automatic reconnect, confirm, deadline rollback, bootloader rollback and
-  revert all ran on a stick (XAC mode, WebUSB). The console before #56 never
+  revert all ran on a stick (XAC mode, WebUSB). Since #56 the console reconnects; before it, it never
   reconnected after an update (it passed its own record to the device open
   call), so every update with it rolled back at the deadline. Still untested on
   hardware: the latest-release check (no feed exists until the first full
