@@ -70,14 +70,25 @@ a value an existing sdkconfig already has):
 Check `build-ota/sdkconfig` reads `CONFIG_OMEGA_STICK_OTA=y`. See
 [docs/firmware-updates.md](docs/firmware-updates.md).
 
-- [ ] Update flow, happy path: upload, the console's checks, MARK_VALID, and
-      the image stays confirmed across a power cycle.
-- [ ] Bootloader rollback: unplug and replug before MARK_VALID. The board
-      should come back on the previous image.
-- [ ] Deadline rollback: keep the board powered and withhold MARK_VALID (close
+- [x] Update flow, happy path: upload, the console's checks, MARK_VALID, and
+      the image stays confirmed across a power cycle. Done 2026-10-25 on the
+      Omega Stick (XAC mode, WebUSB, 0.1.0+c846376 to 0.1.0+b44eca1): upload
+      about 12 s, automatic reconnect about 16 s after the restart, confirmed
+      about 20 s after it. Needs the console from #56; the console before it
+      never reconnected after an update (its reconnect passed its own record
+      instead of the USB device), so the first attempt rolled back at the
+      deadline. Revert with re-confirm also done.
+- [x] Bootloader rollback: unplug and replug before MARK_VALID. The board
+      should come back on the previous image. Done 2026-10-25: unplugged 32 s
+      into an unconfirmed boot (via REVERT with no console), came back on the
+      previous image.
+- [x] Deadline rollback: keep the board powered and withhold MARK_VALID (close
       the console before it confirms). The board should reboot into the
       previous image at about 120 s. An unplug does not test this; it takes the
-      bootloader path above.
+      bootloader path above. Done 2026-10-25: the reset log shows a software
+      reset back to the previous slot, and the unconfirmed slot reads
+      `invalid` afterwards. This was a board flashed over serial with blank
+      otadata, so that case rolls back at runtime too.
 - [ ] Update from a v0.1.0 board: install the first OTA-on release from the
       first-flash page, then update over USB from there.
 - [ ] Turn `OMEGA_STICK_OTA` on by default and check the "Check for latest
