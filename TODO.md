@@ -114,6 +114,13 @@ Check `build-ota/sdkconfig` reads `CONFIG_OMEGA_STICK_OTA=y`. See
 - [ ] Migration code for the settings schema (PER-3) when the first schema bump
       happens. The `schema=1` key is already written; a bump is a MAJOR bump.
 - [ ] On-device calibration gesture (CAL-2).
+- [ ] Console-driven capture calibration: the page shows the live reading and
+      the user presses "set center" and "set <edge>" while holding the stick
+      there, at their own pace, instead of the timed 2 s sweep with invisible
+      prompts. Fields stay editable afterwards and the usable-range rule from
+      D26 still applies. Needs one new protocol message for a live reading.
+      Proposed by Marshall on 2026-10-25 after a stick with a noise-sized
+      range pinned X at 0.99 and held the right button.
 - [ ] Wire the unused TMAG5273 registers that the driver already models:
       `INT_CONFIG_1` (data-ready interrupt, SEN-4), `MAG_OFFSET_CONFIG_1/2`,
       `MAG_GAIN_CONFIG`.
