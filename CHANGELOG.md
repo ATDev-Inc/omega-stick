@@ -147,6 +147,7 @@ in `version.txt`.
 
 ### Fixed
 
+- **Automatic reconnect after an update now works over WebUSB and Web Serial.** The console handed its own candidate record to the USB and serial open calls instead of the device, so every reconnect attempt failed with "device.open is not a function" and a good update rolled back at the deadline. Found on the first hardware update. ([#56](https://github.com/ATDev-Inc/omega-stick/pull/56))
 - **The console keeps a firmware update locked until it is settled.** Connect,
   Disconnect, Flash, Revert, Restart and the input mode switch stay off from
   the upload until the new firmware is confirmed or the stick has gone back,

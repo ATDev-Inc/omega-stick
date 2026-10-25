@@ -1119,7 +1119,8 @@
   // validate uploaded scripts, and accumulate HID output for the output view.
   const SIM_PATTERNS = ["rest", "circle", "calibrate", "nudge_right", "nudge_left", "nudge_up", "nudge_down", "wander"];
   const SIM_FAULTS = ["ok", "no_response", "stuck_counter", "weak_magnet"];
-  const SIM_NEXT_IMAGE = ["ok", "fail_self_test", "crash_loop", "slow_sensor_start", "slow_sensor_fail"];
+  const SIM_NEXT_IMAGE = ["ok", "fail_self_test", "crash_loop", "slow_sensor_start", "slow_sensor_fail",
+    "crash_when_confirmed"];
   const SIM_SOURCE_KINDS = ["manual", "pattern", "script"];
   const SIM_REPLIES = ["ok", "busy", "invalid", "unsupported", "error"];
   const SIM_ACTIONS = ["recalibrate", "save", "restart", "set_mode", "set_deadzone", "flash", "revert", "mark_valid", "fw_info"];
