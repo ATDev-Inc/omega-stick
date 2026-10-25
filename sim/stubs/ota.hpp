@@ -4,6 +4,10 @@
 // FirmwareHealthCheck use, backed by the two-slot fake in sim_flash.hpp instead
 // of the ESP-IDF OTA APIs.
 //
+//  - begin() is refused while the running image is pending verification, as
+//    esp_ota_begin() refuses it, and otherwise erases the slot that is not
+//    running; write() leaves it "partial" once the app descriptor has arrived,
+//    so an aborted or expired upload cannot be reverted to.
 //  - finish() validates the uploaded image the way esp_ota_end() does (image
 //    magic and app descriptor), keeps its descriptor in the slot that is not
 //    running and makes that slot the boot slot.
@@ -51,9 +55,17 @@ public:
       ec = std::make_error_code(std::errc::device_or_resource_busy);
       return false;
     }
+    if (sim::flash().pending_verify()) {
+      // esp_ota_begin() refuses with ESP_ERR_OTA_ROLLBACK_INVALID_STATE, which
+      // the real espp::Ota reports as io_error.
+      ec = std::make_error_code(std::errc::io_error);
+      return false;
+    }
+    sim::flash().begin_upload();
     active_ = true;
     image_size_ = image_size;
     image_.clear();
+    desc_seen_ = false;
     return true;
   }
 
@@ -63,6 +75,12 @@ public:
       return false;
     }
     image_.insert(image_.end(), data.begin(), data.end());
+    esp_app_desc_t desc{};
+    if (!desc_seen_ && sim::parse_image_desc(image_, desc)) {
+      // The descriptor is now in the slot: it reads as a (partial) image.
+      desc_seen_ = true;
+      sim::flash().upload_descriptor(desc);
+    }
     return true;
   }
 
@@ -118,6 +136,7 @@ private:
   std::atomic<bool> active_{false};
   size_t image_size_{0};
   std::vector<uint8_t> image_;
+  bool desc_seen_{false};
 };
 
 } // namespace espp

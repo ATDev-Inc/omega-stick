@@ -114,26 +114,60 @@ build are allowed, because recovery must not depend on the running release
 A status area walks through Checking file, Erasing (up to a minute), Writing
 NN%, Verifying, Restarting, Reconnecting, Confirming, and finally "Update
 confirmed" or a note that the new image was not confirmed. After Flash or Revert the page reconnects by
-itself, waiting about 40 seconds before it offers a Reconnect button. It
+itself. It keeps looking for the stick for about 110 seconds after the link
+dropped, showing the time left, and only then offers a Reconnect button: the
+boot flash window (`OMEGA_STICK_BOOT_FLASH_WINDOW_S`) can hold USB back for up
+to a minute, Windows can be slow to enumerate the device again, and the
+firmware goes back to the previous image 120 seconds after a pending boot. It
 takes the exact port it was using first, then a single granted device with the
 same USB id (matching the USB serial number when it has one). It never guesses
 between several sticks: if more than one could be the one it just flashed, it
-waits and offers the Reconnect button so you choose. Once reconnected it
+offers the Reconnect button at once so you choose, and keeps looking meanwhile.
+Once reconnected it
 runs the checks listed under [Rollback and the health
 check](#rollback-and-the-health-check) and confirms the image itself (the
 Confirming step). It reports whether the new build is running, was confirmed,
 or failed a named check, in which case the stick goes back to the old build by
 itself. Errors are in plain language; the raw detail stays in the log.
 
+While an update is in flight, from the upload until the new image is confirmed
+or the stick has gone back, the page locks the Connect and Disconnect buttons,
+Flash, Download and install, Revert, Restart and the input mode switch, because
+a restart or a second update would make the pending image roll back. It also
+asks before the page is closed or reloaded. If the link is lost anyway while it
+checks the image or waits for the rollback (a pulled cable, a reset), it
+reconnects by itself as above. If Disconnect is used, it says that the stick
+goes back to the previous firmware by itself unless the page confirms the image
+within about two minutes of the restart, and the next connect picks the update
+up again.
+
+Flash is also off whenever the running image is pending verification, with the
+reason shown under it: the firmware refuses a new upload (OTA_BEGIN) until the
+running image is confirmed. "Mark running image valid" keeps it; otherwise wait
+for the stick to go back. If the firmware refuses OTA_BEGIN for this reason, the
+page shows the firmware's own message.
+
+If the reply to OTA_FINISH or REVERT does not arrive, the page does not assume
+nothing happened, because the firmware switches the boot slot before it replies
+and only the restart is lost with the reply. It reads FW_INFO again. If the boot
+partition now differs from the running one, the page says the new image is
+installed but the stick did not restart, and offers **Restart now**; the usual
+reconnect and confirm follow. If the boot partition is unchanged, nothing was
+installed and the update can be retried. If the link dropped with the reply,
+the page reconnects and reports what the stick runs.
+
 ### Neutral output during an update
 
-From an accepted OTA_BEGIN until the reboot, and before every console-initiated
-reboot (OTA_FINISH, REVERT, RESTART, an input-mode switch), the device sends
-neutral reports: stick centered, no motion, buttons released. A user driving a
-pointer never has the device vanish mid-motion. If the upload ends without a
-reboot (abort, the 30 s idle expiry, a failed write or finish, a lost
-transport), normal output resumes. This is D22 rule 1
-(`Config::output_hold` in `calibration_service.hpp`).
+From OTA_BEGIN until the reboot, and before every console-initiated reboot
+(OTA_FINISH, REVERT, RESTART, an input-mode switch), the device sends neutral
+reports: stick centered, no motion, buttons released. A user driving a pointer
+never has the device vanish mid-motion. The hold goes up before OTA_BEGIN erases
+the inactive slot, since the erase takes seconds and stalls the polling loop
+between flash operations. If the upload ends without a reboot (abort, the 30 s
+idle expiry, a failed begin, write or finish, a lost transport), normal output
+resumes. This is D22 rule 1 (`Config::output_hold` in `calibration_service.hpp`).
+The deadline rollback (see [Rollback and the health check](#rollback-and-the-health-check))
+holds the output neutral for 100 ms before it reboots, for the same reason.
 
 ### Interrupted uploads
 
@@ -144,15 +178,24 @@ replaces the stale upload, and the firmware drops any upload that has had no
 traffic for 30 seconds. Until then, a Flash attempt over the other link (WebUSB
 versus Web Serial) is refused as busy.
 
+An interrupted upload can leave the other slot holding an image that cannot be
+verified. FW_INFO then reports the previous slot's state as `partial`. The
+console treats it like `empty`: Revert stays off, and a note under it says an
+interrupted upload left a partial image, so a new upload is the way forward.
+
 ### Check for latest firmware
 
 The "Check for latest firmware" button reads
-`https://atdev-inc.github.io/omega-stick/firmware/latest.json` (the copy of the
+`https://atdev-inc.github.io/omega-stick/firmware/latest.json` (which appears with the first full release; the copy of the
 console on the Pages site reads its own sibling `firmware/latest.json`; there is
 no way to point it elsewhere from the page address), says whether an
 update is available, and links the release notes. "Download and install" fetches
 the app image, verifies its size and SHA-256 against the feed, then runs the same
-checks and confirm panel as a picked file. An optional check runs once after
+checks and confirm panel as a picked file. The download is cancelled if no data
+arrives for 20 seconds. A failed check or download says whether the computer is
+offline, the server did not answer in time, or the request was blocked (a
+network, firewall or browser security rule; browsers report this the same way
+as a network failure). An optional check runs once after
 connecting ("Check for new firmware when I connect"; on by default, remembered
 in the browser).
 
@@ -164,7 +207,7 @@ These live in the calibration module (see the protocol comment at the top of
 | Type | Name | Payload |
 | --- | --- | --- |
 | `0x57` | RESTART | none. Replies OK, then reboots about 750 ms later |
-| `0x58` | OTA_BEGIN | u32 image size |
+| `0x58` | OTA_BEGIN | u32 image size. ERROR (operation_not_permitted) while the running image is still pending verify: the bootloader would refuse the upload, so confirm the image (MARK_VALID) or let it roll back first |
 | `0x59` | OTA_DATA | u32 offset + raw image bytes. The offset must equal the bytes written so far. Replies with the total written |
 | `0x5A` | OTA_FINISH | none. Validates and activates the image, replies OK, then reboots |
 | `0x5B` | OTA_ABORT | none. Aborts an upload begun by this service |
@@ -173,10 +216,23 @@ These live in the calibration module (see the protocol comment at the top of
 | `0x5E` | REVERT | none. Makes the other OTA slot (the previous firmware) the boot partition, replies OK, then reboots about 750 ms later. ERROR if an upload is in progress, the other slot has no app image, or the bootloader selection could not be written |
 | `0xD2` | FW_INFO (reply) | u8 pending_verify, u8 session_active, then length-prefixed strings: project, version, build date, build time, ESP-IDF version, running partition, 8-char ELF SHA, boot partition, previous slot label, previous version, previous build date, previous build time, previous state |
 
-The previous state is one of `valid`, `new`, `pending_verify`, `invalid`, `aborted`,
-`undefined`, or `empty` when the other slot holds no readable image (the previous
-version, date and time strings are then empty). Older firmware sends fewer strings,
-so hosts treat missing ones as empty.
+The previous state is one of:
+
+- `valid`, `new`, `pending_verify`, `invalid`, `aborted`: the slot's otadata state.
+- `undefined`: a complete image with no otadata entry, such as the image a serial
+  flash left in `ota_0`.
+- `partial`: the slot starts with an app descriptor, so the previous version, date
+  and time are still reported, but the image does not verify. This is what an
+  upload that was aborted or expired leaves behind (OTA_BEGIN erases the slot and
+  drops its otadata entry; the descriptor is in the first bytes written), and what
+  the slot holds while an upload runs. REVERT to it would fail, so hosts treat it
+  like `empty`. Firmware before this value reported such a slot as `undefined`.
+- `empty`: the other slot holds no readable image (the previous version, date and
+  time strings are then empty).
+
+Telling `partial` apart reads the whole other slot (`esp_image_verify()`), a
+fraction of a second per GET_FW_INFO. Older firmware sends fewer strings, so hosts
+treat missing ones as empty.
 
 A build without an OTA engine wired in replies ERROR to the OTA messages.
 
@@ -226,8 +282,9 @@ Pages is already set up for this repository (Settings > Pages > Source:
 GitHub Actions, and the `github-pages` environment allows `main` and `v*`
 tags). A fork needs the same two settings before its first release can
 deploy. The site goes live with the first full release whose tag contains the
-Pages workflow; until then the flash page, the hosted console and the feed
-are not there, and the console's latest-release check shows an error.
+Pages workflow; until then (2026-10-25: both URLs return 404) the flash page,
+the hosted console and the feed are not there, and the console's
+latest-release check reports the feed as unreachable.
 
 ## First flash and recovery
 
@@ -258,7 +315,8 @@ settings.** Normal updates go through the console and keep them.
    prompts nobody can see, so open the console over Web Serial afterwards and
    choose "Re-run calibration", following its prompts.
 
-These download-mode steps are the standard ESP32-S3 procedure. They still need
+The boot-window path is verified on the Omega Stick (esptool, no BOOT button).
+The `BOOT` and `RESET` steps are the standard ESP32-S3 procedure and still need
 confirming on the Omega Stick hardware.
 
 `idf.py -p PORT flash` remains the developer path.
@@ -269,9 +327,12 @@ The bootloader is built with app rollback enabled. A freshly installed image
 boots in the **pending verify** state, and the bootloader reverts to the previous
 image at the next reset unless the application confirms itself.
 
-The firmware never confirms a new image itself. After the update's reboot the
-console reconnects and checks the image, then sends MARK_VALID (0x5D). It
-confirms only when all of these hold:
+The firmware never confirms a new image itself, with two exceptions: a build
+with updates turned off (D25) accepts an image that arrived by update at boot,
+since its console cannot confirm anything, and an image booted by the crash-loop
+handover is accepted at once (see below). After the update's reboot the console
+reconnects and checks the image, then sends MARK_VALID (0x5D). It confirms only
+when all of these hold:
 
 - The running image's version and SHA match what the console flashed, and it is
   pending verify.
@@ -299,7 +360,9 @@ The firmware keeps a backstop. `FirmwareHealthCheck` in
 `components/omega_calibration/include/firmware_health_check.hpp` (used by
 `main/main.cpp`) marks an image that is still pending at `ROLLBACK_DEADLINE`
 (120 seconds) invalid and reboots into the previous image, rather than limping
-along until a power cycle happens to trigger the rollback. The deadline is
+along until a power cycle happens to trigger the rollback. It first holds the
+output neutral for 100 ms (`ROLLBACK_HOLD`), so the last reports the host sees
+before the device vanishes are neutral ones. The deadline is
 generous so the console's confirm lands first in normal use. It exists because
 some users depend on the stick to operate their computer and may not be able to
 unplug or power-cycle it themselves.
@@ -334,10 +397,27 @@ Things to know:
   this slot were crashes (panic, watchdog, CPU lockup; brownouts do not count,
   since the other image would not survive them either) and the other slot holds
   an app image that has not already been rejected, it switches the boot
-  partition and restarts. The other image then boots pending, under the usual
-  rules. One crash does nothing beyond the core dump. A crash in the other
-  image is charged to that image (the reset that starts a boot ended the
-  previous one), so the two slots cannot bounce the device between them.
+  partition and restarts. One crash does nothing beyond the core dump. A crash
+  in the other image is charged to that image (the reset that starts a boot
+  ended the previous one), so the two slots cannot bounce the device between
+  them.
+- **The image the crash-loop handover boots is confirmed at once.**
+  `esp_ota_set_boot_partition()` makes it boot pending, and with no console
+  attached nothing would confirm it: the deadline would mark it invalid and
+  reboot into the crashing image, which could then never hand over again (the
+  handover skips a rejected slot), so the device would crash-loop for good. That
+  image ran before and was not rejected, so the firmware accepts it itself. The
+  handover leaves a marker in RTC memory that survives the software reset but
+  not a power-on (`FirmwareHealthCheck::take_handover_marker()`), and the boot it
+  starts sees it and confirms the image (`accept_after_handover()`). At most one
+  handover happens per power-on: if the accepted image crash-loops too, both
+  images are broken, and the device stays put rather than swapping back and
+  forth and wearing out the otadata sectors. Unplugging it allows one more
+  handover. The fallback image has to contain this code: an older OTA-on build
+  in the other slot does not read the marker, so it still rejects itself at
+  the deadline and the device returns to the crashing image. A stick is
+  protected against a crash loop once both slots hold firmware with this
+  change, that is after the second update from it.
 
 ### Going back deliberately
 
@@ -345,7 +425,8 @@ The primary way back is the console's "Revert to previous firmware" button in th
 Firmware section. The section lists what is in the other slot (slot, version,
 build date and time, and state), and the button flips the bootloader to that slot
 and reboots the device (REVERT, about 750 ms after the OK reply). The button is
-disabled while an upload is running or when the other slot holds no app image.
+disabled while an update is in flight, or when the other slot holds no app image
+(`empty`) or only the remains of an interrupted upload (`partial`).
 
 Things to know:
 
@@ -457,17 +538,20 @@ update that needs a serial flash (a partition table change) at the top.
 - **First flash is a separate path.** It uses the [flash
   page](#first-flash-and-recovery) or `idf.py`, and erases calibration and
   settings.
-- **Download mode is unverified on this hardware.** The flash page's BOOT/RESET
-  steps are the standard ESP32-S3 procedure and still need confirming on the
-  Omega Stick.
+- **The BOOT-button download-mode steps are unverified on this hardware.** The
+  boot-window path is verified: on 2026-10-18 esptool flashed the board over its
+  USB Serial/JTAG port with no BOOT button. The flash page's BOOT/RESET steps
+  are the standard ESP32-S3 procedure and still need confirming on the Omega
+  Stick.
 - **Images are checked, not signed.** The console verifies the size and SHA-256
   of a downloaded image against the feed, which catches a corrupt download but
   not a compromised site, because the feed and the image come from the same
   place. Secure boot and image signing are deferred (see D22 in
   [decisions.md](decisions.md#d22-update-safety-rules-and-a-register-of-deferred-security-controls)).
-- **The update flow is not hardware-tested.** Neutral output, the image checks,
-  automatic reconnect, the console's confirm step and the latest-release check
-  are covered by host and Node tests only. The console is now the only thing
-  standing between an update and a rollback, so the first hardware update test
-  should exercise this flow end to end, including pulling the cable during
-  "Confirming".
+- **Hardware-tested on 2026-10-25, with the console from #56.** Update,
+  automatic reconnect, confirm, deadline rollback, bootloader rollback and
+  revert all ran on a stick (XAC mode, WebUSB). The console before #56 never
+  reconnected after an update (it passed its own record to the device open
+  call), so every update with it rolled back at the deadline. Still untested on
+  hardware: the latest-release check (no feed exists until the first full
+  release) and pulling the cable during "Confirming".

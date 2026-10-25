@@ -287,7 +287,9 @@ test("decideOutcome: revert, version only (previous sha is not reported)", () =>
   assert.equal(o.message, "Reverted to 0.1.0. Checking it works...");
   o = P.decideOutcome(exp, { version: "0.2.0", sha: "22222222", pending: false });
   assert.equal(o.state, "rolled_back");
-  assert.match(o.message, /went back to 0\.2\.0/);
+  // A revert that left the old image running says so, not "the new firmware was not confirmed".
+  assert.match(o.message, /running 0\.2\.0 again, not the previous firmware \(0\.1\.0\)/);
+  assert.doesNotMatch(o.message, /new firmware/);
 });
 
 const CONFIRM_EXP = { kind: "flash", version: "0.2.0", sha: "20212223", before: { version: "0.1.0", sha: "11111111" } };
@@ -477,6 +479,51 @@ test("reconnect: USB without a known serial and several matches is ambiguous", (
 
 // ---- the sensor check over time (D22: "not observed" is not "healthy") ------
 
+test("autoReconnectStep: a manual connect owns connection setup; a success ends the loop for good", () => {
+  const s = (o) => P.autoReconnectStep(Object.assign({ transportPresent: false, manualInProgress: false, manualSucceeded: false }, o));
+  assert.equal(s({}), "try");
+  assert.equal(s({ manualInProgress: true }), "wait");
+  assert.equal(s({ transportPresent: true }), "stop");
+  assert.equal(s({ transportPresent: true, manualInProgress: true }), "stop");
+  assert.equal(s({ manualSucceeded: true }), "stop"); // even if that link has dropped again
+});
+
+// Two granted sticks that share the default USB serial. The person picks A
+// while the automatic loop is scanning; connectUsb(A) is still awaiting
+// claimInterface() (A is opened, not yet the transport) across a loop tick.
+test("reconnect race: the automatic loop never opens stick B while a manual open of A is pending", () => {
+  const link = { kind: "usb", vid: 0x1209, pid: 0x0d32, serial: "123456" };
+  const A = { ref: "A", kind: "usb", opened: false, vid: 0x1209, pid: 0x0d32, serial: "123456", isSaved: false };
+  const B = Object.assign({}, A, { ref: "B" });
+  const world = { transport: null, manualInProgress: false, manualSucceeded: false, opened: [] };
+  // One wake of the automatic loop, as the page runs it: ask, list, ask again, open.
+  const autoTick = () => {
+    const ask = () => P.autoReconnectStep({ transportPresent: !!world.transport,
+      manualInProgress: world.manualInProgress, manualSucceeded: world.manualSucceeded });
+    if (ask() !== "try") return ask();
+    const found = P.pickReconnectCandidate(link, [A, B]);
+    if (ask() !== "try") return ask();
+    if (found.candidate) { found.candidate.opened = true; world.opened.push(found.candidate.ref); }
+    return found.reason;
+  };
+  assert.equal(autoTick(), "ambiguous"); // both free: nothing opened, the picker is offered
+  world.manualInProgress = true; A.opened = true; // picker chose A, open pending
+  assert.equal(autoTick(), "wait");
+  assert.equal(autoTick(), "wait");
+  world.transport = "A"; world.manualInProgress = false; world.manualSucceeded = true;
+  assert.equal(autoTick(), "stop");
+  world.transport = null; // A drops again later: the loop still must not reach for B
+  assert.equal(autoTick(), "stop");
+  assert.deepEqual(world.opened, []);
+  // Without the arbitration the same sequence would have opened B.
+  assert.equal(P.pickReconnectCandidate(link, [A, B]).candidate.ref, "B");
+});
+
+test("reconnect race: a cancelled manual connect lets the loop resume", () => {
+  assert.equal(P.autoReconnectStep({ transportPresent: false, manualInProgress: true, manualSucceeded: false }), "wait");
+  assert.equal(P.autoReconnectStep({ transportPresent: false, manualInProgress: false, manualSucceeded: false }), "try");
+});
+
 function fakeClock() {
   const c = { t: 0, sleeps: 0 };
   c.now = () => c.t;
@@ -564,6 +611,233 @@ test("sensor check: unsupported diagnostics skips at once, a transport error fai
   const aborted = await P.awaitSensorHealthy(sensorReader([3], []), clock.sleep, clock.now, { abort: () => true });
   assert.equal(aborted.aborted, true);
   assert.equal(aborted.ok, false);
+});
+
+// ---- Robustness of the update flow: controls, link loss, lost replies ----
+
+const noDash = (s) => assert.ok(!/\u2014/.test(s), "no em dashes: " + s);
+
+test("inspectImage: an app descriptor cut short by the end of the file is an error, never ok without appDesc", () => {
+  // One 16-byte segment: the image is complete, but the descriptor (256 bytes) is not.
+  const short = makeImage({ dataLen: 16 });
+  assert.ok(short.length < 32 + 256);
+  const r = P.inspectImage(short);
+  assert.equal(r.ok, false);
+  assert.deepEqual(codes(r), ["truncated"]);
+  assert.equal(r.info.appDesc, null);
+  // Every prefix of a good image: whenever the check passes, the descriptor was read.
+  const img = makeImage();
+  for (let n = 0; n <= img.length; n++) {
+    const x = P.inspectImage(img.subarray(0, n));
+    if (x.ok) assert.ok(x.info && x.info.appDesc, "ok without appDesc at length " + n);
+  }
+});
+
+test("previous slot: partial is not revertible and says an interrupted upload left it", () => {
+  assert.deepEqual(P.revertAvailability({ prevState: "valid" }), { usable: true, reason: "" });
+  assert.equal(P.revertAvailability({ prevState: "empty" }).usable, false);
+  const partial = P.revertAvailability({ prevState: "partial" });
+  assert.equal(partial.usable, false);
+  assert.match(partial.reason, /interrupted upload left a partial image/);
+  assert.match(partial.reason, /Upload new firmware/);
+  assert.equal(P.revertAvailability(null).usable, false);
+  assert.equal(P.revertAvailability({ prevState: "unknown (older firmware)" }).usable, false);
+  assert.ok(!P.REVERTIBLE_STATES.includes("partial") && !P.REVERTIBLE_STATES.includes("empty"));
+  assert.match(P.describePrevState("partial"), /interrupted upload/);
+  assert.equal(P.describePrevState("valid"), "valid");
+  // The revert plan refuses it even when a version string came with it.
+  const plan = P.buildRevertPlan({ version: "0.2.0", sha: "22222222" }, { version: "0.3.0", label: "ota_1", state: "partial" });
+  assert.equal(plan.blocked, true);
+  assert.deepEqual(plan.errors.map((e) => e.code), ["partial_previous"]);
+  noDash(partial.reason);
+});
+
+test("describeUpdateError shows the firmware's refusal while the running image is pending", () => {
+  const raw = "device error (code 1): OTA_BEGIN refused: the running image is not confirmed yet: Operation not permitted";
+  const d = P.describeUpdateError(new Error(raw));
+  assert.equal(d.category, "not_confirmed");
+  assert.match(d.title, /the running image is not confirmed yet/);
+  assert.doesNotMatch(d.title + d.advice, /would not start the update/);
+  assert.match(d.advice, /Mark running image valid/);
+  const longer = P.describeUpdateError("device error (code 1): OTA_BEGIN refused: the running image is not confirmed yet (confirm it or wait for the rollback): Operation not permitted");
+  assert.match(longer.title, /not confirmed yet \(confirm it or wait for the rollback\)\.$/);
+  // Other OTA_BEGIN refusals keep their categories.
+  assert.equal(P.describeUpdateError("device error (code 16): OTA_BEGIN failed: Device or resource busy").category, "busy");
+  noDash(d.title + d.advice);
+});
+
+const idle = (o) => Object.assign({
+  connected: true, busy: false, latestBusy: false, phase: null, reconnecting: false, pending: false,
+  revert: { usable: true, reason: "" },
+}, o);
+const enabled = (c) => !c.disabled;
+
+test("updateControls: idle and connected, everything is usable and nothing is locked", () => {
+  for (const phase of [null, undefined, "done"]) {
+    const c = P.updateControls(idle({ phase }));
+    assert.ok(enabled(c.flash) && enabled(c.install) && enabled(c.revert) && enabled(c.restart) && enabled(c.markValid));
+    assert.equal(c.connectLocked, false);
+    assert.equal(c.modeLocked, false);
+  }
+  const off = P.updateControls(idle({ connected: false }));
+  assert.ok(off.flash.disabled && off.revert.disabled && off.restart.disabled && off.markValid.disabled);
+  assert.equal(P.updateControls(idle({ latestBusy: true })).install.disabled, true);
+  assert.equal(P.updateControls(idle({ busy: true })).flash.disabled, true);
+});
+
+test("updateControls: an update in flight locks Flash, Revert, Restart, mode and the link even when not busy", () => {
+  for (const phase of ["running", "rebooting", "confirming"]) {
+    const c = P.updateControls(idle({ phase, busy: false }));
+    for (const k of ["flash", "install", "revert", "restart", "markValid"]) assert.ok(c[k].disabled, phase + ": " + k);
+    assert.ok(c.flash.reason.length > 0, phase);
+    assert.equal(c.modeLocked, true, phase);
+    assert.equal(c.connectLocked, true, phase + ": Disconnect locked");
+  }
+  // After the drop: locked while the automatic reconnect runs, free once it gave up.
+  assert.equal(P.updateControls(idle({ phase: "rebooting", connected: false, reconnecting: true })).connectLocked, true);
+  assert.equal(P.updateControls(idle({ phase: "rebooting", connected: false, reconnecting: false })).connectLocked, false);
+  // After a manual disconnect the person must be able to connect again.
+  assert.equal(P.updateControls(idle({ phase: "link_lost", connected: false })).connectLocked, false);
+});
+
+test("updateControls: a pending running image disables Flash with the reason, Mark valid stays", () => {
+  const c = P.updateControls(idle({ pending: true }));
+  assert.equal(c.flash.disabled, true);
+  assert.equal(c.flash.reason, P.PENDING_FLASH_REASON);
+  assert.match(c.flash.reason, /refuses a new update/);
+  assert.match(c.flash.reason, /Mark running image valid/);
+  assert.equal(c.install.disabled, true);
+  assert.ok(enabled(c.markValid) && enabled(c.revert) && enabled(c.restart));
+  assert.equal(c.connectLocked, false);
+  // Waiting for the rollback after a failed check: only Mark valid remains.
+  const w = P.updateControls(idle({ phase: "waiting_rollback", pending: true }));
+  assert.ok(w.flash.disabled && w.revert.disabled && w.restart.disabled);
+  assert.match(w.flash.reason, /about to go back/);
+  assert.ok(enabled(w.markValid));
+  assert.equal(w.connectLocked, true);
+  noDash(c.flash.reason + w.flash.reason);
+});
+
+test("updateControls: installed but not restarted offers Restart only", () => {
+  const c = P.updateControls(idle({ phase: "switched_no_restart" }));
+  assert.ok(enabled(c.restart));
+  assert.ok(c.flash.disabled && c.revert.disabled && c.markValid.disabled);
+  assert.match(c.flash.reason, /Restart now/);
+  assert.equal(c.connectLocked, true);
+  assert.equal(c.modeLocked, true);
+});
+
+test("updateControls: a partial previous slot disables Revert with the explanation", () => {
+  const c = P.updateControls(idle({ revert: P.revertAvailability({ prevState: "partial" }) }));
+  assert.equal(c.revert.disabled, true);
+  assert.match(c.revert.reason, /interrupted upload/);
+  assert.ok(enabled(c.flash));
+});
+
+test("afterLinkLoss: Disconnect while confirming or waiting is resumed by the next connect, not left stuck", () => {
+  const c = P.afterLinkLoss("confirming", true);
+  assert.equal(c.phase, "link_lost");
+  assert.equal(c.reconnect, false);
+  assert.match(c.message, /goes back to the previous firmware by itself unless this page confirms it/);
+  assert.equal(P.resumesOnReconnect(c.phase), true);
+  const w = P.afterLinkLoss("waiting_rollback", true);
+  assert.equal(w.phase, "link_lost");
+  assert.match(w.message, /goes back to the previous firmware by itself/);
+  const s = P.afterLinkLoss("switched_no_restart", true);
+  assert.equal(s.phase, "link_lost");
+  assert.match(s.message, /Restart now/);
+  // A dropped link (not the button) reconnects by itself.
+  for (const phase of ["confirming", "waiting_rollback", "switched_no_restart"]) {
+    const d = P.afterLinkLoss(phase, false);
+    assert.equal(d.phase, "rebooting");
+    assert.equal(d.reconnect, true);
+    assert.equal(P.resumesOnReconnect(d.phase), true);
+    noDash(d.message + P.afterLinkLoss(phase, true).message);
+  }
+  for (const phase of ["running", "rebooting", "done", null]) {
+    assert.equal(P.afterLinkLoss(phase, true), null);
+    assert.equal(P.afterLinkLoss(phase, false), null);
+  }
+  for (const phase of ["confirming", "waiting_rollback", "switched_no_restart", "running", "done", null]) {
+    assert.equal(P.resumesOnReconnect(phase), false, String(phase));
+  }
+});
+
+test("reconnect window outlasts a 60 s boot flash window and ends before the 120 s rollback", () => {
+  assert.ok(P.RECONNECT_WINDOW_MS >= 100000 && P.RECONNECT_WINDOW_MS < 120000);
+  assert.equal(P.reconnectDeadline(5000), 5000 + P.RECONNECT_WINDOW_MS);
+  const early = P.reconnectWaitText(100000, 2000);
+  assert.match(early, /100 s left/);
+  assert.doesNotMatch(early, /minute/);
+  const late = P.reconnectWaitText(65000, 45000);
+  assert.match(late, /65 s left/);
+  assert.match(late, /up to a minute/);
+  assert.match(P.reconnectWaitText(-50, 120000), /0 s left/);
+});
+
+test("decideAfterFinishTimeout: a switched boot slot means installed but not restarted", () => {
+  const sw = P.decideAfterFinishTimeout("flash", { running: "ota_0", boot: "ota_1" });
+  assert.equal(sw.state, "switched");
+  assert.match(sw.message, /new firmware is installed, but the device did not restart/);
+  assert.match(sw.message, /Restart now/);
+  const rv = P.decideAfterFinishTimeout("revert", { running: "ota_1", boot: "ota_0" });
+  assert.equal(rv.state, "switched");
+  assert.match(rv.message, /previous firmware is installed/);
+  const same = P.decideAfterFinishTimeout("flash", { running: "ota_0", boot: "ota_0" });
+  assert.equal(same.state, "not_switched");
+  assert.match(same.message, /nothing was installed/);
+  assert.match(P.decideAfterFinishTimeout("revert", { running: "ota_0", boot: "ota_0" }).message, /nothing was changed/);
+  assert.equal(P.decideAfterFinishTimeout("flash", null).state, "unknown");
+  assert.equal(P.decideAfterFinishTimeout("flash", { running: "ota_0", boot: "" }).state, "unknown");
+  for (const m of [sw.message, rv.message, same.message]) noDash(m);
+});
+
+test("decideOutcome: the old image with the boot slot switched is not_restarted, a real rollback is not", () => {
+  const exp = { kind: "flash", version: "0.2.0", sha: "20212223", before: { version: "0.1.0", sha: "11111111" } };
+  const o = P.decideOutcome(exp, { version: "0.1.0", sha: "11111111", pending: false, running: "ota_0", boot: "ota_1" });
+  assert.equal(o.state, "not_restarted");
+  assert.match(o.message, /Restart now/);
+  const back = P.decideOutcome(exp, { version: "0.1.0", sha: "11111111", pending: false, running: "ota_0", boot: "ota_0" });
+  assert.equal(back.state, "rolled_back");
+  assert.match(back.message, /was not confirmed/);
+  // Same build reflashed and not restarted.
+  const sameExp = { kind: "flash", version: "0.2.0", sha: "20212223", before: { version: "0.2.0", sha: "20212223" } };
+  assert.equal(P.decideOutcome(sameExp, { version: "0.2.0", sha: "20212223", pending: false, running: "ota_0", boot: "ota_1" }).state, "not_restarted");
+  // The OTA_FINISH reply went with the link: old image back means the update did not complete.
+  const unc = P.decideOutcome(Object.assign({ uncertain: true }, exp), { version: "0.1.0", sha: "11111111", pending: false });
+  assert.equal(unc.state, "rolled_back");
+  assert.match(unc.message, /did not complete, so the device is still running 0\.1\.0/);
+  // ...and the new image pending is confirmed as usual.
+  assert.equal(P.decideOutcome(Object.assign({ uncertain: true }, exp), PENDING_NEW).state, "confirming");
+});
+
+test("shouldWarnBeforeUnload: only while an upload, download or confirm is unfinished", () => {
+  assert.equal(P.shouldWarnBeforeUnload({ phase: null }), false);
+  assert.equal(P.shouldWarnBeforeUnload({ phase: "done" }), false);
+  assert.equal(P.shouldWarnBeforeUnload({ phase: "waiting_rollback" }), false);
+  assert.equal(P.shouldWarnBeforeUnload({ phase: null, uploading: true }), true);
+  assert.equal(P.shouldWarnBeforeUnload({ phase: null, downloading: true }), true);
+  for (const phase of ["running", "rebooting", "confirming", "switched_no_restart", "link_lost"]) {
+    assert.equal(P.shouldWarnBeforeUnload({ phase }), true, phase);
+  }
+});
+
+test("fetch failures: CORS or network is not called offline; a stalled download is a timeout", () => {
+  const abort = Object.assign(new Error("aborted"), { name: "AbortError" });
+  assert.equal(P.classifyFetchError(abort, true), "timeout");
+  assert.equal(P.classifyFetchError(new TypeError("Failed to fetch"), true), "unreachable");
+  assert.equal(P.classifyFetchError(new TypeError("Failed to fetch"), undefined), "unreachable");
+  assert.equal(P.classifyFetchError(new TypeError("Failed to fetch"), false), "offline");
+  const unreachable = P.describeFeedFailure("unreachable");
+  assert.doesNotMatch(unreachable, /offline|internet connection/i);
+  assert.match(unreachable, /blocked/);
+  assert.match(P.describeFeedFailure("offline"), /offline/);
+  assert.match(P.describeFeedFailure("http", 503), /503/);
+  assert.match(P.describeDownloadFailure("timeout"), /stopped making progress/);
+  assert.doesNotMatch(P.describeDownloadFailure("unreachable"), /offline|internet connection/i);
+  assert.match(P.describeDownloadFailure("sha"), /checksum/);
+  for (const k of ["offline", "timeout", "unreachable", "missing", "http", "invalid", undefined]) noDash(P.describeFeedFailure(k, 500));
+  for (const k of ["offline", "timeout", "unreachable", "http", "size", "sha", "nohash", undefined]) noDash(P.describeDownloadFailure(k, 500));
 });
 
 test("runConfirmCheck judges the non-sensor checks once and waits only for the sensor", async () => {

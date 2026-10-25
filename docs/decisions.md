@@ -299,6 +299,12 @@ one and the two slots cannot bounce the device between them. An other slot the
 bootloader already rejected is not retried automatically; the console's REVERT
 remains the deliberate way to try it again.
 
+*Note 2026-10-25:* the image the handover boots is pending, and with no console
+attached the deadline used to reject it and send the device back into the crash
+loop for good, so the boot the handover starts now confirms it at once (a marker
+in RTC memory, `FirmwareHealthCheck::accept_after_handover()`), and at most one
+handover happens per power-on. See [firmware-updates.md](firmware-updates.md#rollback-and-the-health-check).
+
 **Amended 2026-10-12: the console confirms the new image, not the firmware.**
 The original design had the image confirm itself after USB enumerated, the
 sensor answered and 10 s had passed. It now never confirms itself. After the
