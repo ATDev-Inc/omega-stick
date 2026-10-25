@@ -30,9 +30,9 @@ Last reviewed: 2026-10-25.
   - [ ] A board with an existing calibration boots with it intact after the
         schema key and the reset-log slot field (PR #49, #50), and the console
         shows the same values and reset history as before.
-  - [ ] Release build with updates off: the console shows the first-flash note
-        in place of the update controls, and the first-flash page reinstalls
-        over an existing install.
+  - [ ] OTA-off build (`sdkconfig.no_ota`): the console shows the first-flash
+        note in place of the update controls. Separately, the first-flash page
+        reinstalls the release over an existing install.
   - [ ] Gamepad mode plugged straight into a Windows PC, no XAC: it appears in
         the Game Controllers panel (`joy.cpl`), X/Y track the stick, and it
         rests at center. It enumerates (checked 2026-10-25: "HID-compliant game
@@ -76,14 +76,15 @@ Last reviewed: 2026-10-25.
 - [ ] D22 rule 2: whether the reset log should judge a pending image's first
       boots, now that the console does the confirming.
 
-## Firmware updates over USB (M2, v0.2.0)
+## Firmware updates over USB (v0.1.0)
 
-The code is in the tree but off in v0.1.0 builds (D25). To test it, build into
-a separate directory with its own sdkconfig, so the default build's
+The default build has updates on (D25, amended 2026-10-25); check
+`build/sdkconfig` reads `CONFIG_OMEGA_STICK_OTA=y`. The off variant is built
+into a separate directory with its own sdkconfig, so the default build's
 `CONFIG_OMEGA_STICK_OTA` setting is not carried over (defaults never override
 a value an existing sdkconfig already has):
-`idf.py -B build-ota -DSDKCONFIG=build-ota/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ota" build`.
-Check `build-ota/sdkconfig` reads `CONFIG_OMEGA_STICK_OTA=y`. See
+`idf.py -B build-no-ota -DSDKCONFIG=build-no-ota/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.no_ota" build`.
+Check `build-no-ota/sdkconfig` has `CONFIG_OMEGA_STICK_OTA` not set. See
 [docs/firmware-updates.md](docs/firmware-updates.md).
 
 - [x] Update flow, happy path: upload, the console's checks, MARK_VALID, and
@@ -107,8 +108,9 @@ Check `build-ota/sdkconfig` reads `CONFIG_OMEGA_STICK_OTA=y`. See
       otadata, so that case rolls back at runtime too.
 - [ ] Update from a v0.1.0 board: install the first OTA-on release from the
       first-flash page, then update over USB from there.
-- [ ] Turn `OMEGA_STICK_OTA` on by default and check the "Check for latest
-      firmware" button against the live feed.
+- [x] Turn `OMEGA_STICK_OTA` on by default. Done 2026-10-25.
+- [ ] Check the "Check for latest firmware" button against the live feed (needs
+      the first release).
 
 ## Features (M2, v0.2.0)
 

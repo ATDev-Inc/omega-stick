@@ -107,6 +107,12 @@ in `version.txt`.
 
 ### Changed
 
+- **Firmware updates over USB are on in every build.** `OMEGA_STICK_OTA` now
+  defaults to on, so the console can install new firmware from the first
+  release (this reverses the "off" choice in D25). The first-flash page remains
+  the way to install the first OTA-capable firmware and to recover a stick. A
+  build can still opt out with the `sdkconfig.no_ota` fragment, which CI builds.
+  ([#NN](https://github.com/ATDev-Inc/omega-stick/pull/NN))
 - **A stick with no usable calibration stays still until it is calibrated
   from the console.** After a first flash, or with a saved calibration whose
   range is too small for the stick's resting noise (as a first-boot sweep of
@@ -129,14 +135,12 @@ in `version.txt`.
   change is in the bundled hid-rp headers, which now include what they use, so
   the host test workaround for that is gone. Nothing changes for the user of
   the stick. ([#42](https://github.com/ATDev-Inc/omega-stick/pull/42))
-- **v0.1.0 ships with firmware updates over USB turned off.** The release is
-  built without the update engine (`OMEGA_STICK_OTA` off), so the console shows
-  that this firmware takes no updates over USB and links to the first-flash
-  page; install or reinstall there, which erases saved calibration and
-  settings. The update code stays in the tree and CI still builds it, and it
-  returns in a later 0.x release. The bootloader and partition table are
-  unchanged, so that later release needs no bootloader reinstall.
-  ([#39](https://github.com/ATDev-Inc/omega-stick/pull/39))
+- **`OMEGA_STICK_OTA` build switch.** The update engine can be built out
+  (`OMEGA_STICK_OTA` off), so the console shows that the firmware takes no
+  updates over USB and links to the first-flash page. This was first meant to
+  ship off in v0.1.0; it now ships on (see the entry above), and the switch
+  remains as an opt-out. The bootloader and partition table are the same either
+  way. ([#39](https://github.com/ATDev-Inc/omega-stick/pull/39))
 - **The console confirms a new firmware image, not the firmware.** After an
   update or a revert the console reconnects, checks that the stick is running
   the image it flashed, answers requests and reports no sensor fault, then
