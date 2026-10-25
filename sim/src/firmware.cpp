@@ -347,7 +347,6 @@ std::string boot(Host &host, int reset_reason) {
   }
   {
     const esp_app_desc_t *app = esp_app_get_description();
-    // cppcheck-suppress knownConditionTrueFalse ; null under --no-ota, set in another file
     const char *pending = ota && sim::flash().pending_verify() ? " [PENDING VERIFY]" : "";
     host.console_text(format("Firmware %s %s (built %s %s, idf %s) running from %s%s",
                              app->project_name, app->version, app->date, app->time, app->idf_ver,
