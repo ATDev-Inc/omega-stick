@@ -108,7 +108,7 @@ in `version.txt`.
   accepted when its usable range is at least three times its center noise, so
   an untouched sweep is refused instead of turning noise into cursor
   movement. GET_DIAGNOSTICS ends with a new calibration state byte (D26).
-  ([#NN](https://github.com/ATDev-Inc/omega-stick/pull/NN))
+  ([#59](https://github.com/ATDev-Inc/omega-stick/pull/59))
 - **espp 1.3.8 throughout.** Every espp component moves from 1.3.6 to 1.3.8,
   still one release across the board (D20). For this firmware the only code
   change is in the bundled hid-rp headers, which now include what they use, so
