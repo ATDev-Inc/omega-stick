@@ -241,9 +241,9 @@ sticks with no console attached.
 - The bootloader fake marks every pending slot aborted at boot, and a rollback
   needs the other slot to hold a complete image whose state is new, pending or
   valid, as `esp_ota_check_rollback_is_possible()` requires. A fresh board's
-  `ota_0` counts as valid, unlike a board flashed over serial, whose blank
-  otadata gives `ota_0` no state: there the first update's deadline rollback
-  fails and the next reset rolls back instead.
+  `ota_0` counts as valid. (A board flashed over serial starts with blank
+  otadata, and on the Omega Stick the first update's deadline rollback still
+  ran at runtime, so the fake treats that case the same way.)
 - OTA_BEGIN erases the other slot and drops its state; once an upload's
   descriptor has arrived the slot reads as `partial` until OTA_FINISH, so an
   aborted or expired upload cannot be reverted to. OTA_BEGIN is refused while
