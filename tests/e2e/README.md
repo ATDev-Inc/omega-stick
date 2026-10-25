@@ -11,7 +11,7 @@ nudge click, re-running calibration from the console, a deadzone override
 (accepted in range, refused out of range), the switch to XAC mode with the
 automatic reconnect, a `no_response` sensor fault and recovery, a firmware
 update that the console checks and confirms, a revert, and an image whose
-sensor fails, which the console refuses to confirm and the simulator rolls back
+sensor fails, which the console refuses to confirm (keeping Disconnect and Flash locked while it waits) and the simulator rolls back
 at the deadline, and an image whose sensor starts polling late, which the console
 waits for before confirming, and a simulator started with `--no-ota`, for which the console hides its update controls and shows the no-updates note. It also fails on any script error in the page or any crash line
 in the simulator output.
