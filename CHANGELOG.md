@@ -21,7 +21,7 @@ in `version.txt`.
   at once, the tuning values are kept, and "Save current state to flash" keeps
   the choice (`nudge_enabled` in `omega_settings.cfg`; existing settings load
   with nudge clicks on). XAC mode is unaffected. Older firmware shows the box
-  checked and disabled. ([#NN](https://github.com/ATDev-Inc/omega-stick/pull/NN))
+  checked and disabled. ([#60](https://github.com/ATDev-Inc/omega-stick/pull/60))
 - **Schema version in the saved files.** Calibration and settings now each
   carry `schema=1`, so future firmware can migrate them or refuse a file it
   cannot read and fall back to recalibrating or defaults. Existing boards keep
