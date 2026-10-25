@@ -92,8 +92,40 @@ TEST(diagnostics_reply_follows_documented_layout) {
   CHECK_EQ(p[30], 1);
   CHECK_EQ(p[31], 0);
   CHECK_EQ(p[32], 8);
-  // Total: 11 header + 3 entries of (7 + 8).
-  CHECK_EQ(p.size(), std::size_t{11 + 3 * 15});
+  // Then u8 calibration_state (0 = usable by default). Total: 11 header + 3
+  // entries of (7 + 8) + 1.
+  CHECK_EQ(p.back(), CalibrationService::CALIBRATION_USABLE);
+  CHECK_EQ(p.size(), std::size_t{11 + 3 * 15 + 1});
+}
+
+TEST(diagnostics_ends_with_the_calibration_state) {
+  // D26: 1 = no usable calibration, the output is held neutral. It is the last
+  // byte, after the reset list, so a console that stops after the list still
+  // reads every older field.
+  Fixture fx("diag_cal_state", [] {
+    Diag d = sample();
+    d.calibration_state = CalibrationService::CALIBRATION_NEEDED;
+    return d;
+  });
+  const auto reply = fx.request(Msg::GetDiagnostics);
+  CHECK(is(reply, Msg::Diagnostics));
+  const auto &p = reply.payload;
+  CHECK_EQ(p.size(), std::size_t{11 + 3 * 15 + 1});
+  CHECK_EQ(p[11 + 3 * 15], 1);
+  CHECK_EQ(p[10], 3); // the reset list in front of it is unchanged
+}
+
+TEST(diagnostics_calibration_state_with_no_resets) {
+  Fixture fx("diag_cal_state_empty", [] {
+    Diag d;
+    d.calibration_state = CalibrationService::CALIBRATION_NEEDED;
+    return d;
+  });
+  const auto reply = fx.request(Msg::GetDiagnostics);
+  const auto &p = reply.payload;
+  CHECK_EQ(p.size(), std::size_t{12});
+  CHECK_EQ(p[10], 0);
+  CHECK_EQ(p[11], 1);
 }
 
 TEST(diagnostics_passes_the_not_observed_code_through_unchanged) {
@@ -134,6 +166,8 @@ TEST(diagnostics_keeps_newest_resets_when_the_list_cannot_fit) {
   CHECK_EQ(stream::get_u32(s.subspan(11)), 400u - count);
   const size_t last = 11 + (count - 1) * (7 + 100);
   CHECK_EQ(stream::get_u32(s.subspan(last)), 399u);
+  // The calibration state still fits after the clipped list.
+  CHECK_EQ(p.size(), last + 7 + 100 + 1);
 }
 
 TEST(diagnostics_clips_long_names) {
@@ -146,5 +180,5 @@ TEST(diagnostics_clips_long_names) {
   const auto &p = reply.payload;
   CHECK_EQ(p[10], 1);
   CHECK_EQ(p[17], 255);
-  CHECK_EQ(p.size(), std::size_t{11 + 7 + 255});
+  CHECK_EQ(p.size(), std::size_t{11 + 7 + 255 + 1});
 }

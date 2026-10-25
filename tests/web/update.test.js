@@ -850,3 +850,26 @@ test("runConfirmCheck judges the non-sensor checks once and waits only for the s
   const sensor = await P.runConfirmCheck("sensor", sensorReader([3, 0], []), env);
   assert.equal(sensor.ok, true);
 });
+
+// ---- D26: a stick waiting for calibration can still confirm an update -------
+
+test("confirm checks: a pending image with needs_calibration=1 and a healthy sensor is confirmed", async () => {
+  // The quiet-boot hold must not block MARK_VALID: the checks look at the
+  // sensor fault code only, and a board waiting for calibration still polls
+  // its sensor.
+  const clock = fakeClock();
+  const diagnostics = P.decodeDiagnostics(Uint8Array.from([0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 1]));
+  assert.equal(diagnostics.calibrationState, P.CALIBRATION_NEEDED);
+  assert.equal(diagnostics.sensorFault, 0);
+  const results = [];
+  for (const c of P.CONFIRM_CHECKS) {
+    const gather = async () => c.id === "firmware" ? { expected: CONFIRM_EXP, after: PENDING_NEW }
+      : c.id === "protocol" ? { error: "" } : { diagnostics };
+    results.push(await P.runConfirmCheck(c.id, gather, { sleep: clock.sleep, now: clock.now }));
+  }
+  for (const r of results) {
+    assert.equal(r.ok, true, r.message);
+    assert.equal(r.skipped, false);
+  }
+  assert.ok(clock.t >= P.SENSOR_DWELL_MS); // the sensor was asked twice, as usual
+});

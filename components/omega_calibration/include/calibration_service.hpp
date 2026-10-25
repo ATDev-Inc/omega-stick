@@ -137,6 +137,15 @@
 //                  u8  reset_count         (N, oldest first)
 //                  N × { u32 boot, u8 reason, u8 abnormal, u8 name_len,
 //                        name_len bytes of UTF-8 name }
+//                  u8  calibration_state   (0 usable calibration, 1 needs
+//                                           calibration: none is saved or the
+//                                           saved one is unusable, so the
+//                                           output is held neutral until a
+//                                           START_CALIBRATION succeeds, D26.
+//                                           Added after the first release:
+//                                           older firmware ends the payload
+//                                           after the reset list, and hosts
+//                                           must ignore any bytes after it)
 //   0xD0 STATE - payload: fixed 79-byte little-endian struct, in this exact
 //                order (see build_state_payload() below):
 //                  f32 center_x, center_y, center_noise_radius,
@@ -197,7 +206,9 @@
 //                an async recalibration kicked off by START_CALIBRATION
 //                finishes. Payload: u8 success (0/1), then, only when
 //                success = 0, u32 code + UTF-8 message (same convention as
-//                ERROR).
+//                ERROR). A sweep whose result fails
+//                OmegaCalibration::check_usable() reports success = 0 with
+//                that error's message and is not applied (D26).
 //
 // Flow control: same as coredump_service.hpp: the host serializes
 // transactions, one request in flight, waits for its reply. The one
@@ -358,7 +369,12 @@ public:
       std::string name;
     };
     std::vector<Reset> resets; ///< oldest first
+    /// CALIBRATION_USABLE or CALIBRATION_NEEDED (D26), sent after the resets.
+    uint8_t calibration_state{0};
   };
+  /// DiagnosticsData::calibration_state values.
+  static constexpr uint8_t CALIBRATION_USABLE = 0;
+  static constexpr uint8_t CALIBRATION_NEEDED = 1;
   using diagnostics_fn = std::function<DiagnosticsData()>;
 
   /// Configuration for the CalibrationService.
@@ -1048,7 +1064,8 @@ protected:
     stream::put_u32(payload, d.boot_count);
 
     // Work out how many of the newest resets fit, then emit them in order.
-    const size_t header_size = payload.size() + 1; // + u8 reset_count
+    // + u8 reset_count, and the u8 calibration_state after the list.
+    const size_t header_size = payload.size() + 1 + 1;
     size_t first = d.resets.size();
     size_t used = header_size;
     while (first > 0) {
@@ -1070,6 +1087,7 @@ protected:
       payload.push_back(static_cast<uint8_t>(name_len));
       payload.insert(payload.end(), r.name.begin(), r.name.begin() + name_len);
     }
+    payload.push_back(d.calibration_state);
     return payload;
   }
 

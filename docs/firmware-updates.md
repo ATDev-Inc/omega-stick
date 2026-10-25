@@ -311,10 +311,10 @@ settings.** Normal updates go through the console and keep them.
    board appears under a different port name from the console's), then
    "Install Omega Stick". The installer erases the board, then writes the
    firmware. It takes about a minute.
-3. Unplug and replug the board, leaving the stick alone for the first few
-   seconds. The firmware calibrates by itself on that first start, with
-   prompts nobody can see, so open the console over Web Serial afterwards and
-   choose "Re-run calibration", following its prompts.
+3. Unplug and replug the board. With no calibration it starts quiet: USB and
+   the console come up, but the output stays neutral (decision D26). Open the
+   console over Web Serial, which shows the prompts, and choose "Re-run
+   calibration", following its prompts. The output starts once that succeeds.
 
 The boot-window path is verified on the Omega Stick (esptool, no BOOT button).
 The `BOOT` and `RESET` steps are the standard ESP32-S3 procedure and still need
@@ -368,9 +368,10 @@ generous so the console's confirm lands first in normal use. It exists because
 some users depend on the stick to operate their computer and may not be able to
 unplug or power-cycle it themselves.
 
-A fatal init failure on a pending image (magnetic sensor, calibration, or USB
-setup) does not wait for the deadline: the firmware rolls back immediately
-instead of halting on a broken image.
+A fatal init failure on a pending image (magnetic sensor or USB setup) does not
+wait for the deadline: the firmware rolls back immediately instead of halting
+on a broken image. A missing or unusable calibration is not an init failure: the
+image boots with its output held neutral (D26) and can still be confirmed.
 
 Things to know:
 
@@ -459,7 +460,8 @@ repo root (currently `0.1.0`). It is bumped by hand in the PR that warrants it:
 Both saved files carry a `schema=N` key (currently 1). A schema bump that old
 firmware cannot read is a MAJOR bump, because rolling back would leave the older
 firmware unable to load the user's calibration or settings (it falls back to
-recalibrating or to defaults). A key added under the same schema is not: older
+booting with no calibration, output held neutral, or to default settings). A
+key added under the same schema is not: older
 firmware ignores keys it does not know. Migration code is written when the
 first schema bump happens.
 

@@ -29,6 +29,7 @@ struct Expect {
   std::optional<bool> sensor_fault;
   std::optional<bool> sensor_observed;
   std::optional<bool> neutral;
+  std::optional<bool> needs_calibration; ///< GET_DIAGNOSTICS calibration_state (D26)
   std::optional<std::string> fw_slot;
   std::optional<bool> fw_pending;
   std::optional<std::string> fw_version;

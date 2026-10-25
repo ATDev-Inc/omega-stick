@@ -12,9 +12,9 @@ namespace {
 
 constexpr std::array<const char *, 8> kPatterns = {
     "rest", "circle", "calibrate", "nudge_right", "nudge_left", "nudge_up", "nudge_down", "wander"};
-constexpr std::array<const char *, 9> kActions = {"recalibrate", "save",         "restart",
-                                                  "set_mode",    "set_deadzone", "flash",
-                                                  "revert",      "mark_valid",   "fw_info"};
+constexpr std::array<const char *, 10> kActions = {
+    "recalibrate", "save",   "restart",    "set_mode", "set_deadzone",
+    "flash",       "revert", "mark_valid", "fw_info",  "plant_unusable_calibration"};
 constexpr std::array<const char *, 5> kReplies = {"ok", "busy", "invalid", "unsupported", "error"};
 
 template <typename Arr> bool contains(const Arr &arr, const std::string &s) {
@@ -83,6 +83,8 @@ Expect parse_expect(const json::Value &e, size_t index) {
       x.sensor_observed = want_bool(v, key);
     } else if (key == "neutral") {
       x.neutral = want_bool(v, key);
+    } else if (key == "needs_calibration") {
+      x.needs_calibration = want_bool(v, key);
     } else if (key == "fw_slot") {
       x.fw_slot = want_choice(v, key, {"ota_0", "ota_1"});
     } else if (key == "fw_pending") {

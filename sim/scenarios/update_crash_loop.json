@@ -3,6 +3,7 @@
   "name": "an update that crashes on boot is reverted",
   "steps": [
     { "at_ms": 0, "pattern": "calibrate" },
+    { "at_ms": 500, "action": "recalibrate" },
     { "at_ms": 40000, "expect": { "calibrated": true } },
     { "at_ms": 41000, "next_image": "crash_loop" },
     { "at_ms": 42000, "action": "flash", "version": "9.9.9-sim" },

@@ -172,10 +172,11 @@ struct SimPorts : espp::omega_control::Ports {
   const bool &sensor_read_ok;
   const uint8_t &sensor_conversion_count;
   SensorFaultStatus &sensor_status;
+  std::atomic<bool> &needs_calibration;
 
   SimPorts(Host &host_, espp::TMAG5273 &tmag_, FakeTmagBus &bus_, espp::OmegaStore &store_,
            espp::Joystick &js_, espp::CalibrationService &calibration_, const bool &ok_,
-           const uint8_t &count_, SensorFaultStatus &status_)
+           const uint8_t &count_, SensorFaultStatus &status_, std::atomic<bool> &needs_)
       : host(host_)
       , tmag(tmag_)
       , bus(bus_)
@@ -184,7 +185,8 @@ struct SimPorts : espp::omega_control::Ports {
       , calibration(calibration_)
       , sensor_read_ok(ok_)
       , sensor_conversion_count(count_)
-      , sensor_status(status_) {}
+      , sensor_status(status_)
+      , needs_calibration(needs_) {}
 
   void send_mouse(const espp::omega_control::MouseReport &r) override { host.on_mouse(r); }
   void send_xac(const espp::omega_control::XacReport &r) override { host.on_xac(r); }
@@ -224,11 +226,17 @@ struct SimPorts : espp::omega_control::Ports {
                           save_ec.message());
       }
       host.console_text("=== RE-CALIBRATION COMPLETE ===\n");
+      if (needs_calibration.exchange(false)) {
+        host.console_text("Calibration is usable; output resumes.");
+      }
       host.live.center_x = center.center_x;
       host.live.center_y = center.center_y;
       host.live.have_calibration = true;
     } else {
       host.console_text("ERROR: re-calibration failed: " + recal_ec.message());
+      if (needs_calibration.load()) {
+        host.console_text("Output stays neutral until a calibration succeeds.");
+      }
     }
     host.live.last_sweep = recal_ok ? 1 : 0;
     calibration.notify_calibration_result(recal_ok, recal_ok ? std::error_code{} : recal_ec);
@@ -372,8 +380,11 @@ std::string boot(Host &host, int reset_reason) {
   SensorFaultStatus sensor_status;
   host.live.sensor_fault = false;
   host.live.sensor_observed = false;
-  auto make_diagnostics = [&reset_log, &sensor_status]() {
+  std::atomic<bool> needs_calibration{false}; // D26, as in main.cpp
+  auto make_diagnostics = [&reset_log, &sensor_status, &needs_calibration]() {
     espp::CalibrationService::DiagnosticsData d;
+    d.calibration_state = needs_calibration.load() ? espp::CalibrationService::CALIBRATION_NEEDED
+                                                   : espp::CalibrationService::CALIBRATION_USABLE;
     d.sensor_fault = sensor_status.fault.load(std::memory_order_relaxed);
     d.sensor_first_fault = sensor_status.first_fault.load(std::memory_order_relaxed);
     d.sensor_fault_count = sensor_status.count.load(std::memory_order_relaxed);
@@ -458,30 +469,43 @@ std::string boot(Host &host, int reset_reason) {
   espp::OmegaCalibration::CenterResult center;
   espp::OmegaCalibration::RangeResult range;
   std::error_code cal_ec;
-  const bool have_calibration =
-      espp::OmegaCalibration::load(center, range, calibration_path, cal_ec);
+
+  // D26, as in main.cpp: without a usable calibration the board boots quiet and
+  // waits for a calibration from the console. No sweep runs at boot.
+  if (espp::OmegaCalibration::load(center, range, calibration_path, cal_ec)) {
+    host.console_text("Loaded existing calibration.");
+  } else {
+    needs_calibration.store(true);
+    if (cal_ec != espp::OmegaCalibration::make_error_code(
+                      espp::OmegaCalibration::Error::calibration_unusable)) {
+      center = {};
+      range = {};
+      espp::OmegaCalibration::set_manual_offset(center, MANUAL_OFFSET_X, MANUAL_OFFSET_Y);
+    }
+    host.console_text(format("No usable calibration (%s).", cal_ec.message().c_str()));
+    host.console_text("Output is held neutral until a calibration succeeds: connect the "
+                      "calibration console and use \"Re-run calibration\".");
+  }
+
+  store.set_calibration(center, range);
+  host.live.have_calibration = !needs_calibration.load();
+  host.live.center_x = center.center_x;
+  host.live.center_y = center.center_y;
 
   // Recalibration hand-off and output holds (D22 rule 1), as in main.cpp.
   espp::omega_control::RecalibrationGate recalibration_gate;
   std::atomic<int> output_holds{0};
-  std::atomic<bool> first_boot_sweep{false};
 
   // ==========================================================================
   // Calibration link
   // ==========================================================================
-  // sim: main.cpp brings the USB link up after the first-boot sweep; here it is up
-  // before it, so the console can connect, show the sweep's prompts and read state
-  // while it runs. A RECALIBRATE during that sweep is refused as busy.
+  // sim: one link and one service stand in for main.cpp's vendor and CDC pairs.
   auto transmit = [&host](std::span<const uint8_t> frame) { return host.transmit(frame); };
   espp::CalibrationService::Config calibration_cfg{
       .store = store,
       .send = transmit,
       .start_calibration =
-          [&recalibration_gate, &first_boot_sweep](std::error_code &start_ec) {
-            if (first_boot_sweep.load()) {
-              start_ec = std::make_error_code(std::errc::device_or_resource_busy);
-              return false;
-            }
+          [&recalibration_gate](std::error_code &start_ec) {
             return recalibration_gate.request(start_ec);
           },
       .restart = [&host]() { host.request_restart("restart"); },
@@ -503,76 +527,6 @@ std::string boot(Host &host, int reset_reason) {
   dispatcher.set_device_info("omega-stick", esp_app_get_description()->version);
   dispatcher.serve_discovery(transmit);
   LinkGuard link(host, [&dispatcher](std::span<const uint8_t> data) { dispatcher.feed(data); });
-
-  if (!have_calibration) {
-    first_boot_sweep = true;
-    host.console_text("");
-    host.console_text(format("No usable cached calibration (%s); running interactive calibration.",
-                             cal_ec.message().c_str()));
-    host.console_text("========================================");
-    host.console_text("       CENTER CALIBRATION");
-    host.console_text("========================================\n");
-
-    espp::OmegaCalibration calibration_run({
-        .read =
-            [&tmag](float *x, float *y) {
-              std::error_code read_ec;
-              auto magnetic = tmag.read_magnetic(read_ec);
-              if (read_ec) {
-                return false;
-              }
-              *x = magnetic.x;
-              *y = magnetic.y;
-              return true;
-            },
-        .message = [&host](const std::string &text) { host.calibration_prompt(text); },
-        .sleep = [&host](std::chrono::milliseconds d) { host.sleep(d); },
-        .verbosity = espp::Logger::Verbosity::ERROR,
-    });
-
-    if (!calibration_run.center_calibration(center, cal_ec)) {
-      host.console_text("ERROR: Center calibration failed: " + cal_ec.message());
-      host.live.last_sweep = 0;
-      reject_if_pending("center calibration failed");
-      while (!host.should_exit()) {
-        host.sleep(1s);
-      }
-      return "";
-    }
-
-    host.console_text("========================================");
-    host.console_text("       RANGE CALIBRATION");
-    host.console_text("========================================\n");
-
-    if (!calibration_run.range_calibration(center, range, cal_ec)) {
-      host.console_text("ERROR: Range calibration failed: " + cal_ec.message());
-      host.live.last_sweep = 0;
-      reject_if_pending("range calibration failed");
-      while (!host.should_exit()) {
-        host.sleep(1s);
-      }
-      return "";
-    }
-
-    calibration_run.finalize_center_deadzone(center, range);
-    espp::OmegaCalibration::set_manual_offset(center, MANUAL_OFFSET_X, MANUAL_OFFSET_Y);
-
-    if (!espp::OmegaCalibration::save(center, range, calibration_path, cal_ec)) {
-      host.console_text("WARNING: Failed to save calibration: " + cal_ec.message());
-    } else {
-      host.console_text("Saved calibration to " + calibration_path.string());
-    }
-    host.live.last_sweep = 1;
-    first_boot_sweep = false;
-    calibration.notify_calibration_result(true);
-  } else {
-    host.console_text("Loaded existing calibration.");
-  }
-
-  store.set_calibration(center, range);
-  host.live.have_calibration = true;
-  host.live.center_x = center.center_x;
-  host.live.center_y = center.center_y;
 
   const bool xac_selection = store.settings().input_mode == espp::OmegaStore::InputMode::XAC;
   host.live.mode = xac_selection ? 1 : 0;
@@ -602,7 +556,7 @@ std::string boot(Host &host, int reset_reason) {
   live_joystick = &js;
 
   SimPorts ports(host, tmag, bus, store, js, calibration, sensor_read_ok, sensor_conversion_count,
-                 sensor_status);
+                 sensor_status, needs_calibration);
   espp::omega_control::MouseState mouse_state;
   mouse_state.common.center = center;
   mouse_state.common.range = range;
@@ -679,6 +633,7 @@ std::string boot(Host &host, int reset_reason) {
                                                .now = steady_at(host.now_ns()),
                                                .recalibration_requested = recal,
                                                .output_hold = hold,
+                                               .needs_calibration = needs_calibration.load(),
                                                .settings = store.settings()};
     if (xac_selection) {
       xac_tick(xac_state, input, ports);

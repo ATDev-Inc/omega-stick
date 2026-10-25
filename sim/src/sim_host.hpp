@@ -128,7 +128,10 @@ private:
   void run_script_steps();
   void execute(const Step &step);
   std::string action_reply(const Step &step);
-  std::string request(uint8_t type, const std::vector<uint8_t> &payload);
+  /// Sends one request over the calibration link and classifies the reply; on
+  /// "ok", `reply_payload` (if given) receives the reply's payload.
+  std::string request(uint8_t type, const std::vector<uint8_t> &payload,
+                      std::vector<uint8_t> *reply_payload = nullptr);
   void evaluate(const Step &step, size_t index);
   void record(bool pass, int64_t at_ms, const std::string &what);
   json::Value hello_message();

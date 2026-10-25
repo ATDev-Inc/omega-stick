@@ -51,14 +51,12 @@ Last reviewed: 2026-10-25.
 
 ## Firmware defects
 
-- [ ] A failed calibration at first boot halts the firmware before USB starts
-      (`main.cpp`), so a partial first sweep leaves a board that never
-      enumerates until a full circle is swept at boot, with prompts nobody can
-      see. Decide between starting USB with output held neutral so the console
-      can recalibrate, retrying the sweep, or keeping the halt (raised on
-      #44). Evidence from the board: a blind first-boot calibration (stick
+- [x] A failed calibration at first boot halted the firmware before USB
+      started (raised on #44). Decided in D26: a stick without a usable
+      calibration boots quiet, output held neutral, and is calibrated from the
+      console. Evidence from the board: a blind first-boot calibration (stick
       untouched) gave a usable range smaller than its noise radius, so in
-      mouse mode the cursor jitters continuously and no deadzone override hides
+      mouse mode the cursor jittered continuously and no deadzone override hid
       it (the center override caps at 0.5). The same symptom follows any later
       movement: with a noise-sized range an axis reads pinned near 1.0, and a
       held nudge never releases, so the right button stays down. A real
