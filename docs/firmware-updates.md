@@ -412,7 +412,11 @@ Things to know:
   handover happens per power-on: if the accepted image crash-loops too, both
   images are broken, and the device stays put rather than swapping back and
   forth and wearing out the otadata sectors. Unplugging it allows one more
-  handover.
+  handover. The fallback image has to contain this code: an older OTA-on build
+  in the other slot does not read the marker, so it still rejects itself at
+  the deadline and the device returns to the crashing image. A stick is
+  protected against a crash loop once both slots hold firmware with this
+  change, that is after the second update from it.
 
 ### Going back deliberately
 
