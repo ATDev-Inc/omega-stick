@@ -1153,6 +1153,21 @@
   // serial?, isSaved } where isSaved is true for the exact port or device
   // object that was connected before. Never guesses between several sticks.
   // reason: exact | only-match | ambiguous | none.
+  // Arbitrates between the automatic reconnect loop and a connect the person
+  // started (the Reconnect button's picker, or a Connect button). The manual
+  // attempt owns connection setup while it runs: the device it is opening is
+  // already marked opened but is not the transport yet, so a loop that kept
+  // scanning would see the other stick as the only free match and open it too.
+  // s: { transportPresent, manualInProgress, manualSucceeded (a manual connect
+  // succeeded since the loop started) }. Returns "stop" (end the loop for good),
+  // "wait" (open nothing; check again on the next wake) or "try" (the loop may
+  // look for a device and open it). The loop asks again after every await.
+  function autoReconnectStep(s) {
+    if (s.transportPresent || s.manualSucceeded) return "stop";
+    if (s.manualInProgress) return "wait";
+    return "try";
+  }
+
   function pickReconnectCandidate(link, candidates) {
     const free = (candidates || []).filter((c) => c && !c.opened && c.kind === link.kind);
     const saved = free.find((c) => c.isSaved);
@@ -1472,7 +1487,7 @@
   const OmegaProtocol = {
     SIM_PATTERNS, SIM_FAULTS, SIM_NEXT_IMAGE,
     encodeSimMessage, parseSimMessage, validateSimScript, createHidAccumulator,
-    pickReconnectCandidate,
+    pickReconnectCandidate, autoReconnectStep,
     FEED_URL, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
     OTA_SLOT_SIZE, CHIP_ID_ESP32S3, DEFAULT_PROJECT, KIND_LABEL,
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,

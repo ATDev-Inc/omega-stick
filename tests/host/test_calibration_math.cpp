@@ -743,3 +743,29 @@ TEST(calibrate_stops_at_the_first_failing_step) {
   CHECK_EQ(reads, Cal::CENTER_SAMPLES); // range calibration never ran
   CHECK_NEAR(range.usable_radius, 99.0f, 0.0);
 }
+
+TEST(calibration_accepted_at_the_threshold_survives_the_save_load_round_trip) {
+  // The file keeps six significant digits, so the noise and usable radii round
+  // independently; a sweep accepted exactly at the ratio must still load.
+  support::TempDir dir("cal_threshold");
+  const auto path = dir.file("omega_calibration.cfg");
+  espp::OmegaCalibration::CenterResult c;
+  c.center_x = 0.1f;
+  c.center_y = -0.2f;
+  c.noise_radius = 0.0861234f;
+  c.deadzone = 0.5f;
+  espp::OmegaCalibration::RangeResult r;
+  r.usable_radius = espp::OmegaCalibration::MIN_USABLE_TO_NOISE_RATIO * c.noise_radius;
+  r.min_x = -r.usable_radius;
+  r.max_x = r.usable_radius;
+  r.min_y = -r.usable_radius;
+  r.max_y = r.usable_radius;
+  r.deadzone = 0.1f;
+  std::error_code ec;
+  CHECK(espp::OmegaCalibration::check_usable(c, r, ec));
+  CHECK(espp::OmegaCalibration::save(c, r, path, ec));
+  espp::OmegaCalibration::CenterResult center;
+  espp::OmegaCalibration::RangeResult range;
+  CHECK(espp::OmegaCalibration::load(center, range, path, ec));
+  CHECK(!ec);
+}
