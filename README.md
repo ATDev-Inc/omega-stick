@@ -297,7 +297,7 @@ file in a Chromium-based browser (Chrome, Edge, Opera) from `file://`,
 `http://localhost`, or an https origin, then connect. From there you can:
 
 - view live calibration and settings, and adjust the manual center offset,
-  deadzone overrides, and nudge-click tuning;
+  deadzone overrides, and nudge-click tuning, or turn nudge clicks off;
 - switch between mouse and XAC mode;
 - run the full center and range calibration (use Web Serial to see the
   prompts; the button stays disabled until the result arrives). A stick with

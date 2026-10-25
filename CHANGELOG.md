@@ -14,6 +14,14 @@ in `version.txt`.
 
 ### Added
 
+- **On/off switch for nudge clicks.** A "Nudge clicks" checkbox in the
+  console's nudge-click block turns nudge clicks and scrolling off or on live
+  (new request `SET_NUDGE_ENABLED`), so the stick only moves the cursor without
+  having to max out the enter threshold. A nudge held at that moment is released
+  at once, the tuning values are kept, and "Save current state to flash" keeps
+  the choice (`nudge_enabled` in `omega_settings.cfg`; existing settings load
+  with nudge clicks on). XAC mode is unaffected. Older firmware shows the box
+  checked and disabled. ([#NN](https://github.com/ATDev-Inc/omega-stick/pull/NN))
 - **Schema version in the saved files.** Calibration and settings now each
   carry `schema=1`, so future firmware can migrate them or refuse a file it
   cannot read and fall back to recalibrating or defaults. Existing boards keep
