@@ -497,6 +497,137 @@ TEST(control_xac_drift_is_not_applied_while_the_stick_is_moving) {
   CHECK_EQ(ports.count("apply_drift"), 0);
 }
 
+// ---- nudge on/off switch (DeviceSettings::nudge_enabled) --------------------
+
+namespace {
+
+oc::StepInput nudge_off(oc::StepInput in) {
+  in.settings.nudge_enabled = false;
+  return in;
+}
+
+} // namespace
+
+TEST(control_mouse_nudge_disabled_never_starts_a_nudge) {
+  // Each push would nudge with the switch on (the default)...
+  struct Push {
+    float x, y;
+    NudgeDirection when_on;
+  };
+  const Push pushes[] = {{0.9f, 0.0f, NudgeDirection::RIGHT},
+                         {-0.9f, 0.0f, NudgeDirection::LEFT},
+                         {0.0f, FORWARD_Y * 0.9f, NudgeDirection::FORWARD},
+                         {0.0f, -FORWARD_Y * 0.9f, NudgeDirection::BACK}};
+  for (const auto &p : pushes) {
+    oc::MouseState on = fresh_mouse();
+    enter_nudge(on, p.x, p.y);
+    CHECK(on.nudge == p.when_on);
+
+    // ...and with it off the same pushes only move the cursor, however long
+    // they are held.
+    FakePorts ports;
+    oc::MouseState s = fresh_mouse();
+    for (int ms = 100; ms <= 500; ms += 10) {
+      oc::mouse_tick(s, nudge_off(input(p.x, p.y, ms)), ports);
+      CHECK(s.nudge == NudgeDirection::NONE);
+      CHECK_EQ(ports.mouse.back().buttons, 0);
+      CHECK_EQ(ports.mouse.back().wheel, 0);
+      CHECK_EQ(ports.mouse.back().dx, expected_delta(p.x));
+      CHECK_EQ(ports.mouse.back().dy, expected_delta(p.y));
+    }
+  }
+}
+
+TEST(control_mouse_turning_nudge_off_mid_hold_releases_at_once) {
+  FakePorts ports;
+  oc::MouseState s = fresh_mouse();
+  oc::mouse_tick(s, input(0.0f, FORWARD_Y * 0.9f, 100), ports);
+  CHECK(s.nudge == NudgeDirection::FORWARD);
+  CHECK_EQ(ports.mouse.back().buttons, 0x01);
+
+  // Switched off between window boundaries with the stick still pushed: the
+  // button comes up on this tick and the cursor follows the stick again.
+  oc::mouse_tick(s, nudge_off(input(0.0f, FORWARD_Y * 0.9f, 150)), ports);
+  CHECK(s.nudge == NudgeDirection::NONE);
+  CHECK_EQ(ports.mouse.back().buttons, 0);
+  CHECK_EQ(ports.mouse.back().dy, expected_delta(FORWARD_Y * 0.9f));
+}
+
+TEST(control_mouse_turning_nudge_off_mid_scroll_stops_the_wheel) {
+  oc::MouseState s = fresh_mouse();
+  enter_nudge(s, -0.9f, 0.0f);
+  CHECK(s.nudge == NudgeDirection::LEFT);
+  for (int ms = 110; ms <= 300; ms += 10) {
+    const auto out = oc::mouse_step(s, nudge_off(input(-0.9f, 0.0f, ms)));
+    CHECK(s.nudge == NudgeDirection::NONE);
+    CHECK_EQ(out.mouse.wheel, 0);
+    CHECK_EQ(out.mouse.buttons, 0);
+    CHECK_EQ(out.mouse.dx, expected_delta(-0.9f));
+  }
+}
+
+TEST(control_mouse_turning_nudge_back_on_does_not_nudge_from_a_stale_reading) {
+  oc::MouseState s = fresh_mouse();
+  // Pushed far while off, across several windows.
+  for (int ms = 100; ms <= 300; ms += 10) {
+    oc::mouse_step(s, nudge_off(input(0.9f, 0.0f, ms)));
+  }
+  // Back on with the stick still there: no change in magnitude, no nudge.
+  for (int ms = 310; ms <= 500; ms += 10) {
+    oc::mouse_step(s, input(0.9f, 0.0f, ms));
+    CHECK(s.nudge == NudgeDirection::NONE);
+  }
+  // A fresh push from rest nudges as usual.
+  for (int ms = 510; ms <= 600; ms += 10) {
+    oc::mouse_step(s, input(0.0f, 0.0f, ms));
+  }
+  oc::mouse_step(s, input(0.9f, 0.0f, 700));
+  CHECK(s.nudge == NudgeDirection::RIGHT);
+}
+
+TEST(control_mouse_re_enabling_mid_window_does_not_click_from_movement_made_while_off) {
+  oc::MouseState s = fresh_mouse(); // rest baseline at t=0, 100 ms windows
+  // Pushed far while off, entirely inside the first window.
+  for (int ms = 10; ms <= 90; ms += 10) {
+    oc::mouse_step(s, nudge_off(input(0.9f, 0.0f, ms)));
+  }
+  // Switched back on at the window boundary with the stick still there and
+  // no new gesture: the movement made while off must not become a click.
+  for (int ms = 100; ms <= 300; ms += 10) {
+    const auto out = oc::mouse_step(s, input(0.9f, 0.0f, ms));
+    CHECK(s.nudge == NudgeDirection::NONE);
+    CHECK_EQ(out.mouse.buttons, 0);
+  }
+  // A fresh push from rest still nudges.
+  for (int ms = 310; ms <= 450; ms += 10) {
+    oc::mouse_step(s, input(0.0f, 0.0f, ms));
+  }
+  oc::mouse_step(s, input(0.9f, 0.0f, 560));
+  CHECK(s.nudge == NudgeDirection::RIGHT);
+}
+
+TEST(control_xac_output_ignores_the_nudge_switch) {
+  // XAC mode has no nudge clicks: the same inputs give the same reports.
+  FakePorts on_ports;
+  FakePorts off_ports;
+  oc::XacState on;
+  oc::XacState off;
+  const float xs[] = {0.0f, 0.9f, 0.9f, -0.9f, 0.0f, 0.3f};
+  int ms = 0;
+  for (const float x : xs) {
+    for (int k = 0; k < 15; ++k, ms += 10) {
+      oc::xac_tick(on, input(x, -x, ms), on_ports);
+      oc::xac_tick(off, nudge_off(input(x, -x, ms)), off_ports);
+    }
+  }
+  CHECK_EQ(on_ports.xac.size(), off_ports.xac.size());
+  for (size_t i = 0; i < on_ports.xac.size(); ++i) {
+    CHECK_EQ(on_ports.xac[i].x, off_ports.xac[i].x);
+    CHECK_EQ(on_ports.xac[i].y, off_ports.xac[i].y);
+  }
+  CHECK_EQ(off_ports.xac.back().x, 0.3f);
+}
+
 // ---- sensor fault (D21) -----------------------------------------------------
 
 TEST(control_mouse_sensor_fault_sends_neutral_reports_after_three_failed_reads) {

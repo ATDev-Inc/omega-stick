@@ -232,6 +232,11 @@ public:
     /// a nudge.
     std::chrono::milliseconds nudge_hold_time{100};
 
+    /// Master switch for nudge clicks. When false the control loop never
+    /// starts a nudge and releases one that is held, so the stick only moves
+    /// the cursor; the three tuning values above are kept as they are.
+    bool nudge_enabled{true};
+
     // ------------------------------------------------------------------
     // Input mode
     // ------------------------------------------------------------------
@@ -276,6 +281,7 @@ public:
       out << "nudge_distance_threshold=" << settings.nudge_distance_threshold << "\n";
       out << "nudge_exit_threshold=" << settings.nudge_exit_threshold << "\n";
       out << "nudge_hold_time_ms=" << static_cast<float>(settings.nudge_hold_time.count()) << "\n";
+      out << "nudge_enabled=" << (settings.nudge_enabled ? 1 : 0) << "\n";
       out << "input_mode=" << static_cast<float>(static_cast<uint8_t>(settings.input_mode)) << "\n";
       out.flush();
 
@@ -339,6 +345,9 @@ public:
       settings.nudge_hold_time = std::chrono::milliseconds(
           values.count("nudge_hold_time_ms") ? static_cast<long long>(values["nudge_hold_time_ms"])
                                              : 100);
+      // A file without the key (older firmware) keeps nudge clicks on.
+      settings.nudge_enabled =
+          values.count("nudge_enabled") ? values["nudge_enabled"] != 0.0f : true;
       settings.input_mode = values.count("input_mode")
                                 ? static_cast<InputMode>(static_cast<uint8_t>(values["input_mode"]))
                                 : InputMode::MOUSE;

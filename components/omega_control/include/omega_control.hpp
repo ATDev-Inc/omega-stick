@@ -273,13 +273,30 @@ inline StepOutput mouse_step(MouseState &s, const StepInput &in) {
   // a restart.
   const auto &nudge_settings = in.settings;
 
+  // With nudge clicks switched off (SET_NUDGE_ENABLED), a held nudge is
+  // released on this very tick rather than at the next window, so a held
+  // button or scroll never outlives the switch. The gesture baseline follows
+  // the stick every tick while off, so switching back on, even mid-window,
+  // measures only movement made after the switch: a push made while off can
+  // never turn into a click.
+  if (!nudge_settings.nudge_enabled) {
+    if (s.nudge != NudgeDirection::NONE) {
+      s.nudge = NudgeDirection::NONE;
+      s.scroll_poll_count = 0;
+    }
+    s.prev_x = jx;
+    s.prev_y = jy;
+    s.window_start = in.now;
+  }
+
   // --- Nudge direction detection only (runs every nudge_hold_time window) ---
   if (duration >= nudge_settings.nudge_hold_time) {
     const float prev_mag = std::hypot(s.prev_x, s.prev_y);
     const float mapped_magnitude = cur_mag - prev_mag;
 
     if (s.nudge == NudgeDirection::NONE) {
-      if (mapped_magnitude >= nudge_settings.nudge_distance_threshold) {
+      if (nudge_settings.nudge_enabled &&
+          mapped_magnitude >= nudge_settings.nudge_distance_threshold) {
         s.nudge = classify_nudge(jx, jy);
         s.scroll_poll_count = 0;
       }
@@ -329,6 +346,8 @@ inline StepOutput xac_step(XacState &s, const StepInput &in) {
     return detail::recalibration_output();
   }
 
+  // XAC mode has no nudge clicks, so DeviceSettings::nudge_enabled (and the
+  // nudge tuning) does not affect it: the axes always follow the stick.
   StepOutput out;
   out.send_report = true;
   // IMPORTANT:

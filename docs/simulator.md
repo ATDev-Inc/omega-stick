@@ -185,7 +185,7 @@ Each step has `at_ms` and exactly one of:
 | `stick: [x, y]` | Keyframe. The stick moves linearly between consecutive keyframes |
 | `pattern: name` | Play a built-in pattern from this time (optional `duration_ms`) |
 | `fault`, `drift`, `noise`, `next_image` | Same values as the WebSocket messages |
-| `action` | A console request sent through the real protocol: `recalibrate`, `save`, `restart`, `set_mode` (with `value`: `mouse` or `xac`), `set_deadzone` (with `value`: `{"center": 0.1, "range": 0.05}`, either may be omitted), `flash` (uploads a generated firmware image through OTA_BEGIN/DATA/FINISH; optional `version`, default `9.9.9-sim`), `revert`, `mark_valid`, `fw_info` (GET_FW_INFO), and `plant_unusable_calibration`, which is not a console request: it writes a calibration file below the usable-to-noise ratio (the numbers of a board calibrated with the stick untouched) straight to the simulated flash for the next boot to load (follow it with `restart`), replying `ok` once written. Optional `expect_reply`: `ok`, `busy`, `invalid`, `unsupported` (function_not_supported), `error`; without it the reply must be `ok`. For `flash` the reply checked is the first failure, else OTA_FINISH's |
+| `action` | A console request sent through the real protocol: `recalibrate`, `save`, `restart`, `set_mode` (with `value`: `mouse` or `xac`), `set_nudge_enabled` (with `value`: `true` or `false`, SET_NUDGE_ENABLED; `save` keeps it across a `restart`), `set_deadzone` (with `value`: `{"center": 0.1, "range": 0.05}`, either may be omitted), `flash` (uploads a generated firmware image through OTA_BEGIN/DATA/FINISH; optional `version`, default `9.9.9-sim`), `revert`, `mark_valid`, `fw_info` (GET_FW_INFO), and `plant_unusable_calibration`, which is not a console request: it writes a calibration file below the usable-to-noise ratio (the numbers of a board calibrated with the stick untouched) straight to the simulated flash for the next boot to load (follow it with `restart`), replying `ok` once written. Optional `expect_reply`: `ok`, `busy`, `invalid`, `unsupported` (function_not_supported), `error`; without it the reply must be `ok`. For `flash` the reply checked is the first failure, else OTA_FINISH's |
 | `expect` | Assertions, checked at that time (headless mode reports them; interactive mode logs them) |
 
 `expect` keys:
@@ -215,7 +215,9 @@ Scenarios kept in [sim/scenarios/](../sim/scenarios/) run headless in CI.
 console calibrates it, and `unusable_calibration_boots_quiet.json` that a saved
 calibration below the usable-to-noise ratio boots quiet, reports it in
 GET_DIAGNOSTICS, survives a failed sweep still quiet, and resumes after a good
-one. `update_never_confirmed.json` flashes a good image that nobody confirms and
+one. `nudge_switch_off.json` turns nudge clicks off and checks that nudges
+then only move the cursor, also after a saved restart, until they are turned
+back on. `update_never_confirmed.json` flashes a good image that nobody confirms and
 checks that the deadline rolls it back. `update_crash_loop_after_confirm.json`
 confirms an image that then crash-loops and checks that the crash-loop handover
 sticks with no console attached.

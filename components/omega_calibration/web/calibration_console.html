@@ -77,7 +77,7 @@
                                    tuning, and input mode are untouched.
 
     device -> host (calibration module):
-      0xD0 STATE   (reply to GET_STATE) -- fixed 79-byte little-endian
+      0xD0 STATE   (reply to GET_STATE) -- fixed 80-byte little-endian
                     struct, in this exact order:
                       f32 center_x
                       f32 center_y
@@ -101,6 +101,12 @@
                       f32 nudge_exit_threshold             (absolute)
                       u32 nudge_time_ms                    (measurement window)
                       u8  input_mode                       (0 = mouse, 1 = XAC)
+                      u8  nudge_enabled                    (0/1; firmware
+                                                            without the switch
+                                                            sends 79 bytes:
+                                                            nudge clicks always
+                                                            on, the checkbox is
+                                                            shown disabled)
       0x57 RESTART                (no payload) -- reply OK is sent first, then
                                    the device reboots ~750 ms later (USB
                                    re-enumerates; reconnect afterwards).
@@ -133,6 +139,12 @@
                                    status and the reset log. Reply:
                                    DIAGNOSTICS, or ERROR when the firmware
                                    does not publish diagnostics.
+      0x60 SET_NUDGE_ENABLED      u8 enabled (0 = nudge clicks off, 1 = on).
+                                   Live; SAVE_TO_FLASH persists it. The
+                                   nudge tuning is kept either way. Reply:
+                                   OK, or ERROR for any other value or
+                                   length. Firmware without the switch does
+                                   not answer it (see STATE's last byte).
       The OTA messages reply ERROR (function_not_supported) if the firmware
       was built without an OTA engine wired in.
       0xD2 FW_INFO  (reply to GET_FW_INFO) -- u8 pending_verify (0/1),
@@ -632,6 +644,11 @@
       <fieldset>
         <legend>Nudge-click tuning</legend>
         <div class="edit-row">
+          <label><input type="checkbox" id="nudgeEnabled" checked disabled> Nudge clicks</label>
+          <span class="muted">unchecked: the stick only moves the cursor, no clicks or scrolling. Applies live; the values below are kept</span>
+        </div>
+        <p class="muted" id="nudgeEnabledNote" style="margin: 0 0 8px;" hidden></p>
+        <div class="edit-row">
           <label for="nudgeEnter">Nudge enter threshold</label>
           <input type="number" id="nudgeEnter" step="0.01" min="0.05" max="1" value="0.5">
           <span class="muted">magnitude CHANGE (delta), measured once per time window, that starts a nudge</span>
@@ -853,6 +870,7 @@
     MARK_VALID: 0x5D,
     REVERT: 0x5E,
     GET_DIAGNOSTICS: 0x5F,
+    SET_NUDGE_ENABLED: 0x60,
     STATE: 0xD0,
     CALIBRATION_RESULT: 0xD1,
     FW_INFO: 0xD2,
@@ -1006,9 +1024,12 @@
     return { id: MODULE_CALIBRATION, how: "missing", versionMismatch: false };
   }
 
-  // Fixed 79-byte STATE struct; see calibration_service.hpp.
+  // Fixed 80-byte STATE struct; see calibration_service.hpp. The trailing u8
+  // nudge_enabled is newer than the rest: firmware without the nudge on/off
+  // switch sends 79 bytes, which decodes as nudgeEnabled null (nudge clicks
+  // are always on there; see nudgeControls). Bytes after it are ignored.
   function decodeState(payload) {
-    if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79)");
+    if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79 or 80)");
     const v = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
     let o = 0;
     const f32 = () => { const x = v.getFloat32(o, true); o += 4; return x; };
@@ -1030,7 +1051,28 @@
     s.nudgeExitThreshold = f32();
     s.nudgeTimeMs = u32();
     s.inputMode = u8();
+    s.nudgeEnabled = o < payload.length ? u8() !== 0 : null;
     return s;
+  }
+
+  // The "Nudge clicks" checkbox and the tuning fields under it, for a
+  // decoded STATE's nudgeEnabled (true, false, or null from firmware without
+  // the switch). Off keeps the tuning values but greys them out; firmware
+  // without the switch shows the box checked and disabled, with a note,
+  // because it would not answer SET_NUDGE_ENABLED.
+  const NUDGE_SWITCH_UNSUPPORTED_NOTE =
+    "This firmware has no nudge on/off switch, so nudge clicks stay on. Update the firmware to turn them off here.";
+  function nudgeControls({ connected, busy, haveState, nudgeEnabled }) {
+    const known = nudgeEnabled === true || nudgeEnabled === false;
+    const live = !!connected && !busy && !!haveState;
+    const off = nudgeEnabled === false;
+    return {
+      checked: !off,
+      toggleDisabled: !live || !known,
+      tuningDisabled: off,
+      applyDisabled: !live || off,
+      note: haveState && !known ? NUDGE_SWITCH_UNSUPPORTED_NOTE : "",
+    };
   }
 
   // Variable-length DIAGNOSTICS reply; see calibration_service.hpp. The
@@ -1106,6 +1148,9 @@
   }
   function encodeSetInputMode(mode) {
     return new Uint8Array([mode]);
+  }
+  function encodeSetNudgeEnabled(enabled) {
+    return new Uint8Array([enabled ? 1 : 0]);
   }
 
   // ---------------------------------------------------------------------
@@ -1981,7 +2026,7 @@
   const SIM_SOURCE_KINDS = ["manual", "pattern", "script"];
   const SIM_REPLIES = ["ok", "busy", "invalid", "unsupported", "error"];
   const SIM_ACTIONS = ["recalibrate", "save", "restart", "set_mode", "set_deadzone", "flash", "revert", "mark_valid", "fw_info",
-    "plant_unusable_calibration"];
+    "plant_unusable_calibration", "set_nudge_enabled"];
   const SIM_SCRIPT_MAX_BYTES = 262144, SIM_SCRIPT_MAX_STEPS = 5000;
   const SIM_MAX_AT_MS = 86400000; // a day
   const SIM_STEP_KEYS = ["stick", "pattern", "fault", "drift", "noise", "next_image", "action", "expect"];
@@ -2186,6 +2231,8 @@
     }
     if (a === "set_mode") {
       if (step.value !== "mouse" && step.value !== "xac") add(at + "set_mode needs \"value\": \"mouse\" or \"xac\".");
+    } else if (a === "set_nudge_enabled") {
+      if (step.value !== true && step.value !== false) add(at + "set_nudge_enabled needs \"value\": true or false.");
     } else if (a === "set_deadzone") {
       const v = step.value;
       if (!isObj(v)) { add(at + "set_deadzone needs a \"value\" object with \"center\" and/or \"range\"."); return; }
@@ -2294,7 +2341,8 @@
     crc32, buildFrame, FrameParser, readU32,
     parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
     encodeSetManualOffset, encodeSetDeadzoneOverride,
-    encodeSetNudgeSettings, encodeSetInputMode,
+    encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled,
+    NUDGE_SWITCH_UNSUPPORTED_NOTE, nudgeControls,
   };
   globalThis.OmegaProtocol = OmegaProtocol;
   if (typeof module !== "undefined" && module.exports) module.exports = OmegaProtocol;
@@ -2313,7 +2361,8 @@
     const {
       MAX_FRAME, MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, PROTOCOL_ID, PROTOCOL_VERSION, TYPE, INPUT_MODE,
       buildFrame, FrameParser, readU32, parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
-      encodeSetManualOffset, encodeSetDeadzoneOverride, encodeSetNudgeSettings, encodeSetInputMode,
+      encodeSetManualOffset, encodeSetDeadzoneOverride, encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled,
+      nudgeControls,
       inspectImage, buildFlashPlan, buildRevertPlan, decideOutcome, CONFIRM_CHECKS, runConfirmCheck, confirmFailureNotice, describeSensorState,
       calibrationNotice, describeCalibrationState,
       revertAvailability, describePrevState, reconnectDeadline, reconnectWaitText, resumesOnReconnect,
@@ -2330,7 +2379,7 @@
       0x53: "SET_NUDGE_SETTINGS", 0x54: "SET_INPUT_MODE", 0x55: "SAVE_TO_FLASH",
       0x56: "START_CALIBRATION", 0x57: "RESTART", 0x58: "OTA_BEGIN", 0x59: "OTA_DATA",
       0x5A: "OTA_FINISH", 0x5B: "OTA_ABORT", 0x5C: "GET_FW_INFO", 0x5D: "MARK_VALID", 0x5E: "REVERT",
-      0x5F: "GET_DIAGNOSTICS",
+      0x5F: "GET_DIAGNOSTICS", 0x60: "SET_NUDGE_ENABLED",
       0xD0: "STATE", 0xD1: "CALIBRATION_RESULT", 0xD2: "FW_INFO", 0xD3: "DIAGNOSTICS", 0xDF: "OK", 0xFE: "ERROR",
     };
     const CMD_TIMEOUT_MS = 5000;
@@ -2348,7 +2397,7 @@
                       "refreshBtn", "saveFlashBtn", "stateInfo",
                       "offsetX", "offsetY", "applyOffsetBtn", "zeroOffsetBtn",
                       "centerDzEnable", "centerDzValue", "rangeDzEnable", "rangeDzValue", "applyDeadzoneBtn",
-                      "nudgeEnter", "nudgeExit", "nudgeTime", "applyNudgeBtn",
+                      "nudgeEnabled", "nudgeEnabledNote", "nudgeEnter", "nudgeExit", "nudgeTime", "applyNudgeBtn",
                       "modeMouseBtn", "modeXacBtn",
                       "recalibrateBtn", "recalInfo", "calNeededNotice",
                       "diagRefreshBtn", "diagInfo", "resetList",
@@ -2765,7 +2814,15 @@
       els.applyOffsetBtn.disabled = !connected || busy || !haveState;
       els.zeroOffsetBtn.disabled = !connected || busy || !haveState;
       els.applyDeadzoneBtn.disabled = !connected || busy || !haveState;
-      els.applyNudgeBtn.disabled = !connected || busy || !haveState;
+      // Nudge on/off switch and tuning: decided by OmegaProtocol.nudgeControls (unit tested).
+      const nc = nudgeControls({ connected, busy, haveState, nudgeEnabled: state ? state.nudgeEnabled : null });
+      els.nudgeEnabled.disabled = nc.toggleDisabled;
+      els.nudgeEnter.disabled = nc.tuningDisabled;
+      els.nudgeExit.disabled = nc.tuningDisabled;
+      els.nudgeTime.disabled = nc.tuningDisabled;
+      els.applyNudgeBtn.disabled = nc.applyDisabled;
+      els.nudgeEnabledNote.textContent = nc.note;
+      els.nudgeEnabledNote.hidden = !nc.note;
       // A mode switch restarts the device, which would undo a pending update.
       els.modeMouseBtn.disabled = !connected || busy || !haveState || uc.modeLocked;
       els.modeXacBtn.disabled = !connected || busy || !haveState || uc.modeLocked;
@@ -2926,7 +2983,7 @@
     }
 
     // ===================================================================
-    // STATE decode/encode helpers (fixed 79-byte struct, see the header
+    // STATE decode/encode helpers (fixed 80-byte struct, see the header
     // comment for the exact field order/sizes)
     // ===================================================================
     let state = null; // decoded STATE payload, kept as the form's source of truth
@@ -2956,6 +3013,7 @@
       els.nudgeEnter.value = s.nudgeEnterThreshold.toFixed(2);
       els.nudgeExit.value = s.nudgeExitThreshold.toFixed(2);
       els.nudgeTime.value = String(s.nudgeTimeMs);
+      els.nudgeEnabled.checked = s.nudgeEnabled !== false;
 
       els.modeMouseBtn.classList.toggle("active", s.inputMode === INPUT_MODE.MOUSE);
       els.modeXacBtn.classList.toggle("active", s.inputMode === INPUT_MODE.XAC);
@@ -3144,6 +3202,25 @@
         await refreshAfterApply("SET_NUDGE_SETTINGS");
       } catch (e) {
         logLine("err", "SET_NUDGE_SETTINGS failed: " + e.message);
+      } finally {
+        busy = false; updateUI();
+        if (transport) setStatus("connected", "Connected");
+      }
+    });
+
+    els.nudgeEnabled.addEventListener("change", async () => {
+      const enabled = els.nudgeEnabled.checked;
+      if (!transport || busy) { els.nudgeEnabled.checked = !enabled; return; }
+      busy = true; updateUI(); setStatus("busy", enabled ? "Turning nudge clicks on..." : "Turning nudge clicks off...");
+      try {
+        await transact(TYPE.SET_NUDGE_ENABLED, encodeSetNudgeEnabled(enabled), [TYPE.OK], CMD_TIMEOUT_MS, 1);
+        logLine("sys", "Nudge clicks turned " + (enabled ? "on" : "off") +
+                       " live. Use Save current state to flash to keep it after a restart.");
+        await refreshAfterApply("SET_NUDGE_ENABLED");
+      } catch (e) {
+        logLine("err", "SET_NUDGE_ENABLED failed: " + e.message);
+        // Show what the device last reported, not what was clicked.
+        els.nudgeEnabled.checked = !(state && state.nudgeEnabled === false);
       } finally {
         busy = false; updateUI();
         if (transport) setStatus("connected", "Connected");

@@ -40,6 +40,7 @@ TEST(script_accepts_every_step_kind) {
     {"at_ms":40,"noise":0.002},
     {"at_ms":50,"next_image":"crash_loop"},
     {"at_ms":60,"action":"set_mode","value":"xac"},
+    {"at_ms":65,"action":"set_nudge_enabled","value":false},
     {"at_ms":70,"action":"flash","version":"1.2.3"},
     {"at_ms":75,"action":"fw_info","expect_reply":"unsupported"},
     {"at_ms":80,"expect":{"calibrated":true,"center_max":0.05,"mouse_moved":"right","mode":"xac"}}
@@ -97,6 +98,9 @@ TEST(script_rejects_malformed_steps) {
   CHECK(!valid(R"({"at_ms":0,"fault":"melted"})"));
   CHECK(!valid(R"({"at_ms":0,"action":"explode"})"));
   CHECK(!valid(R"({"at_ms":0,"action":"set_mode","value":"gamepad"})"));
+  CHECK(!valid(R"({"at_ms":0,"action":"set_nudge_enabled"})"));
+  CHECK(!valid(R"({"at_ms":0,"action":"set_nudge_enabled","value":"off"})"));
+  CHECK(!valid(R"({"at_ms":0,"action":"set_nudge_enabled","value":0})"));
   CHECK(!valid(R"({"at_ms":0,"action":"recalibrate","expect_reply":"fine"})"));
   CHECK(!valid(R"({"at_ms":0,"expect":{"unknown_key":true}})"));
   CHECK(!valid(R"({"at_ms":0,"expect":{"mouse_moved":"sideways"}})"));

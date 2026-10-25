@@ -584,6 +584,10 @@ std::string Host::action_reply(const Step &step) {
   if (step.name == "set_mode") {
     return request(type(Msg::SetInputMode), {static_cast<uint8_t>(step.text == "xac" ? 1 : 0)});
   }
+  if (step.name == "set_nudge_enabled") {
+    // step.text is "on" or "off" (script value true or false).
+    return request(type(Msg::SetNudgeEnabled), {static_cast<uint8_t>(step.text == "on" ? 1 : 0)});
+  }
   if (step.name == "set_deadzone") {
     uint8_t flags = 0;
     if (step.center) {

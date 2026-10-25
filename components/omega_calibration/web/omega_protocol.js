@@ -36,6 +36,7 @@
     MARK_VALID: 0x5D,
     REVERT: 0x5E,
     GET_DIAGNOSTICS: 0x5F,
+    SET_NUDGE_ENABLED: 0x60,
     STATE: 0xD0,
     CALIBRATION_RESULT: 0xD1,
     FW_INFO: 0xD2,
@@ -189,9 +190,12 @@
     return { id: MODULE_CALIBRATION, how: "missing", versionMismatch: false };
   }
 
-  // Fixed 79-byte STATE struct; see calibration_service.hpp.
+  // Fixed 80-byte STATE struct; see calibration_service.hpp. The trailing u8
+  // nudge_enabled is newer than the rest: firmware without the nudge on/off
+  // switch sends 79 bytes, which decodes as nudgeEnabled null (nudge clicks
+  // are always on there; see nudgeControls). Bytes after it are ignored.
   function decodeState(payload) {
-    if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79)");
+    if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79 or 80)");
     const v = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
     let o = 0;
     const f32 = () => { const x = v.getFloat32(o, true); o += 4; return x; };
@@ -213,7 +217,28 @@
     s.nudgeExitThreshold = f32();
     s.nudgeTimeMs = u32();
     s.inputMode = u8();
+    s.nudgeEnabled = o < payload.length ? u8() !== 0 : null;
     return s;
+  }
+
+  // The "Nudge clicks" checkbox and the tuning fields under it, for a
+  // decoded STATE's nudgeEnabled (true, false, or null from firmware without
+  // the switch). Off keeps the tuning values but greys them out; firmware
+  // without the switch shows the box checked and disabled, with a note,
+  // because it would not answer SET_NUDGE_ENABLED.
+  const NUDGE_SWITCH_UNSUPPORTED_NOTE =
+    "This firmware has no nudge on/off switch, so nudge clicks stay on. Update the firmware to turn them off here.";
+  function nudgeControls({ connected, busy, haveState, nudgeEnabled }) {
+    const known = nudgeEnabled === true || nudgeEnabled === false;
+    const live = !!connected && !busy && !!haveState;
+    const off = nudgeEnabled === false;
+    return {
+      checked: !off,
+      toggleDisabled: !live || !known,
+      tuningDisabled: off,
+      applyDisabled: !live || off,
+      note: haveState && !known ? NUDGE_SWITCH_UNSUPPORTED_NOTE : "",
+    };
   }
 
   // Variable-length DIAGNOSTICS reply; see calibration_service.hpp. The
@@ -289,6 +314,9 @@
   }
   function encodeSetInputMode(mode) {
     return new Uint8Array([mode]);
+  }
+  function encodeSetNudgeEnabled(enabled) {
+    return new Uint8Array([enabled ? 1 : 0]);
   }
 
   // ---------------------------------------------------------------------
@@ -1164,7 +1192,7 @@
   const SIM_SOURCE_KINDS = ["manual", "pattern", "script"];
   const SIM_REPLIES = ["ok", "busy", "invalid", "unsupported", "error"];
   const SIM_ACTIONS = ["recalibrate", "save", "restart", "set_mode", "set_deadzone", "flash", "revert", "mark_valid", "fw_info",
-    "plant_unusable_calibration"];
+    "plant_unusable_calibration", "set_nudge_enabled"];
   const SIM_SCRIPT_MAX_BYTES = 262144, SIM_SCRIPT_MAX_STEPS = 5000;
   const SIM_MAX_AT_MS = 86400000; // a day
   const SIM_STEP_KEYS = ["stick", "pattern", "fault", "drift", "noise", "next_image", "action", "expect"];
@@ -1369,6 +1397,8 @@
     }
     if (a === "set_mode") {
       if (step.value !== "mouse" && step.value !== "xac") add(at + "set_mode needs \"value\": \"mouse\" or \"xac\".");
+    } else if (a === "set_nudge_enabled") {
+      if (step.value !== true && step.value !== false) add(at + "set_nudge_enabled needs \"value\": true or false.");
     } else if (a === "set_deadzone") {
       const v = step.value;
       if (!isObj(v)) { add(at + "set_deadzone needs a \"value\" object with \"center\" and/or \"range\"."); return; }
@@ -1477,7 +1507,8 @@
     crc32, buildFrame, FrameParser, readU32,
     parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
     encodeSetManualOffset, encodeSetDeadzoneOverride,
-    encodeSetNudgeSettings, encodeSetInputMode,
+    encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled,
+    NUDGE_SWITCH_UNSUPPORTED_NOTE, nudgeControls,
   };
   globalThis.OmegaProtocol = OmegaProtocol;
   if (typeof module !== "undefined" && module.exports) module.exports = OmegaProtocol;

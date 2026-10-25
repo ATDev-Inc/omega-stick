@@ -74,7 +74,7 @@ test("constants match stream_frame.hpp and calibration_service.hpp", () => {
     SET_NUDGE_SETTINGS: 0x53, SET_INPUT_MODE: 0x54, SAVE_TO_FLASH: 0x55,
     START_CALIBRATION: 0x56, RESTART: 0x57, OTA_BEGIN: 0x58, OTA_DATA: 0x59,
     OTA_FINISH: 0x5A, OTA_ABORT: 0x5B, GET_FW_INFO: 0x5C, MARK_VALID: 0x5D,
-    REVERT: 0x5E, GET_DIAGNOSTICS: 0x5F, STATE: 0xD0, CALIBRATION_RESULT: 0xD1, FW_INFO: 0xD2, DIAGNOSTICS: 0xD3,
+    REVERT: 0x5E, GET_DIAGNOSTICS: 0x5F, SET_NUDGE_ENABLED: 0x60, STATE: 0xD0, CALIBRATION_RESULT: 0xD1, FW_INFO: 0xD2, DIAGNOSTICS: 0xD3,
     OK: 0xDF, ERROR: 0xFE,
   });
   assert.deepEqual(P.INPUT_MODE, { MOUSE: 0, XAC: 1 });
@@ -152,6 +152,13 @@ test("encodeSetNudgeSettings: f32 enter, f32 exit, u32 ms, little-endian", () =>
 test("encodeSetInputMode: one byte, 0 = mouse, 1 = XAC", () => {
   assert.deepEqual(P.encodeSetInputMode(P.INPUT_MODE.MOUSE), bytes(0));
   assert.deepEqual(P.encodeSetInputMode(P.INPUT_MODE.XAC), bytes(1));
+});
+
+test("encodeSetNudgeEnabled: one byte, 0 = off, 1 = on", () => {
+  assert.deepEqual(P.encodeSetNudgeEnabled(false), bytes(0));
+  assert.deepEqual(P.encodeSetNudgeEnabled(true), bytes(1));
+  assert.deepEqual(P.buildFrame(5, P.TYPE.SET_NUDGE_ENABLED, P.encodeSetNudgeEnabled(false)).subarray(0, 10),
+                   concat(ascii("TO"), bytes(0x10, 5, 0x60), u32le(1), bytes(0)));
 });
 
 test("encodeSetManualOffset: two f32 LE, 8 bytes", () => {
@@ -359,7 +366,8 @@ test("parseDiscovery: truncated payloads throw", () => {
 });
 
 // ---------------------------------------------------------------- decodeState
-// calibration_service.hpp build_state_payload(): 79 bytes, little-endian:
+// calibration_service.hpp build_state_payload(): 80 bytes, little-endian
+// (79 from firmware without the nudge on/off switch):
 //   off  0..23  f32 center_x, center_y, center_noise_radius, center_deadzone,
 //                   center_manual_offset_x, center_manual_offset_y
 //   off 24..55  f32 range_min_x, range_max_x, range_min_y, range_max_y,
@@ -373,8 +381,10 @@ test("parseDiscovery: truncated payloads throw", () => {
 //   off 70..73  f32 nudge_exit_threshold
 //   off 74..77  u32 nudge_time_ms
 //   off 78      u8  input_mode (0 mouse, 1 XAC)
+//   off 79      u8  nudge_enabled (0/1; absent in the 79-byte form)
 
-function statePayload({ hasCenter, hasRange, mode }) {
+// `nudge` undefined builds the older 79-byte form.
+function statePayload({ hasCenter, hasRange, mode, nudge }) {
   return concat(
     // center block (all values exactly representable as f32)
     f32le(0.5), f32le(-0.5), f32le(0.015625), f32le(0.03125), f32le(0.25), f32le(-0.25),
@@ -386,7 +396,8 @@ function statePayload({ hasCenter, hasRange, mode }) {
     bytes(hasRange ? 1 : 0), f32le(0.375),
     // nudge + mode
     f32le(0.2), f32le(0.1), u32le(250),
-    bytes(mode));
+    bytes(mode),
+    nudge === undefined ? bytes() : bytes(nudge));
 }
 
 test("decodeState: 79-byte layout, both manual deadzones present, XAC mode", () => {
@@ -430,8 +441,60 @@ test("decodeState: only one override present", () => {
 
 test("decodeState: short payload throws, longer payload is tolerated", () => {
   const ok = statePayload({ hasCenter: true, hasRange: true, mode: 0 });
-  assert.throws(() => P.decodeState(ok.subarray(0, 78)), /malformed STATE reply \(78 B, expected 79\)/);
-  assert.equal(P.decodeState(concat(ok, bytes(0xAA))).nudgeTimeMs, 250);
+  assert.throws(() => P.decodeState(ok.subarray(0, 78)), /malformed STATE reply \(78 B, expected 79 or 80\)/);
+  const longer = P.decodeState(concat(ok, bytes(1, 0xAA)));
+  assert.equal(longer.nudgeTimeMs, 250);
+  assert.equal(longer.nudgeEnabled, true);
+});
+
+test("decodeState: 80-byte layout carries nudge_enabled as the last byte", () => {
+  const on = statePayload({ hasCenter: false, hasRange: false, mode: 0, nudge: 1 });
+  assert.equal(on.length, 80);
+  assert.equal(P.decodeState(on).nudgeEnabled, true);
+  assert.equal(P.decodeState(on).inputMode, 0);
+  const off = statePayload({ hasCenter: false, hasRange: false, mode: 1, nudge: 0 });
+  assert.equal(P.decodeState(off).nudgeEnabled, false);
+  assert.equal(P.decodeState(off).inputMode, 1);
+  assert.equal(P.decodeState(off).nudgeTimeMs, 250);
+});
+
+test("decodeState: 79-byte STATE from older firmware decodes nudgeEnabled as null", () => {
+  const s = P.decodeState(statePayload({ hasCenter: true, hasRange: true, mode: 1 }));
+  assert.equal(s.nudgeEnabled, null);
+  assert.equal(s.inputMode, 1);
+});
+
+// ---------------------------------------------------------------- nudgeControls
+test("nudgeControls: checkbox follows the device; off greys out the tuning but keeps it", () => {
+  const live = { connected: true, busy: false, haveState: true };
+  assert.deepEqual(P.nudgeControls({ ...live, nudgeEnabled: true }),
+                   { checked: true, toggleDisabled: false, tuningDisabled: false, applyDisabled: false, note: "" });
+  assert.deepEqual(P.nudgeControls({ ...live, nudgeEnabled: false }),
+                   { checked: false, toggleDisabled: false, tuningDisabled: true, applyDisabled: true, note: "" });
+});
+
+test("nudgeControls: firmware without the switch shows it checked, disabled, with a note", () => {
+  const c = P.nudgeControls({ connected: true, busy: false, haveState: true, nudgeEnabled: null });
+  assert.equal(c.checked, true);
+  assert.equal(c.toggleDisabled, true);
+  assert.equal(c.tuningDisabled, false);
+  assert.equal(c.applyDisabled, false);
+  assert.equal(c.note, P.NUDGE_SWITCH_UNSUPPORTED_NOTE);
+});
+
+test("nudgeControls: nothing to toggle while disconnected, busy or before the first STATE", () => {
+  for (const ctx of [{ connected: false, busy: false, haveState: true },
+                     { connected: true, busy: true, haveState: true },
+                     { connected: true, busy: false, haveState: false }]) {
+    const c = P.nudgeControls({ ...ctx, nudgeEnabled: ctx.haveState ? true : null });
+    assert.equal(c.toggleDisabled, true, JSON.stringify(ctx));
+    assert.equal(c.applyDisabled, true, JSON.stringify(ctx));
+    assert.equal(c.note, "", JSON.stringify(ctx));
+  }
+  // Off stays visibly off while busy (the values are kept, just greyed).
+  const busyOff = P.nudgeControls({ connected: true, busy: true, haveState: true, nudgeEnabled: false });
+  assert.equal(busyOff.checked, false);
+  assert.equal(busyOff.tuningDisabled, true);
 });
 
 test("decodeState: honours byteOffset of a parsed frame payload", () => {
