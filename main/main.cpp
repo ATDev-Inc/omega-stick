@@ -17,6 +17,7 @@
 
 #include "esp_app_desc.h" // esp_app_get_description() -- firmware version banner at boot
 #include "esp_attr.h"     // RTC_NOINIT_ATTR -- the crash-loop handover marker
+#include "esp_mac.h"      // esp_efuse_mac_get_default() -- per-chip USB serial number
 #include "esp_ota_ops.h"  // esp_ota_get_running_partition() -- slot tag in the reset log
 #include "esp_system.h" // esp_restart() -- used to apply a live mode switch (see on_mode_changed below)
 
@@ -293,6 +294,21 @@ static const char *reset_reason_name(esp_reset_reason_t reason) {
   default:
     return "unknown";
   }
+}
+
+// USB serial number: the factory MAC as 12 lowercase hex digits, unique per
+// chip. Without it every stick reports espp's default, so the console cannot
+// tell two sticks apart and a persisted WebUSB permission is shared by all.
+static std::string usb_serial_number() {
+  uint8_t mac[6] = {};
+  if (esp_efuse_mac_get_default(mac) != ESP_OK) {
+    printf("WARNING: could not read the factory MAC; using the default USB serial\n");
+    return "000000000001";
+  }
+  char buf[13];
+  snprintf(buf, sizeof(buf), "%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4],
+           mac[5]);
+  return buf;
 }
 
 // The subset of abnormal resets that point at the firmware itself: the kind a
@@ -822,6 +838,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     espp::UsbDevice::Config usb_cfg;
     usb_cfg.manufacturer = "espp";
     usb_cfg.product = "omega-stick mouse";
+    usb_cfg.serial_number = usb_serial_number();
+    printf("USB serial number: %s\n", usb_cfg.serial_number.c_str());
     usb_cfg.vid = OMEGA_USB_VID;
     usb_cfg.pid = OMEGA_USB_PID;
     espp::UsbDevice::CdcFunction cdc_fn;
@@ -995,6 +1013,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     espp::UsbDevice::Config usb_cfg;
     usb_cfg.manufacturer = "espp";
     usb_cfg.product = "omega-stick XAC";
+    usb_cfg.serial_number = usb_serial_number();
+    printf("USB serial number: %s\n", usb_cfg.serial_number.c_str());
     usb_cfg.vid = OMEGA_USB_VID;
     usb_cfg.pid = OMEGA_USB_PID;
 
