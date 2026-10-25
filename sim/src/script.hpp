@@ -45,7 +45,7 @@ struct Step {
   std::string name;             ///< Pattern, Fault, NextImage: the value; Action: the action
   int64_t duration_ms{-1};      ///< Pattern: optional
   double number{0};             ///< Drift, Noise
-  std::string text;             ///< Action value as text (set_mode, flash version)
+  std::string text;             ///< Action value (set_mode, set_nudge_enabled, flash version)
   std::optional<double> center; ///< Action set_deadzone
   std::optional<double> range;
   std::optional<std::string> expect_reply;
