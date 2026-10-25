@@ -114,16 +114,47 @@ build are allowed, because recovery must not depend on the running release
 A status area walks through Checking file, Erasing (up to a minute), Writing
 NN%, Verifying, Restarting, Reconnecting, Confirming, and finally "Update
 confirmed" or a note that the new image was not confirmed. After Flash or Revert the page reconnects by
-itself, waiting about 40 seconds before it offers a Reconnect button. It
+itself. It keeps looking for the stick for about 110 seconds after the link
+dropped, showing the time left, and only then offers a Reconnect button: the
+boot flash window (`OMEGA_STICK_BOOT_FLASH_WINDOW_S`) can hold USB back for up
+to a minute, Windows can be slow to enumerate the device again, and the
+firmware goes back to the previous image 120 seconds after a pending boot. It
 takes the exact port it was using first, then a single granted device with the
 same USB id (matching the USB serial number when it has one). It never guesses
 between several sticks: if more than one could be the one it just flashed, it
-waits and offers the Reconnect button so you choose. Once reconnected it
+offers the Reconnect button at once so you choose, and keeps looking meanwhile.
+Once reconnected it
 runs the checks listed under [Rollback and the health
 check](#rollback-and-the-health-check) and confirms the image itself (the
 Confirming step). It reports whether the new build is running, was confirmed,
 or failed a named check, in which case the stick goes back to the old build by
 itself. Errors are in plain language; the raw detail stays in the log.
+
+While an update is in flight, from the upload until the new image is confirmed
+or the stick has gone back, the page locks the Connect and Disconnect buttons,
+Flash, Download and install, Revert, Restart and the input mode switch, because
+a restart or a second update would make the pending image roll back. It also
+asks before the page is closed or reloaded. If the link is lost anyway while it
+checks the image or waits for the rollback (a pulled cable, a reset), it
+reconnects by itself as above. If Disconnect is used, it says that the stick
+goes back to the previous firmware by itself unless the page confirms the image
+within about two minutes of the restart, and the next connect picks the update
+up again.
+
+Flash is also off whenever the running image is pending verification, with the
+reason shown under it: the firmware refuses a new upload (OTA_BEGIN) until the
+running image is confirmed. "Mark running image valid" keeps it; otherwise wait
+for the stick to go back. If the firmware refuses OTA_BEGIN for this reason, the
+page shows the firmware's own message.
+
+If the reply to OTA_FINISH or REVERT does not arrive, the page does not assume
+nothing happened, because the firmware switches the boot slot before it replies
+and only the restart is lost with the reply. It reads FW_INFO again. If the boot
+partition now differs from the running one, the page says the new image is
+installed but the stick did not restart, and offers **Restart now**; the usual
+reconnect and confirm follow. If the boot partition is unchanged, nothing was
+installed and the update can be retried. If the link dropped with the reply,
+the page reconnects and reports what the stick runs.
 
 ### Neutral output during an update
 
@@ -144,6 +175,11 @@ replaces the stale upload, and the firmware drops any upload that has had no
 traffic for 30 seconds. Until then, a Flash attempt over the other link (WebUSB
 versus Web Serial) is refused as busy.
 
+An interrupted upload can leave the other slot holding an image that cannot be
+verified. FW_INFO then reports the previous slot's state as `partial`. The
+console treats it like `empty`: Revert stays off, and a note under it says an
+interrupted upload left a partial image, so a new upload is the way forward.
+
 ### Check for latest firmware
 
 The "Check for latest firmware" button reads
@@ -152,7 +188,11 @@ console on the Pages site reads its own sibling `firmware/latest.json`; there is
 no way to point it elsewhere from the page address), says whether an
 update is available, and links the release notes. "Download and install" fetches
 the app image, verifies its size and SHA-256 against the feed, then runs the same
-checks and confirm panel as a picked file. An optional check runs once after
+checks and confirm panel as a picked file. The download is cancelled if no data
+arrives for 20 seconds. A failed check or download says whether the computer is
+offline, the server did not answer in time, or the request was blocked (a
+network, firewall or browser security rule; browsers report this the same way
+as a network failure). An optional check runs once after
 connecting ("Check for new firmware when I connect"; on by default, remembered
 in the browser).
 
@@ -345,7 +385,8 @@ The primary way back is the console's "Revert to previous firmware" button in th
 Firmware section. The section lists what is in the other slot (slot, version,
 build date and time, and state), and the button flips the bootloader to that slot
 and reboots the device (REVERT, about 750 ms after the OK reply). The button is
-disabled while an upload is running or when the other slot holds no app image.
+disabled while an update is in flight, or when the other slot holds no app image
+(`empty`) or only the remains of an interrupted upload (`partial`).
 
 Things to know:
 

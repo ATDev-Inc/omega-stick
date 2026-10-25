@@ -147,6 +147,36 @@ in `version.txt`.
 
 ### Fixed
 
+- **The console keeps a firmware update locked until it is settled.** Connect,
+  Disconnect, Flash, Revert, Restart and the input mode switch stay off from
+  the upload until the new firmware is confirmed or the stick has gone back,
+  and the page asks before it is closed. Before, they came back between the
+  restart and the confirm step, where any of them forced a rollback, and a
+  Disconnect while confirming left the update stuck on "Checking the sensor".
+  Now a reconnect picks the update up again, and the page says the stick goes
+  back by itself unless it is confirmed. ([#NN](https://github.com/ATDev-Inc/omega-stick/pull/NN))
+- **The console waits longer for the stick after an update.** It keeps looking
+  for about 110 seconds, with the time left on screen, instead of giving up
+  after 40, so a stick held back by the boot flash window or slow USB on
+  Windows is still found and confirmed before its rollback at 120 seconds.
+  With two sticks plugged in it asks you to pick one straight away.
+  ([#NN](https://github.com/ATDev-Inc/omega-stick/pull/NN))
+- **A lost reply at the end of an update is no longer reported as a failure.**
+  If the stick already switched to the new firmware but its reply did not
+  arrive, the console says the firmware is installed and offers Restart now,
+  then checks and confirms it as usual. ([#NN](https://github.com/ATDev-Inc/omega-stick/pull/NN))
+- **Flash is off while the running firmware waits to be confirmed.** The
+  reason is shown under the button, and if the firmware refuses an update for
+  this reason the console shows its message. A previous slot left `partial` by
+  an interrupted upload turns Revert off with a note saying a new upload is the
+  way forward. ([#NN](https://github.com/ATDev-Inc/omega-stick/pull/NN))
+- **Smaller console update fixes.** A firmware file that ends inside its
+  description block is refused instead of stopping the page; the firmware
+  record is read again on every connect, so Flash and Revert never plan from
+  another stick; a stalled download is cancelled after 20 seconds; a blocked
+  release check is no longer called "offline"; and a revert that did not take
+  says so instead of "the new firmware was not confirmed".
+  ([#NN](https://github.com/ATDev-Inc/omega-stick/pull/NN))
 - **TMAG5273 XY and Z range bits were swapped.** The driver wrote the X/Y range
   to the Z range bit and the reverse. The firmware sets both ranges to HIGH, so
   the stick's behaviour does not change, but a build that set only one range
