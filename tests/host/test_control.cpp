@@ -585,6 +585,27 @@ TEST(control_mouse_turning_nudge_back_on_does_not_nudge_from_a_stale_reading) {
   CHECK(s.nudge == NudgeDirection::RIGHT);
 }
 
+TEST(control_mouse_re_enabling_mid_window_does_not_click_from_movement_made_while_off) {
+  oc::MouseState s = fresh_mouse(); // rest baseline at t=0, 100 ms windows
+  // Pushed far while off, entirely inside the first window.
+  for (int ms = 10; ms <= 90; ms += 10) {
+    oc::mouse_step(s, nudge_off(input(0.9f, 0.0f, ms)));
+  }
+  // Switched back on at the window boundary with the stick still there and
+  // no new gesture: the movement made while off must not become a click.
+  for (int ms = 100; ms <= 300; ms += 10) {
+    const auto out = oc::mouse_step(s, input(0.9f, 0.0f, ms));
+    CHECK(s.nudge == NudgeDirection::NONE);
+    CHECK_EQ(out.mouse.buttons, 0);
+  }
+  // A fresh push from rest still nudges.
+  for (int ms = 310; ms <= 450; ms += 10) {
+    oc::mouse_step(s, input(0.0f, 0.0f, ms));
+  }
+  oc::mouse_step(s, input(0.9f, 0.0f, 560));
+  CHECK(s.nudge == NudgeDirection::RIGHT);
+}
+
 TEST(control_xac_output_ignores_the_nudge_switch) {
   // XAC mode has no nudge clicks: the same inputs give the same reports.
   FakePorts on_ports;

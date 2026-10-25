@@ -275,11 +275,18 @@ inline StepOutput mouse_step(MouseState &s, const StepInput &in) {
 
   // With nudge clicks switched off (SET_NUDGE_ENABLED), a held nudge is
   // released on this very tick rather than at the next window, so a held
-  // button or scroll never outlives the switch. The window bookkeeping below
-  // keeps running, so switching back on measures against a fresh reading.
-  if (!nudge_settings.nudge_enabled && s.nudge != NudgeDirection::NONE) {
-    s.nudge = NudgeDirection::NONE;
-    s.scroll_poll_count = 0;
+  // button or scroll never outlives the switch. The gesture baseline follows
+  // the stick every tick while off, so switching back on, even mid-window,
+  // measures only movement made after the switch: a push made while off can
+  // never turn into a click.
+  if (!nudge_settings.nudge_enabled) {
+    if (s.nudge != NudgeDirection::NONE) {
+      s.nudge = NudgeDirection::NONE;
+      s.scroll_poll_count = 0;
+    }
+    s.prev_x = jx;
+    s.prev_y = jy;
+    s.window_start = in.now;
   }
 
   // --- Nudge direction detection only (runs every nudge_hold_time window) ---
