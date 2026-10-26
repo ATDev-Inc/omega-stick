@@ -19,7 +19,7 @@ what each part of the number means and how a release is cut.
   placeholder USB serial number: the new build reports the real one, the
   browser's earlier permission does not cover it, and only the picker can open
   it. The wait text now says so, and a manual connect continues the update's
-  confirm step as before. ([#65](https://github.com/ATDev-Inc/omega-stick/pull/65))
+  confirm step as before. ([#69](https://github.com/ATDev-Inc/omega-stick/pull/69))
 
 ## [0.1.0] - 2026-10-25
 
