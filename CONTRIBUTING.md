@@ -294,7 +294,11 @@ cmake --build build-sim
 build-sim/omega_sim --fresh
 ```
 
-then open the console and choose **Connect Simulator**. The Simulator panel
+(with Visual Studio the program is `build-sim\Debug\omega_sim.exe`), then
+open the console and choose **Connect Simulator**. On a fresh board, play the
+`calibrate` pattern in the Simulator panel to finish the first-boot
+calibration. [sim/README.md](sim/README.md) has the full steps and
+troubleshooting. The Simulator panel
 moves the stick, plays motion patterns and injects faults, drift and noise.
 Scripts in `sim/scenarios/` run headless as part of the host tests; adding one
 is a good way to cover a console or calibration flow end to end. See

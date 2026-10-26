@@ -298,6 +298,12 @@ The first release. Everything below is new in it.
 
 ### Documentation
 
+- **Simulator setup guide.** [sim/README.md](sim/README.md) now walks
+  through building, starting and connecting `omega_sim` step by step, gives the
+  program's path for each build setup (with Visual Studio it is under
+  `build-sim\Debug\`), explains the first-run calibration that waits for the
+  `calibrate` pattern, and adds a troubleshooting table. The console, README,
+  CONTRIBUTING and AGENTS point to it. ([#54](https://github.com/ATDev-Inc/omega-stick/pull/54))
 - **Flashing without the BOOT button.** The flash page, the recovery doc and
   the README now say that firmware built with the boot window can be reflashed
   by replugging and connecting within the window, that `BOOT` is the button

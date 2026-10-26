@@ -18,6 +18,9 @@ console; see [docs/status.md](status.md) for what has been tried on a device.
 
 ## Running it
 
+For building it, connecting the console and fixing common problems, follow
+[sim/README.md](../sim/README.md). This section is the reference.
+
 ```
 omega_sim [--port 8765] [--data DIR] [--fresh] [--mode mouse|xac]
           [--script FILE] [--headless] [--speed N] [--no-ota]

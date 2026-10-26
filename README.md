@@ -249,8 +249,9 @@ over USB. Open it from disk in Chrome or Edge and connect with WebUSB or Web
 Serial. See the [omega_calibration README](components/omega_calibration/README.md)
 for details.
 
-No stick to hand? Run the desktop simulator (`omega_sim`, see
-[docs/simulator.md](docs/simulator.md)) and choose **Connect Simulator**. The
+No stick to hand? Run the desktop simulator (`omega_sim`; build, run and
+troubleshooting steps are in [sim/README.md](sim/README.md)) and choose
+**Connect Simulator**. The
 console then works as with a real stick and adds a Simulator panel: a virtual
 stick, built-in motion patterns, sensor faults, power-cycle and wipe, script
 upload, and a view of the mouse or gamepad output.
