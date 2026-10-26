@@ -1,5 +1,6 @@
 // OmegaCalibration::save/load and DeviceSettings::save/load round-trips.
 
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -378,3 +379,98 @@ TEST(store_falls_back_to_defaults_on_newer_schema) {
   CHECK_EQ(store.settings().nudge_hold_time.count(), 100);
   CHECK_NEAR(store.center().center_x, OmegaCalibration::CenterResult{}.center_x, 1e-9);
 }
+
+namespace {
+std::string slurp(const std::filesystem::path &path) {
+  std::ifstream in(path);
+  return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+} // namespace
+
+TEST(failed_write_leaves_previous_file_and_no_temp) {
+  TempDir dir("atomic_write_fail");
+  const auto path = dir.file("omega_settings.cfg");
+  std::error_code ec;
+  OmegaCalibration::DeviceSettings settings;
+  settings.input_mode = OmegaCalibration::InputMode::XAC;
+  CHECK(OmegaCalibration::DeviceSettings::save(settings, path, ec));
+  const std::string before = slurp(path);
+  CHECK(!before.empty());
+
+  // A writer that fails partway, as a full filesystem would.
+  CHECK(!OmegaCalibration::write_file_atomically(path, ec, [](std::ostream &out) {
+    out << "schema=1\npartial";
+    out.setstate(std::ios::badbit);
+  }));
+  CHECK(support::is_error(ec, OmegaCalibration::Error::file_write_failed));
+  CHECK_EQ(slurp(path), before);
+  CHECK(!std::filesystem::exists(path.string() + ".tmp"));
+}
+
+TEST(failed_rename_leaves_no_temp_and_reports_error) {
+  TempDir dir("atomic_rename_fail");
+  // The destination is a non-empty directory, so the rename cannot succeed.
+  const auto path = dir.file("omega_calibration.cfg");
+  std::filesystem::create_directories(path);
+  { std::ofstream(path / "keep") << "x"; }
+  std::error_code ec;
+
+  CHECK(!OmegaCalibration::save(support::sample_center(), support::sample_range(), path, ec));
+  CHECK(static_cast<bool>(ec));
+  CHECK(std::filesystem::exists(path / "keep"));
+  CHECK(!std::filesystem::exists(path.string() + ".tmp"));
+}
+
+TEST(unopenable_temp_leaves_previous_file_intact) {
+  TempDir dir("atomic_open_fail");
+  const auto path = dir.file("omega_calibration.cfg");
+  std::error_code ec;
+  CHECK(OmegaCalibration::save(support::sample_center(), support::sample_range(), path, ec));
+  const std::string before = slurp(path);
+
+  // A directory squatting on the temp name makes the temp file unopenable.
+  std::filesystem::create_directories(path.string() + ".tmp");
+  CHECK(!OmegaCalibration::save(support::sample_center(), support::sample_range(), path, ec));
+  CHECK(support::is_error(ec, OmegaCalibration::Error::file_open_failed));
+  CHECK_EQ(slurp(path), before);
+}
+
+TEST(save_replaces_existing_file_and_leaves_no_temp) {
+  TempDir dir("atomic_replace");
+  const auto path = dir.file("omega_settings.cfg");
+  std::error_code ec;
+  OmegaCalibration::DeviceSettings first;
+  first.nudge_enabled = false;
+  CHECK(OmegaCalibration::DeviceSettings::save(first, path, ec));
+  OmegaCalibration::DeviceSettings second;
+  second.nudge_enabled = true;
+  second.input_mode = OmegaCalibration::InputMode::XAC;
+  CHECK(OmegaCalibration::DeviceSettings::save(second, path, ec));
+  CHECK(!std::filesystem::exists(path.string() + ".tmp"));
+
+  OmegaCalibration::DeviceSettings loaded;
+  CHECK(OmegaCalibration::DeviceSettings::load(loaded, path, ec));
+  CHECK(loaded.nudge_enabled);
+  CHECK(loaded.input_mode == OmegaCalibration::InputMode::XAC);
+}
+
+#ifndef _WIN32
+// Windows refuses to delete a file that is still open, so the temp file cannot
+// be made to vanish mid-write there; the logic is the same on every platform.
+TEST(missing_temp_never_deletes_the_destination) {
+  TempDir dir("atomic_temp_gone");
+  const auto path = dir.file("omega_settings.cfg");
+  std::error_code ec;
+  OmegaCalibration::DeviceSettings settings;
+  CHECK(OmegaCalibration::DeviceSettings::save(settings, path, ec));
+  const std::string before = slurp(path);
+
+  // Another writer committed (and so consumed) the shared temp file.
+  CHECK(!OmegaCalibration::write_file_atomically(path, ec, [&](std::ostream &out) {
+    out << "schema=1\n";
+    std::filesystem::remove(path.string() + ".tmp");
+  }));
+  CHECK(static_cast<bool>(ec));
+  CHECK_EQ(slurp(path), before);
+}
+#endif
