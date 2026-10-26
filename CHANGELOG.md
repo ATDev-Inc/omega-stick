@@ -9,6 +9,10 @@ what each part of the number means and how a release is cut.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.1.1] - 2026-10-26
+
 ### Fixed
 
 - **Connect stays usable while the console waits for the stick after an
@@ -356,7 +360,8 @@ The first release. Everything below is new in it.
   and as expected-failure tests in
   [tests/host/README.md](tests/host/README.md#known-bug-tests-xfail_test).
 
-[Unreleased]: https://github.com/ATDev-Inc/omega-stick/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ATDev-Inc/omega-stick/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/ATDev-Inc/omega-stick/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ATDev-Inc/omega-stick/releases/tag/v0.1.0
 [#1]: https://github.com/ATDev-Inc/omega-stick/pull/1
 [#6]: https://github.com/ATDev-Inc/omega-stick/pull/6
