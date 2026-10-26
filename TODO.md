@@ -123,10 +123,10 @@ Check `build-no-ota/sdkconfig` has `CONFIG_OMEGA_STICK_OTA` not set. See
       both Connect buttons stayed enabled, and the stick came back and
       confirmed by itself in about 3 s.
 - [x] Turn `OMEGA_STICK_OTA` on by default. Done 2026-10-25.
-- [ ] Check the "Check for latest firmware" button against the live feed. The
-      check itself works (2026-10-25: the hosted console read the feed and
-      reported the latest release); "Download and install" from the feed has not
-      run on a board yet.
+- [x] Check the "Check for latest firmware" button against the live feed. Done
+      2026-10-26 from the hosted console: it offered 0.1.1 to a stick on 0.1.0,
+      downloaded and verified the image, and the stick confirmed 0.1.1 with its
+      calibration and settings kept.
 
 ## Features (M2, v0.2.0)
 
