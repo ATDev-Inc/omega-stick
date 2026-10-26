@@ -186,3 +186,21 @@ TEST(drift_clock_overload_starts_the_idle_window_on_the_first_call) {
   CHECK(!d.update(10.0f, 0.0f, 0.5f, c));
   CHECK_NEAR(c.center_x, 0.0f, 0.0);
 }
+
+TEST(drift_keeps_the_manual_offset_and_converges_the_effective_center_on_rest) {
+  Drift d(test_config());
+  Cal::CenterResult c = center_at(5.0f, -3.0f);
+  Cal::set_manual_offset(c, 0.4f, -0.7f);
+  const float rest_x = 5.2f;
+  const float rest_y = -3.1f;
+  int t = 0;
+  d.update(rest_x, rest_y, 0.0f, c, at(t));
+  for (int i = 0; i < 300; ++i) {
+    t += 2000;
+    d.update(rest_x, rest_y, 0.0f, c, at(t));
+  }
+  CHECK_NEAR(c.manual_offset_x, 0.4f, 0.0);
+  CHECK_NEAR(c.manual_offset_y, -0.7f, 0.0);
+  CHECK_NEAR(c.effective_center_x(), rest_x, 1e-4);
+  CHECK_NEAR(c.effective_center_y(), rest_y, 1e-4);
+}
