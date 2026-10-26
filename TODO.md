@@ -5,14 +5,19 @@ Working task list for the maintainers. The milestone view is
 GitHub issues. Tick items here in the pull request that does them, and move
 anything that stops being true.
 
-Last reviewed: 2026-10-25.
+Last reviewed: 2026-10-26.
 
-## Now: get to v0.1.0
+## Now: v0.1.x
 
-- [ ] Decide #12 (`marshall-updates` to `main`) and #15 (`fix/xac-descriptor`
-      to `main`). Both predate `owen-updates`; #15 is probably covered by the
-      espp adoption (D20, now 1.3.8). Check before merging or closing.
-- [ ] Promote `owen-updates` to `main`.
+v0.1.0, the first release, was published on 2026-10-25 with updates over USB
+on, and v0.1.1 (a console reconnect fix) on 2026-10-26. What is left from the
+first-release list is the hardware pass.
+
+- [ ] Close #12 (`marshall-updates`) and #15 (`fix/xac-descriptor`). Both are
+      superseded by what reached `main` through #64; Marshall was asked to close
+      them on 2026-10-26.
+- [x] Promote `owen-updates` to `main`. Done 2026-10-25 (#64). The branch is
+      deleted and pull requests now target `main`.
 - [ ] First hardware pass. Nothing since the sibling-firmware survey has run on
       a board. Never hot-plug the Qwiic connector while powered.
   - [ ] Mouse mode: slow movements, held positions, rapid direction changes,
@@ -44,8 +49,10 @@ Last reviewed: 2026-10-25.
   - [ ] First-flash page: the BOOT and RESET steps are unverified on the board.
         The boot-window route (esptool, no BOOT button) is verified.
   - [ ] Loop timing after the stack protector was enabled.
-- [ ] Tag `v0.1.0` on a clean tree, confirm the Pages site, the release feed and
-      that the first-flash page installs the tagged build. Closes #5.
+- [x] Tag `v0.1.0` on a clean tree and confirm the Pages site and the release
+      feed. Done 2026-10-25: the site, the hosted console and `latest.json` are
+      live, and the release image installed on the stick over USB.
+- [ ] Confirm the first-flash page installs the tagged build on a board.
 - [ ] Delete the merged and superseded local branches, and drop the leftover
       `stash@{0}` ("WIP on feat/update-ux") in the main checkout.
 
@@ -107,10 +114,19 @@ Check `build-no-ota/sdkconfig` has `CONFIG_OMEGA_STICK_OTA` not set. See
       `invalid` afterwards. This was a board flashed over serial with blank
       otadata, so that case rolls back at runtime too.
 - [ ] Update from a v0.1.0 board: install the first OTA-on release from the
-      first-flash page, then update over USB from there.
+      first-flash page, then update over USB from there. Partly done: a stick on
+      a pre-release build updated to the v0.1.0 release over USB on 2026-10-25
+      (it needed one picker click, since its USB serial number changed), and
+      the release reflashed over itself from the hosted console on 2026-10-26.
+- [x] Connect stays usable while the console waits for the stick after an
+      update (#69). Done 2026-10-26 from the hosted console: during the wait
+      both Connect buttons stayed enabled, and the stick came back and
+      confirmed by itself in about 3 s.
 - [x] Turn `OMEGA_STICK_OTA` on by default. Done 2026-10-25.
-- [ ] Check the "Check for latest firmware" button against the live feed (needs
-      the first release).
+- [ ] Check the "Check for latest firmware" button against the live feed. The
+      check itself works (2026-10-25: the hosted console read the feed and
+      reported the latest release); "Download and install" from the feed has not
+      run on a board yet.
 
 ## Features (M2, v0.2.0)
 
