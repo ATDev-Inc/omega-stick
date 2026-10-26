@@ -9,7 +9,15 @@ what each part of the number means and how a release is cut.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **Idle drift correction no longer undoes a manual center trim.** The stick
+  rests at the measured center plus the trim, but drift correction blended the
+  measured center toward the raw reading, so a stick left idle slowly absorbed
+  the trim and the cursor creep it cancelled came back. It now blends toward
+  the raw reading less the trim, so the trim is kept. This changes input
+  behaviour and needs a hardware check.
+  ([#96](https://github.com/ATDev-Inc/omega-stick/pull/96))
 
 ## [0.1.1] - 2026-10-26
 

@@ -765,8 +765,8 @@ public:
   /// magnitude (e.g. std::hypot(js.x(), js.y())). When the mapped output
   /// stays near zero for a sustained period, that's taken as "the stick is
   /// genuinely at rest," and the stored center is nudged a small amount
-  /// toward the raw reading -- slowly and rate-limited, so it can never be
-  /// mistaken for responding to real input.
+  /// toward the raw reading (less the manual offset, which is kept) -- slowly and rate-limited, so
+  /// it can never be mistaken for responding to real input.
   ///
   /// On a nudge, update() returns true; the caller should then push the
   /// updated CenterResult into the live Joystick via apply_calibration(),
@@ -811,8 +811,11 @@ public:
         return false;
       }
 
-      center.center_x += (raw_x - center.center_x) * config_.blend_rate;
-      center.center_y += (raw_y - center.center_y) * config_.blend_rate;
+      // Rest maps to effective_center = center + manual_offset, so blend the
+      // measured center toward (raw - offset). The effective center then
+      // converges on the rest reading and the manual trim is left intact.
+      center.center_x += (raw_x - center.manual_offset_x - center.center_x) * config_.blend_rate;
+      center.center_y += (raw_y - center.manual_offset_y - center.center_y) * config_.blend_rate;
       last_nudge_ = now;
       return true;
     }

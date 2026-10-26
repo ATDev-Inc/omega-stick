@@ -76,6 +76,8 @@ struct FakePorts : oc::Ports {
   oc::StickSample post_sweep;
   Clock::time_point clock{};
   Cal::CenterResult last_applied;
+  float live_offset_x{0.0f};
+  float live_offset_y{0.0f};
 
   void send_mouse(const oc::MouseReport &r) override {
     calls.push_back("send_mouse");
@@ -97,6 +99,11 @@ struct FakePorts : oc::Ports {
   void apply_drift(Cal::CenterResult &c, const Cal::RangeResult &) override {
     calls.push_back("apply_drift");
     last_applied = c;
+  }
+  // Not recorded in `calls`, so the exact-sequence checks are unaffected.
+  void refresh_manual_offset(Cal::CenterResult &c) override {
+    c.manual_offset_x = live_offset_x;
+    c.manual_offset_y = live_offset_y;
   }
   oc::StickSample read_stick() override {
     calls.push_back("read_stick");
@@ -428,6 +435,43 @@ TEST(control_drift_applies_after_the_dwell_and_pushes_the_new_center) {
   CHECK(ports.calls == expected);
   CHECK_NEAR(ports.last_applied.center_x, 5.0f * dc.blend_rate, 1e-6);
   CHECK_NEAR(s.common.center.center_y, 5.0f * dc.blend_rate, 1e-6);
+}
+
+TEST(control_drift_uses_the_live_manual_offset_after_a_live_clear) {
+  // Cached trim 0.4, then the console clears it. The stick rests at raw 0,
+  // which is the new effective center, so drift must not move the center and
+  // the output must stay neutral.
+  FakePorts ports;
+  ports.live_offset_x = 0.0f;
+  ports.live_offset_y = 0.0f;
+
+  oc::MouseState m;
+  m.common.center.manual_offset_x = 0.4f;
+  m.common.center.manual_offset_y = 0.4f;
+  for (int t = 0; t <= 6000; t += 500) {
+    oc::mouse_tick(m, input(0.0f, 0.0f, t, false, 0.0f, 0.0f), ports);
+  }
+  CHECK(ports.count("apply_drift") > 0);
+  CHECK_NEAR(m.common.center.center_x, 0.0f, 0.0);
+  CHECK_NEAR(m.common.center.center_y, 0.0f, 0.0);
+  CHECK_NEAR(m.common.center.manual_offset_x, 0.0f, 0.0);
+  for (const auto &r : ports.mouse) {
+    CHECK_EQ(r.dx, 0);
+    CHECK_EQ(r.dy, 0);
+  }
+
+  oc::XacState x;
+  x.common.center.manual_offset_x = 0.4f;
+  x.common.center.manual_offset_y = 0.4f;
+  for (int t = 0; t <= 6000; t += 500) {
+    oc::xac_tick(x, input(0.0f, 0.0f, t, false, 0.0f, 0.0f), ports);
+  }
+  CHECK_NEAR(x.common.center.center_x, 0.0f, 0.0);
+  CHECK_NEAR(x.common.center.center_y, 0.0f, 0.0);
+  for (const auto &r : ports.xac) {
+    CHECK_NEAR(r.x, 0.0f, 0.0);
+    CHECK_NEAR(r.y, 0.0f, 0.0);
+  }
 }
 
 TEST(control_drift_respects_the_minimum_interval) {
