@@ -65,7 +65,10 @@ public:
 
     std::error_code rename_ec;
     std::filesystem::rename(temp, path, rename_ec);
-    if (rename_ec) {
+    std::error_code exists_ec;
+    if (rename_ec && std::filesystem::exists(temp, exists_ec)) {
+      // Only when the complete temp file is still there: if it is gone, the
+      // destination may be another writer's good copy and must not be removed.
       std::error_code remove_ec;
       std::filesystem::remove(path, remove_ec);
       std::filesystem::rename(temp, path, rename_ec);

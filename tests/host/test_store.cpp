@@ -1,8 +1,10 @@
 // OmegaStore: load-on-construct, live setters, change callbacks, save.
 
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "file_system.hpp"
@@ -237,4 +239,31 @@ TEST(store_snapshot_is_consistent_copy) {
   store.set_manual_offset(9.0f, 9.0f);
   CHECK_NEAR(snap.center.manual_offset_x, support::sample_center().manual_offset_x, 1e-6);
   CHECK_NEAR(store.center().manual_offset_x, 9.0f, 1e-6);
+}
+
+TEST(concurrent_save_to_flash_never_loses_the_files) {
+  TempDir dir("store_concurrent");
+  const auto cfg = config_for(dir);
+  OmegaStore store(cfg);
+  store.set_calibration(support::sample_center(), support::sample_range());
+
+  auto worker = [&](bool nudge) {
+    for (int i = 0; i < 200; ++i) {
+      store.set_nudge_enabled(nudge);
+      std::error_code ec;
+      CHECK(store.save_to_flash(ec));
+      CHECK(!ec);
+    }
+  };
+  std::thread a(worker, true);
+  std::thread b(worker, false);
+  a.join();
+  b.join();
+
+  CHECK(std::filesystem::exists(cfg.calibration_path));
+  CHECK(std::filesystem::exists(cfg.settings_path));
+  CHECK(!std::filesystem::exists(cfg.calibration_path.string() + ".tmp"));
+  CHECK(!std::filesystem::exists(cfg.settings_path.string() + ".tmp"));
+  OmegaStore reloaded(cfg);
+  CHECK_NEAR(reloaded.center().center_x, support::sample_center().center_x, 1e-5);
 }

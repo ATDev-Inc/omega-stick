@@ -453,3 +453,24 @@ TEST(save_replaces_existing_file_and_leaves_no_temp) {
   CHECK(loaded.nudge_enabled);
   CHECK(loaded.input_mode == OmegaCalibration::InputMode::XAC);
 }
+
+#ifndef _WIN32
+// Windows refuses to delete a file that is still open, so the temp file cannot
+// be made to vanish mid-write there; the logic is the same on every platform.
+TEST(missing_temp_never_deletes_the_destination) {
+  TempDir dir("atomic_temp_gone");
+  const auto path = dir.file("omega_settings.cfg");
+  std::error_code ec;
+  OmegaCalibration::DeviceSettings settings;
+  CHECK(OmegaCalibration::DeviceSettings::save(settings, path, ec));
+  const std::string before = slurp(path);
+
+  // Another writer committed (and so consumed) the shared temp file.
+  CHECK(!OmegaCalibration::write_file_atomically(path, ec, [&](std::ostream &out) {
+    out << "schema=1\n";
+    std::filesystem::remove(path.string() + ".tmp");
+  }));
+  CHECK(static_cast<bool>(ec));
+  CHECK_EQ(slurp(path), before);
+}
+#endif

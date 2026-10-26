@@ -243,6 +243,11 @@ public:
   /// calibration file has still been updated (ec then describes the
   /// settings failure).
   bool save_to_flash(std::error_code &ec) {
+    // Held across the snapshot and both file writes, so two callers (the
+    // console worker and the control loop's drift save) cannot interleave on
+    // the same temporary files. Separate from mutex_ so the live setters are
+    // not blocked behind flash I/O.
+    std::lock_guard<std::mutex> save_lock(save_mutex_);
     const Snapshot snap = snapshot();
     if (!OmegaCalibration::save(snap.center, snap.range, calibration_path_, ec)) {
       logger_.error("save_to_flash: calibration save failed: {}", ec.message());
@@ -258,6 +263,7 @@ public:
 
 private:
   mutable std::mutex mutex_;
+  std::mutex save_mutex_;
   CenterResult center_{};
   RangeResult range_{};
   void drop_out_of_range_override(std::optional<float> &value, float max, const char *name) {
