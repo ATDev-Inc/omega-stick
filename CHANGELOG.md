@@ -17,7 +17,7 @@ what each part of the number means and how a release is cut.
   the trim and the cursor creep it cancelled came back. It now blends toward
   the raw reading less the trim, so the trim is kept. This changes input
   behaviour and needs a hardware check.
-  ([#74](https://github.com/ATDev-Inc/omega-stick/issues/74))
+  ([#96](https://github.com/ATDev-Inc/omega-stick/pull/96))
 
 ## [0.1.1] - 2026-10-26
 
