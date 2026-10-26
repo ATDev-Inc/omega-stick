@@ -1,5 +1,6 @@
 // OmegaStore: load-on-construct, live setters, change callbacks, save.
 
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -247,12 +248,16 @@ TEST(concurrent_save_to_flash_never_loses_the_files) {
   OmegaStore store(cfg);
   store.set_calibration(support::sample_center(), support::sample_range());
 
+  // CHECK throws, which would terminate the process from a worker thread, so
+  // the workers only count failures.
+  std::atomic<int> failed_saves{0};
   auto worker = [&](bool nudge) {
     for (int i = 0; i < 200; ++i) {
       store.set_nudge_enabled(nudge);
       std::error_code ec;
-      CHECK(store.save_to_flash(ec));
-      CHECK(!ec);
+      if (!store.save_to_flash(ec) || ec) {
+        failed_saves++;
+      }
     }
   };
   std::thread a(worker, true);
@@ -260,6 +265,7 @@ TEST(concurrent_save_to_flash_never_loses_the_files) {
   a.join();
   b.join();
 
+  CHECK_EQ(failed_saves.load(), 0);
   CHECK(std::filesystem::exists(cfg.calibration_path));
   CHECK(std::filesystem::exists(cfg.settings_path));
   CHECK(!std::filesystem::exists(cfg.calibration_path.string() + ".tmp"));
