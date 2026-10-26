@@ -19,6 +19,7 @@ and the things that could not be verified.
 | [03: HID and platform compatibility](03-hid-platform-compatibility.md) | HID class choice, console paths, ESP32-S3 constraints, espp capabilities, latency budget |
 | [04: Funding and compliance](04-funding-and-compliance.md) | Reimbursement, FCC/CE, accessibility standards, open source |
 | [05: Lessons from sibling firmware](05-sibling-firmware-lessons.md) | What other ATDev and RAMMP firmware does that we should copy or avoid (captured 2026-10-10) |
+| [06: Code quality review](06-code-quality-review-2026-10-26.md) | Repo-wide review of v0.1.1, filed as issues #73 to #94 (captured 2026-10-26) |
 
 ## How to read these
 
