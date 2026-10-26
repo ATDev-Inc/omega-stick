@@ -3,15 +3,15 @@
 How to update an Omega Stick over USB, how a bad update is rolled back, how
 firmware versions are named, and what to include in a bug report.
 
-> **v0.1.0 builds have updates over USB turned off** (decision D25). The
-> console then reports that the firmware takes no updates over USB, and new
-> firmware is installed from the [flash page](#first-flash-and-recovery), which
-> erases saved calibration and settings. Everything below describes a build
-> with `CONFIG_OMEGA_STICK_OTA=y`. To turn it on for development, add
-> `sdkconfig.ota` to the defaults, for example
-> `idf.py -B build-ota -DSDKCONFIG=build-ota/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ota" build`,
-> or enable "Firmware updates over USB" in menuconfig. The bootloader and
-> partition table are the same either way.
+> **Updates over USB are on by default** (decision D25, amended 2026-10-25).
+> Everything below describes a build with `CONFIG_OMEGA_STICK_OTA=y`. To build
+> without them, add `sdkconfig.no_ota` to the defaults, for example
+> `idf.py -B build-no-ota -DSDKCONFIG=build-no-ota/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.no_ota" build`,
+> or disable "Firmware updates over USB" in menuconfig. The console then
+> reports that the firmware takes no updates over USB, and new firmware is
+> installed from the [flash page](#first-flash-and-recovery), which erases saved
+> calibration and settings. The bootloader and partition table are the same
+> either way.
 
 ## Contents
 
@@ -329,7 +329,7 @@ boots in the **pending verify** state, and the bootloader reverts to the previou
 image at the next reset unless the application confirms itself.
 
 The firmware never confirms a new image itself, with two exceptions: a build
-with updates turned off (D25) accepts an image that arrived by update at boot,
+with updates turned off (`sdkconfig.no_ota`) accepts an image that arrived by update at boot,
 since its console cannot confirm anything, and an image booted by the crash-loop
 handover is accepted at once (see below). After the update's reboot the console
 reconnects and checks the image, then sends MARK_VALID (0x5D). It confirms only

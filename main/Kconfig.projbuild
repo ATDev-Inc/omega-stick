@@ -16,16 +16,18 @@ config OMEGA_STICK_BOOT_FLASH_WINDOW_S
 
 config OMEGA_STICK_OTA
     bool "Firmware updates over USB"
-    default n
+    default y
     help
-      Off for v0.1.0. When off, the calibration console's firmware update
-      messages reply function_not_supported, the update engine and the
-      post-update health check are not built in, and new firmware is
-      installed from the first-flash page.
+      On by default. The calibration console can install new firmware over
+      USB, and a new image must be confirmed by the console or the board
+      reverts to the previous one.
 
-      The bootloader and partition table are the same either way, so a later
-      build with this turned on can be installed without reinstalling the
-      bootloader. Turn it on for development with the sdkconfig.ota
-      defaults fragment, or in menuconfig.
+      Turn it off to build without the update engine and the post-update
+      health check: the console's firmware update messages then reply
+      function_not_supported, and new firmware is installed from the
+      first-flash page. Use the sdkconfig.no_ota defaults fragment, or
+      menuconfig.
+
+      The bootloader and partition table are the same either way.
 
 endmenu

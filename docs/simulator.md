@@ -32,7 +32,7 @@ omega_sim [--port 8765] [--data DIR] [--fresh] [--mode mouse|xac]
 | `--script FILE` | Play a script (format below) from boot |
 | `--headless` | No WebSocket; run `--script` on simulated time as fast as possible, print a report, exit 0 if every `expect` passed, 1 otherwise |
 | `--speed N` | Interactive mode only: run simulated time N times faster than real time (default 1) |
-| `--no-ota` | Behave like a firmware built with `CONFIG_OMEGA_STICK_OTA=n` (the v0.1.0 default): no update engine, so GET_FW_INFO, the OTA messages, REVERT and MARK_VALID reply `function_not_supported`, no health check and no crash-loop revert, and an image that boots pending verification accepts itself at boot. The console then hides its update controls. Applies to every restart. Scenarios named `no_ota_*.json` run with it |
+| `--no-ota` | Behave like a firmware built with `CONFIG_OMEGA_STICK_OTA=n` (the `sdkconfig.no_ota` build): no update engine, so GET_FW_INFO, the OTA messages, REVERT and MARK_VALID reply `function_not_supported`, no health check and no crash-loop revert, and an image that boots pending verification accepts itself at boot. The console then hides its update controls. Applies to every restart. Scenarios named `no_ota_*.json` run with it |
 
 In the calibration console choose **Connect Simulator**. The page connects to
 `ws://127.0.0.1:8765` and from then on behaves as with a real stick, plus a
