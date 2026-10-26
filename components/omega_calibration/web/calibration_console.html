@@ -1632,7 +1632,7 @@
     const left = Math.max(0, Math.round(leftMs / 1000));
     let t = "Waiting for the device to come back (" + left + " s left).";
     if (elapsedMs >= 15000) t += " After a restart it can take up to a minute to appear again." +
-      " If it is plugged in but does not come back, use Connect WebUSB or Connect Web Serial and pick it.";
+      " If it is plugged in but does not come back, press Reconnect and pick it.";
     return t;
   }
 
@@ -4205,7 +4205,13 @@
             }
           }
           if (transport) return true;
-          els.updateDetail.textContent = reconnectWaitText(deadline - Date.now(), Date.now() - start);
+          const elapsed = Date.now() - start;
+          els.updateDetail.textContent = reconnectWaitText(deadline - Date.now(), elapsed);
+          // After 15 s offer the picker where the person is looking: a stick
+          // the browser has no permission for yet (its USB serial changed with
+          // the update) can only be opened that way, and the rollback deadline
+          // is two minutes after the restart.
+          if (elapsed >= 15000) els.fwReconnectBtn.hidden = false;
           await wakeOrSleep(700);
         }
         return !!transport;
@@ -4256,9 +4262,9 @@
     }
 
     els.fwReconnectBtn.addEventListener("click", async () => {
-      // While the automatic reconnect runs, the button is only offered when it
-      // cannot tell several sticks apart; then the person picks one.
-      if (transport || (reconnecting && !reconnectAmbiguous)) return;
+      // Also offered while the automatic reconnect runs (several sticks, or a
+      // stick it has no permission for); manualConnect() holds the loop off.
+      if (transport) return;
       els.updateError.textContent = "";
       els.updateMessage.textContent = "Reconnecting to the device...";
       const link = lastLink;

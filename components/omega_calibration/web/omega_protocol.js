@@ -798,7 +798,7 @@
     const left = Math.max(0, Math.round(leftMs / 1000));
     let t = "Waiting for the device to come back (" + left + " s left).";
     if (elapsedMs >= 15000) t += " After a restart it can take up to a minute to appear again." +
-      " If it is plugged in but does not come back, use Connect WebUSB or Connect Web Serial and pick it.";
+      " If it is plugged in but does not come back, press Reconnect and pick it.";
     return t;
   }
 

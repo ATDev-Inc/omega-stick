@@ -124,13 +124,14 @@ same USB id and, when it knows it, the same USB serial number (every stick repor
 own, the factory MAC as 12 lowercase hex digits). It never guesses
 between several sticks: if more than one could be the one it just flashed, it
 offers the Reconnect button at once so you choose, and keeps looking meanwhile.
-While it waits, Connect WebUSB and Connect Web Serial stay usable, so you can
-pick the stick yourself if it is plugged in but does not come back. That is
-needed once when updating from firmware older than 0.1.0: those builds report
-a placeholder USB serial number, the new build reports the real one, and the
-browser's earlier permission does not cover the new identity, so the page
-cannot open it without the picker. Do it within the first two minutes, or the
-stick goes back to the old build and the update has to be repeated. The next
+After 15 seconds of waiting it also shows the Reconnect button, and the
+Connect buttons at the top stay usable, so you can pick the stick yourself if
+it is plugged in but does not come back. That is needed once when updating
+from firmware older than 0.1.0: those builds report a placeholder USB serial
+number, the new build reports the real one, and the browser's earlier
+permission does not cover the new identity, so the page cannot open it without
+the picker. Press Reconnect and pick the stick within the first two minutes,
+or it goes back to the old build and the update has to be repeated. The next
 update reconnects by itself.
 Once reconnected it
 runs the checks listed under [Rollback and the health

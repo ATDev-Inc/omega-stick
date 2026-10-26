@@ -776,8 +776,8 @@ test("reconnect window outlasts a 60 s boot flash window and ends before the 120
   const late = P.reconnectWaitText(65000, 45000);
   assert.match(late, /65 s left/);
   assert.match(late, /up to a minute/);
-  assert.match(late, /Connect WebUSB/);
-  assert.doesNotMatch(early, /Connect WebUSB/);
+  assert.match(late, /press Reconnect/);
+  assert.doesNotMatch(early, /Reconnect/);
   assert.match(P.reconnectWaitText(-50, 120000), /0 s left/);
 });
 
