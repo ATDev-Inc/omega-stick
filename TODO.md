@@ -145,7 +145,7 @@ Check `build-no-ota/sdkconfig` has `CONFIG_OMEGA_STICK_OTA` not set. See
 - [ ] Measure and publish actuation force and throw. Highest-value open item;
       not blocked by firmware. Closes #3.
 - [ ] Write the force-measurement protocol (HW-2, HW-2a).
-- [ ] Publish editable CAD, PCB, wiring and a BOM. Closes #4.
+- [ ] Publish the PCB, wiring and a BOM (the Fusion 360 source is in `models/`). Closes #4.
 - [ ] Print-tolerance guidance against the force budget (HW-9).
 - [ ] Reconcile `docs/status.md` with the code after each milestone. It lags.
 

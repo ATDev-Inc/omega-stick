@@ -95,8 +95,8 @@ re-enumerates and is best shipped once.
 What makes the stick buildable without the maintainers (goal G6, PRD success
 metrics).
 
-- Publish editable CAD, the PCB, wiring and a bill of materials, not only the
-  STLs. Closes issue #4.
+- Publish the PCB, wiring and a bill of materials alongside the STLs and the
+  Fusion 360 source. Closes issue #4.
 - A documented force-measurement protocol (HW-2, HW-2a), the only quality
   control a printed, third-party-fabricated device has.
 - Print-tolerance guidance against the force budget (HW-9).

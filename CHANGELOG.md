@@ -9,7 +9,12 @@ what each part of the number means and how a release is cut.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **Revised printed parts and their Fusion 360 source.** The magnet, sensor
+  and QT Py holders and both sockets in `models/` are updated, and the
+  editable Fusion 360 project (`models/omega_stick.f3d`) is now published
+  alongside the STLs. ([#98](https://github.com/ATDev-Inc/omega-stick/pull/98))
 
 ## [0.1.1] - 2026-10-26
 

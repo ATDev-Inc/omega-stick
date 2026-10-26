@@ -175,8 +175,8 @@ break them last, which can damage the ESP32's I2C pins. Unplug USB, change the
 cable, then plug USB back in.
 
 STL files for the printed parts (joystick, magnet and sensor holders, sockets,
-topper) are in [models/](models/). The PCB, wiring, and editable CAD source are
-not part of this repository. If you want to build one, open a
+topper) are in [models/](models/), with their Fusion 360 source
+(`omega_stick.f3d`). The PCB and wiring are not part of this repository. If you want to build one, open a
 [discussion](https://github.com/ATDev-Inc/omega-stick/discussions) or an issue
 and we will point you at what exists.
 
@@ -343,7 +343,7 @@ tests/e2e/                end-to-end check of the console against the simulator 
 sim/                      omega_sim, a desktop simulator of the firmware for testing without hardware
 cmake/                    shared CMake setup for the host tests and the simulator
 models/                   STL files for the printed parts (joystick, magnet and sensor holders,
-                          QT Py holder, sockets, topper)
+                          QT Py holder, sockets, topper) and their Fusion 360 source
 docs/                     product, requirements, decisions, and research documents
 assets/logo/              brand assets
 .github/workflows/        build, packaging and Pages publishing, size delta, static analysis, security scans, host, web, end-to-end and fuzz test CI
