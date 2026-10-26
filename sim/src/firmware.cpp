@@ -258,6 +258,12 @@ struct SimPorts : espp::omega_control::Ports {
     espp::OmegaCalibration::apply_calibration(js, center, range, store.settings());
   }
 
+  void refresh_manual_offset(espp::OmegaCalibration::CenterResult &center) override {
+    const auto live = store.center();
+    center.manual_offset_x = live.manual_offset_x;
+    center.manual_offset_y = live.manual_offset_y;
+  }
+
   espp::omega_control::StickSample read_stick() override {
     js.update();
     return {js.x(), js.y(), js.raw().x(), js.raw().y(), sensor_read_ok, sensor_conversion_count};
