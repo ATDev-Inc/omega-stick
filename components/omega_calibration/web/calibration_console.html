@@ -1631,7 +1631,8 @@
   function reconnectWaitText(leftMs, elapsedMs) {
     const left = Math.max(0, Math.round(leftMs / 1000));
     let t = "Waiting for the device to come back (" + left + " s left).";
-    if (elapsedMs >= 15000) t += " After a restart it can take up to a minute to appear again.";
+    if (elapsedMs >= 15000) t += " After a restart it can take up to a minute to appear again." +
+      " If it is plugged in but does not come back, press Reconnect and pick it.";
     return t;
   }
 
@@ -1671,8 +1672,13 @@
     else revert = (!conn || busy) ? off("") : on();
     const restart = (!conn || busy) ? off("") : (lock && phase !== "switched_no_restart") ? lock : on();
     const markValid = (!conn || busy) ? off("") : (lock && phase !== "waiting_rollback") ? lock : on();
+    // While the device is away after the restart the Connect buttons stay
+    // usable even though the automatic reconnect is running: a stick whose USB
+    // serial number changed with the update (firmware before 0.1.0 reported a
+    // placeholder) is not covered by the browser's earlier grant, so only the
+    // picker can reach it. manualConnect() in the console arbitrates the two.
     const connectLocked = ["running", "confirming", "waiting_rollback", "switched_no_restart"].includes(phase) ||
-      (phase === "rebooting" && (conn || !!s.reconnecting));
+      (phase === "rebooting" && conn);
     return { connectLocked, modeLocked: active, flash, install, revert, restart, markValid };
   }
 
@@ -2792,7 +2798,8 @@
       els.serialBtn.classList.toggle("primary", !(connected && transport.kind === "serial"));
       // While an update is in flight the link must stay as it is: a Disconnect
       // during the checks would leave the new image unconfirmed (it then goes
-      // back by itself), and a second Connect would race the automatic reconnect.
+      // back by itself). Only while the device is away after the restart may
+      // the person connect by hand (see updateControls in omega_protocol.js).
       const uc = updateControls({
         connected, busy, latestBusy, reconnecting, phase: upd ? upd.phase : null,
         pending: !!(fwInfo && fwInfo.pending), revert: revertAvailability(fwInfo),
@@ -4198,7 +4205,13 @@
             }
           }
           if (transport) return true;
-          els.updateDetail.textContent = reconnectWaitText(deadline - Date.now(), Date.now() - start);
+          const elapsed = Date.now() - start;
+          els.updateDetail.textContent = reconnectWaitText(deadline - Date.now(), elapsed);
+          // After 15 s offer the picker where the person is looking: a stick
+          // the browser has no permission for yet (its USB serial changed with
+          // the update) can only be opened that way, and the rollback deadline
+          // is two minutes after the restart.
+          if (elapsed >= 15000) els.fwReconnectBtn.hidden = false;
           await wakeOrSleep(700);
         }
         return !!transport;
@@ -4249,9 +4262,9 @@
     }
 
     els.fwReconnectBtn.addEventListener("click", async () => {
-      // While the automatic reconnect runs, the button is only offered when it
-      // cannot tell several sticks apart; then the person picks one.
-      if (transport || (reconnecting && !reconnectAmbiguous)) return;
+      // Also offered while the automatic reconnect runs (several sticks, or a
+      // stick it has no permission for); manualConnect() holds the loop off.
+      if (transport) return;
       els.updateError.textContent = "";
       els.updateMessage.textContent = "Reconnecting to the device...";
       const link = lastLink;
