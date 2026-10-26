@@ -11,7 +11,7 @@ what each part of the number means and how a release is cut.
 
 ### Fixed
 
-- **Calibration and settings saves can no longer be cut short.** A power loss or USB unplug during a save used to be able to leave an empty or partial file, losing the calibration or the input mode and nudge settings. Both files are now written to a temporary file and renamed into place, so the previous file survives an interrupted save. Fixes #75.
+- **Calibration and settings saves can no longer be cut short.** A power loss or USB unplug during a save used to be able to leave an empty or partial file, losing the calibration or the input mode and nudge settings. Both files are now written to a temporary file and renamed into place, so the previous file survives an interrupted save. Fixes #75 ([#97](https://github.com/ATDev-Inc/omega-stick/pull/97)).
 
 ## [0.1.1] - 2026-10-26
 
