@@ -797,7 +797,8 @@
   function reconnectWaitText(leftMs, elapsedMs) {
     const left = Math.max(0, Math.round(leftMs / 1000));
     let t = "Waiting for the device to come back (" + left + " s left).";
-    if (elapsedMs >= 15000) t += " After a restart it can take up to a minute to appear again.";
+    if (elapsedMs >= 15000) t += " After a restart it can take up to a minute to appear again." +
+      " If it is plugged in but does not come back, use Connect WebUSB or Connect Web Serial and pick it.";
     return t;
   }
 
@@ -837,8 +838,13 @@
     else revert = (!conn || busy) ? off("") : on();
     const restart = (!conn || busy) ? off("") : (lock && phase !== "switched_no_restart") ? lock : on();
     const markValid = (!conn || busy) ? off("") : (lock && phase !== "waiting_rollback") ? lock : on();
+    // While the device is away after the restart the Connect buttons stay
+    // usable even though the automatic reconnect is running: a stick whose USB
+    // serial number changed with the update (firmware before 0.1.0 reported a
+    // placeholder) is not covered by the browser's earlier grant, so only the
+    // picker can reach it. manualConnect() in the console arbitrates the two.
     const connectLocked = ["running", "confirming", "waiting_rollback", "switched_no_restart"].includes(phase) ||
-      (phase === "rebooting" && (conn || !!s.reconnecting));
+      (phase === "rebooting" && conn);
     return { connectLocked, modeLocked: active, flash, install, revert, restart, markValid };
   }
 

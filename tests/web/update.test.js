@@ -693,9 +693,13 @@ test("updateControls: an update in flight locks Flash, Revert, Restart, mode and
     assert.equal(c.modeLocked, true, phase);
     assert.equal(c.connectLocked, true, phase + ": Disconnect locked");
   }
-  // After the drop: locked while the automatic reconnect runs, free once it gave up.
-  assert.equal(P.updateControls(idle({ phase: "rebooting", connected: false, reconnecting: true })).connectLocked, true);
+  // After the drop the person may connect by hand, also while the automatic
+  // reconnect still runs: a stick whose USB serial changed with the update is
+  // only reachable through the picker.
+  assert.equal(P.updateControls(idle({ phase: "rebooting", connected: false, reconnecting: true })).connectLocked, false);
   assert.equal(P.updateControls(idle({ phase: "rebooting", connected: false, reconnecting: false })).connectLocked, false);
+  // Never dropped after the restart command: still locked.
+  assert.equal(P.updateControls(idle({ phase: "rebooting", connected: true, reconnecting: false })).connectLocked, true);
   // After a manual disconnect the person must be able to connect again.
   assert.equal(P.updateControls(idle({ phase: "link_lost", connected: false })).connectLocked, false);
 });
@@ -772,6 +776,8 @@ test("reconnect window outlasts a 60 s boot flash window and ends before the 120
   const late = P.reconnectWaitText(65000, 45000);
   assert.match(late, /65 s left/);
   assert.match(late, /up to a minute/);
+  assert.match(late, /Connect WebUSB/);
+  assert.doesNotMatch(early, /Connect WebUSB/);
   assert.match(P.reconnectWaitText(-50, 120000), /0 s left/);
 });
 

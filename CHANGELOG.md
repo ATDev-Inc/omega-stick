@@ -9,7 +9,17 @@ what each part of the number means and how a release is cut.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **Connect stays usable while the console waits for the stick after an
+  update.** The Connect WebUSB and Connect Web Serial buttons were disabled
+  for the whole reconnect wait, so a stick the page could not reopen by itself
+  could not be reached before the 120 s rollback deadline. That is the case
+  once when updating from firmware older than 0.1.0, which reported a
+  placeholder USB serial number: the new build reports the real one, the
+  browser's earlier permission does not cover it, and only the picker can open
+  it. The wait text now says so, and a manual connect continues the update's
+  confirm step as before. ([#65](https://github.com/ATDev-Inc/omega-stick/pull/65))
 
 ## [0.1.0] - 2026-10-25
 
