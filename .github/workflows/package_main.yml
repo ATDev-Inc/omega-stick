@@ -133,7 +133,7 @@ jobs:
       contents: write
       actions: read
     steps:
-      - uses: esp-cpp/esp-packaged-programmer-action@de8c8efe3daa81de8d1e0ca66393a5e12fbf284c # v1.0.5
+      - uses: esp-cpp/esp-packaged-programmer-action@6d1e028c3daa438d80e7a2f03c30cfccad8147ba # v1.0.6
         with:
           zipfile-id: ${{ needs.build.outputs.zipfile-id }}
 
