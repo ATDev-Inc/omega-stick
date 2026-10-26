@@ -9,7 +9,11 @@ what each part of the number means and how a release is cut.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **The console frame log no longer dumps whole firmware chunks.** Two helpers
+  named `hex` clashed, so with "Log frames" ticked every firmware update chunk
+  was written in full into the log. Frames are shortened again. [#95](https://github.com/ATDev-Inc/omega-stick/pull/95).
 
 ## [0.1.1] - 2026-10-26
 
