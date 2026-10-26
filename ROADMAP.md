@@ -20,8 +20,9 @@ tried on a real Xbox Adaptive Controller, calibration persisted to flash, a
 browser console, firmware updates over USB with rollback (on in the first
 release, D25 as amended), and a simulator for
 working without a board. All of it is covered by host, web and fuzz tests in
-CI, and none of the recent work has run on hardware. There is no tagged release
-yet. See [README.md](README.md#project-status) for the short version.
+CI, and only the update flow has run on hardware (2026-10-25). v0.1.0 is the
+first tagged release. See [README.md](README.md#project-status) for the short
+version.
 
 ## Milestones
 

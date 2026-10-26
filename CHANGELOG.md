@@ -7,10 +7,13 @@ firmware version lives in [version.txt](version.txt); see
 [docs/firmware-updates.md](docs/firmware-updates.md#firmware-versioning) for
 what each part of the number means and how a release is cut.
 
-No release has been tagged yet. Everything below ships as 0.1.0, the version
-in `version.txt`.
-
 ## [Unreleased]
+
+Nothing yet.
+
+## [0.1.0] - 2026-10-25
+
+The first release. Everything below is new in it.
 
 ### Added
 
@@ -335,7 +338,8 @@ in `version.txt`.
   and as expected-failure tests in
   [tests/host/README.md](tests/host/README.md#known-bug-tests-xfail_test).
 
-[Unreleased]: https://github.com/ATDev-Inc/omega-stick/commits/owen-updates
+[Unreleased]: https://github.com/ATDev-Inc/omega-stick/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ATDev-Inc/omega-stick/releases/tag/v0.1.0
 [#1]: https://github.com/ATDev-Inc/omega-stick/pull/1
 [#6]: https://github.com/ATDev-Inc/omega-stick/pull/6
 [#8]: https://github.com/ATDev-Inc/omega-stick/pull/8

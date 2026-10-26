@@ -2,8 +2,9 @@
 
 ## Supported Versions
 
-Omega Stick is in early development. There are no tagged releases yet, so
-only the `main` branch is supported. Security fixes will land there first.
+Omega Stick is in early development. Only the latest tagged release and the
+`main` branch are supported. Security fixes land on `main` first and ship in
+the next release.
 
 ## Scope
 
