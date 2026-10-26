@@ -76,6 +76,9 @@ public:
   static constexpr uint8_t STATUS_RESULT_READY = 0x01;
   static constexpr uint8_t STATUS_DIAG_FAIL = 0x02;
   static constexpr uint8_t STATUS_POR = 0x10;
+  // CONV_STATUS[7:5] SET_COUNT: rolling count of completed conversion sets.
+  static constexpr uint8_t STATUS_SET_COUNT_SHIFT = 5;
+  static constexpr uint8_t STATUS_SET_COUNT_MASK = 0x07;
 
   // ==========================================================================
   // Operating modes
@@ -123,6 +126,15 @@ public:
 
   enum class MagneticRange : uint8_t { LOW = 0, HIGH = 1 };
 
+  /// Part variant. It sets the full-scale values above, so it only affects the mT conversion;
+  /// raw counts and the range register bits are the same on both. AUTO (the Config default)
+  /// reads the version field of DEVICE_ID (bits 1:0: 1 = x1, 2 = x2) during initialize().
+  enum class Variant : uint8_t { AUTO, A1, A2 };
+
+  static constexpr uint8_t DEVICE_ID_VERSION_MASK = 0x03; ///< DEVICE_ID bits 1:0
+  static constexpr uint8_t DEVICE_ID_VERSION_X1 = 0x01;
+  static constexpr uint8_t DEVICE_ID_VERSION_X2 = 0x02;
+
   // ==========================================================================
   // Angle conversion
   // ==========================================================================
@@ -155,12 +167,17 @@ public:
     float x{0.0f};
     float y{0.0f};
     float z{0.0f};
+    /// CONV_STATUS.SET_COUNT at the moment of the read: a 3-bit counter the
+    /// sensor advances after every completed conversion set. A value that
+    /// stops changing between polls means the conversion engine has stopped.
+    uint8_t conversion_count{0};
   };
 
   struct RawMagneticData {
     int16_t x{0};
     int16_t y{0};
     int16_t z{0};
+    uint8_t conversion_count{0}; ///< See MagneticData::conversion_count.
   };
 
   // ==========================================================================
@@ -173,13 +190,17 @@ public:
     BasePeripheral::write_fn write;
     // BasePeripheral::read_fn read;
     BasePeripheral::read_register_fn read_register;
-    espp::Logger::Verbosity verbosity = espp::Logger::Verbosity::INFO;
+    espp::Logger::Verbosity verbosity = espp::Logger::Verbosity::ERROR;
 
     MagneticChannels channels{MagneticChannels::XYZ};
 
     MagneticRange xy_range{MagneticRange::HIGH};
 
     MagneticRange z_range{MagneticRange::HIGH};
+
+    /// AUTO detects the variant from DEVICE_ID at init; A1 or A2 overrides detection. Until a
+    /// detection succeeds, AUTO assumes A2 (the values the driver always used).
+    Variant variant{Variant::AUTO};
 
     OperatingMode operating_mode{OperatingMode::CONTINUOUS};
 
@@ -203,6 +224,8 @@ public:
       , channels_(config.channels)
       , xy_range_(config.xy_range)
       , z_range_(config.z_range)
+      , variant_(config.variant == Variant::A1 ? Variant::A1 : Variant::A2)
+      , detect_variant_(config.variant == Variant::AUTO)
       , operating_mode_(config.operating_mode)
       , conversion_average_(config.conversion_average)
       , low_noise_(config.low_noise) {
@@ -224,6 +247,10 @@ public:
       ec = std::make_error_code(std::errc::not_connected);
       logger_.error("TMAG5273 not connected or no response from device.");
       return false;
+    }
+
+    if (detect_variant_) {
+      detect_variant(ec);
     }
 
     if (!set_magnetic_channels(channels_, ec)) {
@@ -257,6 +284,9 @@ public:
   // ==========================================================================
   // Device identification
   // ==========================================================================
+
+  /// The part variant in effect (detected, overridden, or the A2 fallback). Never AUTO.
+  Variant variant() const { return variant_; }
 
   uint8_t device_id(std::error_code &ec) const {
     uint8_t device_id = read_u8_from_register(DEVICE_ID, ec);
@@ -371,9 +401,9 @@ public:
       return false;
     }
 
-    // X_Y_RANGE = bit 0
-    reg &= ~(1U << 0);
-    reg |= (static_cast<uint8_t>(range) & 0x01) << 0;
+    // X_Y_RANGE = bit 1
+    reg &= ~(1U << 1);
+    reg |= (static_cast<uint8_t>(range) & 0x01) << 1;
 
     write_u8_to_register(SENSOR_CONFIG_2, reg, ec);
 
@@ -392,9 +422,9 @@ public:
       return false;
     }
 
-    // Z_RANGE = bit 1
-    reg &= ~(1U << 1);
-    reg |= (static_cast<uint8_t>(range) & 0x01) << 1;
+    // Z_RANGE = bit 0
+    reg &= ~(1U << 0);
+    reg |= (static_cast<uint8_t>(range) & 0x01) << 0;
 
     write_u8_to_register(SENSOR_CONFIG_2, reg, ec);
 
@@ -412,7 +442,7 @@ public:
       return MagneticRange::HIGH;
     }
 
-    return static_cast<MagneticRange>((reg >> 0) & 0x01);
+    return static_cast<MagneticRange>((reg >> 1) & 0x01); // X_Y_RANGE = bit 1
   }
   MagneticRange z_range(std::error_code &ec) const {
 
@@ -422,7 +452,7 @@ public:
       return MagneticRange::HIGH;
     }
 
-    return static_cast<MagneticRange>((reg >> 1) & 0x01);
+    return static_cast<MagneticRange>((reg >> 0) & 0x01); // Z_RANGE = bit 0
   }
 
   // ==========================================================================
@@ -546,7 +576,9 @@ public:
 
   RawMagneticData read_raw(std::error_code &ec) const {
 
-    uint8_t data[6]{};
+    // X, Y, Z results (0x12..0x17) are immediately followed by CONV_STATUS
+    // (0x18), so one 7-byte burst returns the conversion counter for free.
+    uint8_t data[7]{};
 
     read_many_from_register(X_MSB_RESULT, data, sizeof(data), ec);
 
@@ -561,6 +593,8 @@ public:
     result.y = static_cast<int16_t>((static_cast<uint16_t>(data[2]) << 8) | data[3]);
 
     result.z = static_cast<int16_t>((static_cast<uint16_t>(data[4]) << 8) | data[5]);
+
+    result.conversion_count = (data[6] >> STATUS_SET_COUNT_SHIFT) & STATUS_SET_COUNT_MASK;
 
     return result;
   }
@@ -579,7 +613,8 @@ public:
 
     return {.x = convert_raw_to_mT(raw.x, xy_range_),
             .y = convert_raw_to_mT(raw.y, xy_range_),
-            .z = convert_raw_to_mT(raw.z, z_range_)};
+            .z = convert_raw_to_mT(raw.z, z_range_),
+            .conversion_count = raw.conversion_count};
   }
 
   float read_x(std::error_code &ec) const {
@@ -690,7 +725,8 @@ public:
       return AngleConversion::OFF;
     }
 
-    return static_cast<AngleConversion>((reg >> 6) & 0x03);
+    // ANGLE_EN = bits 3:2, the same field set_angle_conversion writes
+    return static_cast<AngleConversion>((reg >> 2) & 0x03);
   }
 
   float read_angle(std::error_code &ec) const {
@@ -736,21 +772,50 @@ public:
     return !ec;
   }
 
+  // ==========================================================================
+  // Range accessors
+  // ==========================================================================
+
+  /// Full-scale range in mT for the configured XY range and part variant.
+  float range_xy_mT() const { return full_scale_mT(variant_, xy_range_); }
+
+  /// Full-scale range in mT for the configured Z range and part variant.
+  float range_z_mT() const { return full_scale_mT(variant_, z_range_); }
+
 private:
   // ==========================================================================
   // Conversion helpers
   // ==========================================================================
 
-  float convert_raw_to_mT(int16_t raw, MagneticRange range) const {
-
-    const float full_scale = range == MagneticRange::LOW ? 0.1330f : 0.2660f;
-
-    return static_cast<float>(raw) / 32768.0f * full_scale * 1000.0f;
+  /// The one place the part variant is turned into a full-scale value (datasheet, +-mT).
+  static float full_scale_mT(Variant variant, MagneticRange range) {
+    if (variant == Variant::A1) {
+      return range == MagneticRange::LOW ? 40.0f : 80.0f;
+    }
+    return range == MagneticRange::LOW ? 133.0f : 266.0f;
   }
 
-  float range_xy_mT() const { return 266.0f; }
+  void detect_variant(std::error_code &ec) {
+    const uint8_t version = read_u8_from_register(DEVICE_ID, ec) & DEVICE_ID_VERSION_MASK;
+    if (ec) {
+      return;
+    }
+    if (version == DEVICE_ID_VERSION_X1) {
+      variant_ = Variant::A1;
+    } else if (version == DEVICE_ID_VERSION_X2) {
+      variant_ = Variant::A2;
+    } else {
+      logger_.warn("TMAG5273 DEVICE_ID version {} is not x1 or x2, assuming x2 ranges", version);
+      return;
+    }
+    logger_.info("TMAG5273 detected variant {} (full scale +-{} / +-{} mT)",
+                 variant_ == Variant::A1 ? "x1" : "x2", full_scale_mT(variant_, MagneticRange::LOW),
+                 full_scale_mT(variant_, MagneticRange::HIGH));
+  }
 
-  float range_z_mT() const { return 266.0f; }
+  float convert_raw_to_mT(int16_t raw, MagneticRange range) const {
+    return static_cast<float>(raw) / 32768.0f * full_scale_mT(variant_, range);
+  }
 
   // ==========================================================================
   // State
@@ -761,6 +826,10 @@ private:
   MagneticRange xy_range_{MagneticRange::HIGH};
 
   MagneticRange z_range_{MagneticRange::HIGH};
+
+  Variant variant_{Variant::A2};
+
+  bool detect_variant_{true};
 
   OperatingMode operating_mode_{OperatingMode::CONTINUOUS};
 

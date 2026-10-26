@@ -31,8 +31,8 @@ public:
   // Tunables
   // --------------------------------------------------------------------------
 
-  static constexpr int CENTER_SAMPLES = 500;
-  static constexpr int RANGE_SAMPLES = 500;
+  static constexpr int CENTER_SAMPLES = 200;
+  static constexpr int RANGE_SAMPLES = 200;
 
   static constexpr int RANGE_SECTORS = 32;
 
@@ -56,6 +56,22 @@ public:
   // Require coverage of at least half the angular sectors before trusting
   // the range calibration.
   static constexpr int MIN_COVERED_SECTORS = RANGE_SECTORS / 2;
+
+  // A calibration is usable only if its usable radius is at least this many
+  // times its center noise radius (check_usable()). The auto center deadzone
+  // is noise_radius * CENTER_MARGIN / usable_radius, capped at
+  // MAX_CENTER_DEADZONE, so below CENTER_MARGIN / MAX_CENTER_DEADZONE (3.0)
+  // the cap stops the deadzone short of the noise and the resting stick moves
+  // the cursor. A sweep of a stick nobody moved passes MIN_COVERED_SECTORS
+  // (noise points every way) but lands below 1: the board that prompted this
+  // saved usable 0.049 to 0.060 against noise 0.074 to 0.086. A real sweep is
+  // far above 3 (the host-test fixture is about 49, a simulator sweep about
+  // 220).
+  static constexpr float MIN_USABLE_TO_NOISE_RATIO = CENTER_MARGIN / MAX_CENTER_DEADZONE;
+  /// Slack applied by load() (relative to the ratio): the saved file keeps six
+  /// significant digits, which can move a threshold result by about 1e-5, so
+  /// 1e-3 is generous without admitting a genuinely unusable calibration.
+  static constexpr float LOAD_RATIO_TOLERANCE = 1e-3f;
 
   static constexpr auto SETTLE_DELAY = std::chrono::seconds(5);
   static constexpr auto SAMPLE_DELAY = std::chrono::milliseconds(10);
@@ -106,9 +122,15 @@ public:
   /// logger at INFO level.
   using MessageFunction = std::function<void(const std::string &)>;
 
+  /// Blocks the calling task for the given duration. Defaults to
+  /// std::this_thread::sleep_for; tests inject a no-op so calibration runs
+  /// instantly.
+  using SleepFunction = std::function<void(std::chrono::milliseconds)>;
+
   struct Config {
     ReadFunction read;                 ///< Required.
     MessageFunction message = nullptr; ///< Optional; defaults to logger_.
+    SleepFunction sleep = nullptr;     ///< Optional; defaults to std::this_thread::sleep_for.
     espp::Logger::Verbosity verbosity{espp::Logger::Verbosity::INFO};
   };
 
@@ -146,6 +168,193 @@ public:
     std::vector<float> sector_max_radius;
   };
 
+  /// Which USB HID device the stick currently drives. Persisted and
+  /// live-adjustable via DeviceSettings, so the firmware doesn't need a
+  /// reflash to switch between the two.
+  enum class InputMode : uint8_t { MOUSE = 0, XAC = 1 };
+
+  /// Live-tunable device settings that sit alongside (but are distinct
+  /// from) the CenterResult/RangeResult produced by an interactive
+  /// calibration sweep. Unlike center/range, these are meant to be edited
+  /// directly -- e.g. from a console/browser UI -- rather than measured,
+  /// so they're saved to their own file (see default_path()) and can be
+  /// changed live without re-running center_calibration()/range_calibration().
+  struct DeviceSettings {
+    // ------------------------------------------------------------------
+    // Manual deadzone overrides
+    // ------------------------------------------------------------------
+    // CenterResult::deadzone and RangeResult::deadzone are derived from the
+    // calibration sweep. These let a live UI override either one directly
+    // (e.g. "the auto center deadzone still feels twitchy, bump it up") --
+    // std::nullopt means "use the calibration-derived value as-is".
+    std::optional<float> manual_center_deadzone;
+    std::optional<float> manual_range_deadzone;
+
+    /// The center deadzone actually used at runtime: manual_center_deadzone
+    /// if set, otherwise the calibration-derived center.deadzone.
+    float effective_center_deadzone(const CenterResult &center) const {
+      return manual_center_deadzone.value_or(center.deadzone);
+    }
+
+    /// The range deadzone actually used at runtime: manual_range_deadzone
+    /// if set, otherwise the calibration-derived range.deadzone.
+    float effective_range_deadzone(const RangeResult &range) const {
+      return manual_range_deadzone.value_or(range.deadzone);
+    }
+
+    // ------------------------------------------------------------------
+    // Nudge-click tuning
+    // ------------------------------------------------------------------
+    // "Nudging" is pushing the stick, off-center, past a distance
+    // threshold in one of the four cardinal directions to drive a click or
+    // scroll instead of cursor movement (see the nudge-click feature in
+    // main.cpp) -- there is no physical switch, this is purely how far/how
+    // long the stick has been pushed.
+
+    /// How much the stick's magnitude must CHANGE, measured once per
+    /// nudge_hold_time window, before a nudge is recognized ("nudge enter
+    /// threshold" / distance threshold). This is a DELTA (current magnitude
+    /// minus the magnitude at the start of the window), not an absolute
+    /// position.
+    float nudge_distance_threshold{0.5f};
+
+    /// Absolute normalized magnitude the stick must fall back to (or below)
+    /// before a held nudge is released ("nudge exit threshold"). Unlike
+    /// nudge_distance_threshold this IS an absolute position, not a delta --
+    /// tune it against real-hardware testing rather than assuming it should
+    /// be small; a held nudge is meant to persist for as long as the stick
+    /// stays meaningfully deflected.
+    float nudge_exit_threshold{0.8f};
+
+    /// The polling window over which nudge_distance_threshold's magnitude
+    /// delta is measured ("nudge time") -- a coarser cadence than the
+    /// per-report polling loop, so a single noisy sample can't register as
+    /// a nudge.
+    std::chrono::milliseconds nudge_hold_time{100};
+
+    /// Master switch for nudge clicks. When false the control loop never
+    /// starts a nudge and releases one that is held, so the stick only moves
+    /// the cursor; the three tuning values above are kept as they are.
+    bool nudge_enabled{true};
+
+    // ------------------------------------------------------------------
+    // Input mode
+    // ------------------------------------------------------------------
+    InputMode input_mode{InputMode::MOUSE};
+
+    // ------------------------------------------------------------------
+    // Persistence
+    // ------------------------------------------------------------------
+
+    /// Convenience: builds a path for the settings file under espp's
+    /// mounted file system root (e.g. "/littlefs/omega_settings.cfg").
+    /// Deliberately a different file from OmegaCalibration::default_path()
+    /// (the calibration file): settings are user-tuned and change far more
+    /// often than a calibration sweep's raw center/range measurements, so
+    /// keeping them separate means a settings change never risks touching
+    /// (or being confused for) the calibration data, and vice versa.
+    static std::filesystem::path default_path(const std::string &filename = "omega_settings.cfg") {
+      return espp::FileSystem::get().get_root_path() / filename;
+    }
+
+    /// Saves settings to a simple "key=value" text file (same format as
+    /// OmegaCalibration::save()) at the given path. Overwrites any existing
+    /// file at that path. An unset manual_*_deadzone override is simply
+    /// omitted from the file, so load() correctly restores it as nullopt.
+    static bool save(const DeviceSettings &settings, const std::filesystem::path &path,
+                     std::error_code &ec) {
+      ec.clear();
+
+      std::ofstream out(path, std::ios::out | std::ios::trunc);
+      if (!out.is_open()) {
+        ec = make_error_code(Error::file_open_failed);
+        return false;
+      }
+
+      out << "schema=" << SCHEMA_VERSION << "\n";
+      if (settings.manual_center_deadzone) {
+        out << "manual_center_deadzone=" << *settings.manual_center_deadzone << "\n";
+      }
+      if (settings.manual_range_deadzone) {
+        out << "manual_range_deadzone=" << *settings.manual_range_deadzone << "\n";
+      }
+      out << "nudge_distance_threshold=" << settings.nudge_distance_threshold << "\n";
+      out << "nudge_exit_threshold=" << settings.nudge_exit_threshold << "\n";
+      out << "nudge_hold_time_ms=" << static_cast<float>(settings.nudge_hold_time.count()) << "\n";
+      out << "nudge_enabled=" << (settings.nudge_enabled ? 1 : 0) << "\n";
+      out << "input_mode=" << static_cast<float>(static_cast<uint8_t>(settings.input_mode)) << "\n";
+      out.flush();
+
+      if (!out) {
+        ec = make_error_code(Error::file_write_failed);
+        return false;
+      }
+      return true;
+    }
+
+    /// Loads settings previously written by save(). Every field is
+    /// optional in the file (unlike OmegaCalibration::load(), which
+    /// requires its core fields): a missing manual_*_deadzone key means
+    /// "no override" (nullopt), and a missing nudge/mode key falls back to
+    /// that field's default -- so a settings file from an older firmware
+    /// version, or a hand-written partial file, still loads cleanly.
+    /// Returns false (with ec set) only if the file can't be opened or
+    /// contains an unparseable line.
+    static bool load(DeviceSettings &settings, const std::filesystem::path &path,
+                     std::error_code &ec) {
+      ec.clear();
+
+      std::ifstream in(path);
+      if (!in.is_open()) {
+        ec = make_error_code(Error::file_open_failed);
+        return false;
+      }
+
+      std::unordered_map<std::string, float> values;
+      std::string line;
+      while (std::getline(in, line)) {
+        const auto eq = line.find('=');
+        if (eq == std::string::npos) {
+          continue;
+        }
+        const std::string key = line.substr(0, eq);
+        const std::string value_str = line.substr(eq + 1);
+
+        char *parse_end = nullptr;
+        const float value = std::strtof(value_str.c_str(), &parse_end);
+        if (parse_end == value_str.c_str()) {
+          ec = make_error_code(Error::file_parse_failed);
+          return false;
+        }
+        values[key] = value;
+      }
+      if (!check_schema(values, ec)) {
+        return false;
+      }
+
+      settings.manual_center_deadzone = values.count("manual_center_deadzone")
+                                            ? std::optional<float>(values["manual_center_deadzone"])
+                                            : std::nullopt;
+      settings.manual_range_deadzone = values.count("manual_range_deadzone")
+                                           ? std::optional<float>(values["manual_range_deadzone"])
+                                           : std::nullopt;
+      settings.nudge_distance_threshold =
+          values.count("nudge_distance_threshold") ? values["nudge_distance_threshold"] : 0.5f;
+      settings.nudge_exit_threshold =
+          values.count("nudge_exit_threshold") ? values["nudge_exit_threshold"] : 0.8f;
+      settings.nudge_hold_time = std::chrono::milliseconds(
+          values.count("nudge_hold_time_ms") ? static_cast<long long>(values["nudge_hold_time_ms"])
+                                             : 100);
+      // A file without the key (older firmware) keeps nudge clicks on.
+      settings.nudge_enabled =
+          values.count("nudge_enabled") ? values["nudge_enabled"] != 0.0f : true;
+      settings.input_mode = values.count("input_mode")
+                                ? static_cast<InputMode>(static_cast<uint8_t>(values["input_mode"]))
+                                : InputMode::MOUSE;
+      return true;
+    }
+  };
+
   /// Errors this calibration routine can report.
   enum class Error {
     read_failure = 1,
@@ -156,7 +365,36 @@ public:
     file_write_failed,
     file_parse_failed,
     file_missing_field,
+    unsupported_schema, ///< file written by newer firmware (schema above SCHEMA_VERSION)
+    /// usable radius below MIN_USABLE_TO_NOISE_RATIO x center noise radius (check_usable())
+    calibration_unusable,
   };
+
+  /// Schema version written to both persisted files as `schema=N` and the
+  /// highest one this firmware can read. A file without the key is schema 1
+  /// (every file written before the key existed). Bumping this is a MAJOR
+  /// firmware bump if older firmware cannot read the result (PER-3).
+  static constexpr int SCHEMA_VERSION = 1;
+
+  /// Checks the optional `schema` value parsed from a file. Returns false
+  /// with ec set when it is malformed or newer than SCHEMA_VERSION.
+  static bool check_schema(const std::unordered_map<std::string, float> &values,
+                           std::error_code &ec) {
+    const auto it = values.find("schema");
+    if (it == values.end()) {
+      return true; // schema 1
+    }
+    const float v = it->second;
+    if (!std::isfinite(v) || v < 1.0f || v != std::floor(v)) {
+      ec = make_error_code(Error::file_parse_failed);
+      return false;
+    }
+    if (v > static_cast<float>(SCHEMA_VERSION)) {
+      ec = make_error_code(Error::unsupported_schema);
+      return false;
+    }
+    return true;
+  }
 
   static const std::error_category &error_category() {
     static const struct Category : std::error_category {
@@ -172,13 +410,18 @@ public:
         case Error::no_range_samples:
           return "insufficient angular coverage during range calibration";
         case Error::file_open_failed:
-          return "failed to open calibration file";
+          return "failed to open file";
         case Error::file_write_failed:
-          return "failed to write calibration file";
+          return "failed to write file";
         case Error::file_parse_failed:
-          return "failed to parse calibration file";
+          return "failed to parse file";
         case Error::file_missing_field:
-          return "calibration file is missing a required field";
+          return "file is missing a required field";
+        case Error::unsupported_schema:
+          return "file was written by newer firmware (unsupported schema)";
+        case Error::calibration_unusable:
+          return "calibration unusable: the swept range is too small for the resting noise "
+                 "(was the stick moved to its edges?)";
         default:
           return "unknown error";
         }
@@ -198,6 +441,9 @@ public:
   explicit OmegaCalibration(const Config &config)
       : read_(config.read)
       , message_(config.message)
+      , sleep_(config.sleep ? config.sleep : SleepFunction([](std::chrono::milliseconds d) {
+        std::this_thread::sleep_for(d);
+      }))
       , logger_({.tag = "OmegaCalibration", .level = config.verbosity}) {}
 
   // --------------------------------------------------------------------------
@@ -212,7 +458,7 @@ public:
 
     message("Release the joystick completely.");
     message("Do not touch or move it.");
-    std::this_thread::sleep_for(SETTLE_DELAY);
+    sleep_(SETTLE_DELAY);
 
     // ------------------------------------------------------------------
     // Determine center
@@ -227,7 +473,7 @@ public:
     for (int i = 0; i < CENTER_SAMPLES; i++) {
       float x, y;
       if (!read_(&x, &y)) {
-        std::this_thread::sleep_for(SAMPLE_DELAY);
+        sleep_(SAMPLE_DELAY);
         continue;
       }
       x = x_filter.update(x);
@@ -235,7 +481,7 @@ public:
       sum_x += x;
       sum_y += y;
       valid_samples++;
-      std::this_thread::sleep_for(SAMPLE_DELAY);
+      sleep_(SAMPLE_DELAY);
     }
 
     if (valid_samples == 0) {
@@ -256,7 +502,7 @@ public:
     // ------------------------------------------------------------------
     message("Measuring center movement/noise...");
     message("shake it a bit but do not touch the end effector.");
-    std::this_thread::sleep_for(SETTLE_DELAY);
+    sleep_(SETTLE_DELAY);
 
     std::vector<float> center_radii;
     center_radii.reserve(CENTER_SAMPLES);
@@ -265,7 +511,7 @@ public:
     for (int i = 0; i < CENTER_SAMPLES; i++) {
       float x, y;
       if (!read_(&x, &y)) {
-        std::this_thread::sleep_for(SAMPLE_DELAY);
+        sleep_(SAMPLE_DELAY);
         continue;
       }
       x = noise_x_filter.update(x);
@@ -273,7 +519,7 @@ public:
       const float dx = x - center_x;
       const float dy = y - center_y;
       center_radii.push_back(std::sqrt(dx * dx + dy * dy));
-      std::this_thread::sleep_for(SAMPLE_DELAY);
+      sleep_(SAMPLE_DELAY);
     }
 
     if (center_radii.empty()) {
@@ -310,8 +556,8 @@ public:
     message("Move the joystick slowly through a COMPLETE circle.");
     message("Reach the physical maximum in every direction.");
     message("Try to reach all edges of the joystick.");
-    std::this_thread::sleep_for(SETTLE_DELAY);
-    std::this_thread::sleep_for(SETTLE_DELAY);
+    sleep_(SETTLE_DELAY);
+    sleep_(SETTLE_DELAY);
     message("START!");
 
     float min_x = std::numeric_limits<float>::max();
@@ -326,7 +572,7 @@ public:
     for (int i = 0; i < RANGE_SAMPLES; i++) {
       float x, y;
       if (!read_(&x, &y)) {
-        std::this_thread::sleep_for(SAMPLE_DELAY);
+        sleep_(SAMPLE_DELAY);
         continue;
       }
 
@@ -355,7 +601,7 @@ public:
       sector_max_radius[sector] = std::max(sector_max_radius[sector], radius);
 
       valid_samples++;
-      std::this_thread::sleep_for(SAMPLE_DELAY);
+      sleep_(SAMPLE_DELAY);
     }
 
     message("STOP!");
@@ -388,6 +634,25 @@ public:
     for (float radius : sector_max_radius) {
       if (radius > 0.0f) {
         valid_sector_maxima.push_back(radius);
+      }
+    }
+
+    if (static_cast<int>(valid_sector_maxima.size()) < MIN_COVERED_SECTORS) {
+      logger_.error("Range sweep covered only {} of {} sectors (need {})!",
+                    valid_sector_maxima.size(), RANGE_SECTORS, MIN_COVERED_SECTORS);
+      ec = make_error_code(Error::no_range_samples);
+      return false;
+    }
+
+    // A stick left at rest covers every sector with noise, so coverage alone
+    // does not catch it; the usable radius against the center noise does.
+    {
+      RangeResult measured;
+      measured.usable_radius = usable_radius;
+      if (!check_usable(center, measured, ec)) {
+        logger_.error("Usable radius {:.6f} is below {:.1f}x the center noise radius {:.6f}!",
+                      usable_radius, MIN_USABLE_TO_NOISE_RATIO, center.noise_radius);
+        return false;
       }
     }
 
@@ -445,6 +710,26 @@ public:
   static void adjust_manual_offset(CenterResult &center, float delta_x, float delta_y) {
     center.manual_offset_x += delta_x;
     center.manual_offset_y += delta_y;
+  }
+
+  /// True when a calibration can drive the output: its usable radius is
+  /// positive and at least MIN_USABLE_TO_NOISE_RATIO times its center noise
+  /// radius. Otherwise sets ec to Error::calibration_unusable and returns
+  /// false. A non-finite value is unusable too. range_calibration() applies
+  /// this to every sweep and load() to every saved file. `tolerance` relaxes
+  /// the ratio by that fraction: load() passes LOAD_RATIO_TOLERANCE so a sweep
+  /// accepted right at the threshold still loads after the file's six
+  /// significant digits rounded both radii.
+  static bool check_usable(const CenterResult &center, const RangeResult &range,
+                           std::error_code &ec, float tolerance = 0.0f) {
+    const float noise = center.noise_radius;
+    const float usable = range.usable_radius;
+    if (!std::isfinite(noise) || !std::isfinite(usable) || noise < 0.0f || usable <= 0.0f ||
+        usable < MIN_USABLE_TO_NOISE_RATIO * noise * (1.0f - tolerance)) {
+      ec = make_error_code(Error::calibration_unusable);
+      return false;
+    }
+    return true;
   }
 
   /// Normalizes a CenterResult's noise radius into a deadzone fraction of
@@ -506,8 +791,12 @@ public:
         : config_(config) {}
 
     bool update(float raw_x, float raw_y, float mapped_magnitude, CenterResult &center) {
-      const auto now = std::chrono::steady_clock::now();
+      return update(raw_x, raw_y, mapped_magnitude, center, std::chrono::steady_clock::now());
+    }
 
+    /// Same as above with an explicit timestamp (lets tests drive the clock).
+    bool update(float raw_x, float raw_y, float mapped_magnitude, CenterResult &center,
+                std::chrono::steady_clock::time_point now) {
       if (mapped_magnitude > config_.idle_magnitude_threshold) {
         idle_since_.reset();
         return false;
@@ -540,6 +829,173 @@ public:
     std::optional<std::chrono::steady_clock::time_point> last_nudge_;
   };
 
+  /// Decides when the sensor can no longer be trusted, so the caller can
+  /// report a centered stick instead of whatever espp::Joystick last mapped
+  /// (its update() returns early on a failed read and keeps the old output,
+  /// which would hold a deflection forever once the sensor drops off the
+  /// bus). See D21 in docs/decisions.md for the rules and their rationale.
+  ///
+  /// Call update() every loop tick with whether the read succeeded and the
+  /// raw reading. While it returns true the output must be neutral. Two
+  /// conditions trip it:
+  ///
+  ///  - trip_after_failed_reads consecutive failed reads (a single failure
+  ///    is a bus glitch, not a fault), and
+  ///  - stuck_after_samples consecutive readings that are exactly identical
+  ///    in both axes. Real hall readings carry noise, so a long run of bit-
+  ///    identical samples means the conversion engine has stopped. 0
+  ///    disables this check.
+  ///
+  /// Either way the fault clears only after recover_after_good_reads
+  /// consecutive successful reads (and, for a stuck fault, the reading has
+  /// changed), so a sensor that flaps stays centered instead of jittering.
+  /// The first fault since reset() is latched for later status reporting.
+  ///
+  /// Thresholds are in loop ticks, not time, because the tick period is the
+  /// caller's; both the 10 ms mouse loop and the 5 ms XAC loop feed this.
+  class SensorFaultMonitor {
+  public:
+    enum class Fault : uint8_t { NONE, READ_FAILED, STUCK };
+
+    struct Config {
+      int trip_after_failed_reads{3};
+      int stuck_after_samples{500};
+      /// Consecutive polls on which the sensor's conversion counter did not
+      /// advance (see TMAG5273::MagneticData::conversion_count). The
+      /// counter normally moves several steps per 10 ms poll, so 50 polls
+      /// (500 ms, the SEN-5 budget) with no movement means the conversion
+      /// engine has stopped. Only applies to the update() overload that is
+      /// given the counter; 0 disables.
+      int stuck_after_stale_conversions{50};
+      int recover_after_good_reads{10};
+    };
+
+    SensorFaultMonitor()
+        : config_({}) {}
+
+    explicit SensorFaultMonitor(const Config &config)
+        : config_(config) {}
+
+    /// Returns true while the output must be held neutral.
+    bool update(bool read_ok, float raw_x, float raw_y) {
+      return update(read_ok, raw_x, raw_y, std::nullopt);
+    }
+
+    /// As above, also watching the sensor's conversion counter. A counter
+    /// that stops advancing is the direct "conversion engine stuck" signal
+    /// and trips far sooner than the identical-sample check can.
+    bool update(bool read_ok, float raw_x, float raw_y, std::optional<uint8_t> conversion_count) {
+      if (!read_ok) {
+        failed_streak_++;
+        good_streak_ = 0;
+        if (failed_streak_ >= config_.trip_after_failed_reads) {
+          trip(Fault::READ_FAILED);
+        }
+        return faulted();
+      }
+
+      failed_streak_ = 0;
+      good_streak_++;
+
+      // Streaks saturate at their thresholds so a sensor that stays frozen
+      // for months cannot overflow them.
+      if (have_last_ && raw_x == last_x_ && raw_y == last_y_) {
+        identical_streak_ = saturating_increment(identical_streak_, config_.stuck_after_samples);
+      } else {
+        identical_streak_ = 0;
+      }
+      have_last_ = true;
+      last_x_ = raw_x;
+      last_y_ = raw_y;
+
+      if (conversion_count) {
+        if (have_last_conversion_ && *conversion_count == last_conversion_) {
+          stale_conversion_streak_ =
+              saturating_increment(stale_conversion_streak_, config_.stuck_after_stale_conversions);
+        } else {
+          stale_conversion_streak_ = 0;
+        }
+        have_last_conversion_ = true;
+        last_conversion_ = *conversion_count;
+      }
+
+      const bool samples_stuck =
+          config_.stuck_after_samples > 0 && identical_streak_ >= config_.stuck_after_samples;
+      const bool conversions_stuck =
+          config_.stuck_after_stale_conversions > 0 &&
+          stale_conversion_streak_ >= config_.stuck_after_stale_conversions;
+      if (samples_stuck || conversions_stuck) {
+        trip(Fault::STUCK);
+        // Recovery is counted from the first sample that changes again.
+        good_streak_ = 0;
+        return true;
+      }
+
+      if (faulted() && good_streak_ >= config_.recover_after_good_reads) {
+        fault_ = Fault::NONE;
+      }
+      return faulted();
+    }
+
+    bool faulted() const { return fault_ != Fault::NONE; }
+
+    /// The fault in effect now, or NONE.
+    Fault fault() const { return fault_; }
+
+    /// The first fault seen since construction or reset(); stays set after
+    /// recovery so a later status query can still say what happened.
+    Fault first_fault() const { return first_fault_; }
+
+    /// How many times the monitor has tripped since construction or reset().
+    uint32_t fault_count() const { return fault_count_; }
+
+    static const char *to_string(Fault fault) {
+      switch (fault) {
+      case Fault::READ_FAILED:
+        return "read failed";
+      case Fault::STUCK:
+        return "reading stuck";
+      case Fault::NONE:
+      default:
+        return "none";
+      }
+    }
+
+    /// Forgets all streaks and the latched first fault.
+    void reset() { *this = SensorFaultMonitor(config_); }
+
+  private:
+    static int saturating_increment(int streak, int limit) {
+      return (limit > 0 && streak >= limit) ? limit : streak + 1;
+    }
+
+    void trip(Fault fault) {
+      if (fault_ == fault) {
+        return;
+      }
+      fault_ = fault;
+      fault_count_++;
+      good_streak_ = 0;
+      if (first_fault_ == Fault::NONE) {
+        first_fault_ = fault;
+      }
+    }
+
+    Config config_;
+    Fault fault_{Fault::NONE};
+    Fault first_fault_{Fault::NONE};
+    uint32_t fault_count_{0};
+    int failed_streak_{0};
+    int good_streak_{0};
+    int identical_streak_{0};
+    bool have_last_{false};
+    float last_x_{0};
+    float last_y_{0};
+    int stale_conversion_streak_{0};
+    bool have_last_conversion_{false};
+    uint8_t last_conversion_{0};
+  };
+
   /// Applies completed calibration results to an already-constructed
   /// espp::Joystick -- e.g. after a fresh interactive recalibration
   /// (following clear() + calibrate()) -- without needing to destroy and
@@ -555,6 +1011,11 @@ public:
   /// deadzone_radius field"). Joystick's plain constructor does NOT perform
   /// this zeroing, so prefer this function (or at least call it once right
   /// after construction) instead of relying on the constructor alone.
+  ///
+  /// This overload uses the calibration-derived deadzones (center.deadzone /
+  /// range.deadzone) verbatim. Prefer the DeviceSettings-aware overload
+  /// below once manual deadzone overrides are in play, so a live-edited
+  /// override actually takes effect.
   ///
   /// @note Does not change the joystick's type or its get_values function.
   ///       The joystick must already have been constructed with
@@ -572,9 +1033,31 @@ public:
         center.deadzone, range.deadzone);
   }
 
+  /// Same as the three-argument apply_calibration() above, but resolves the
+  /// center/range deadzones through DeviceSettings first -- so a manual
+  /// deadzone override set via set_manual_offset()-style live editing (e.g.
+  /// from a console/browser UI) actually reaches the joystick, instead of
+  /// always using the raw calibration-derived values. Use this overload
+  /// once DeviceSettings is in play; use the plain three-argument overload
+  /// only where no DeviceSettings exists yet.
+  static void apply_calibration(espp::Joystick &js, const CenterResult &center,
+                                const RangeResult &range, const DeviceSettings &settings) {
+    js.set_calibration(
+        espp::FloatRangeMapper::Config{.center = center.effective_center_x(),
+                                       .minimum = center.effective_center_x() + range.min_x,
+                                       .maximum = center.effective_center_x() + range.max_x},
+        espp::FloatRangeMapper::Config{.center = center.effective_center_y(),
+                                       .minimum = center.effective_center_y() + range.min_y,
+                                       .maximum = center.effective_center_y() + range.max_y},
+        settings.effective_center_deadzone(center), settings.effective_range_deadzone(range));
+  }
+
   /// Builds the espp::Joystick config from completed calibration results.
   /// The caller supplies get_values since it typically closes over a sensor
-  /// object (e.g. a TMAG5273) that this class doesn't own.
+  /// object (e.g. a TMAG5273) that this class doesn't own. Uses the
+  /// calibration-derived deadzones verbatim; see the DeviceSettings-aware
+  /// overload below to honor manual deadzone overrides from construction
+  /// onward.
   ///
   /// @note Use this for the initial construction of the Joystick only. To
   ///       push a new calibration onto an already-constructed Joystick (e.g.
@@ -599,10 +1082,34 @@ public:
     };
   }
 
+  /// Same as make_joystick_config() above, but resolves the center/range
+  /// deadzones through DeviceSettings first (manual override if set, else
+  /// the calibration-derived value) -- prefer this overload once
+  /// DeviceSettings is in play.
+  static espp::Joystick::Config
+  make_joystick_config(const CenterResult &center, const RangeResult &range,
+                       const DeviceSettings &settings,
+                       std::function<bool(float *, float *)> get_values) {
+    return espp::Joystick::Config{
+        .x_calibration = {.center = center.effective_center_x(),
+                          .minimum = center.effective_center_x() + range.min_x,
+                          .maximum = center.effective_center_x() + range.max_x},
+        .y_calibration = {.center = center.effective_center_y(),
+                          .minimum = center.effective_center_y() + range.min_y,
+                          .maximum = center.effective_center_y() + range.max_y},
+        .type = espp::Joystick::Type::CIRCULAR,
+        .center_deadzone_radius = settings.effective_center_deadzone(center),
+        .range_deadzone = settings.effective_range_deadzone(range),
+        .get_values = std::move(get_values),
+    };
+  }
+
   /// Convenience: builds a path for the calibration file under espp's
-  /// mounted file system root (e.g. "/littlefs/omega_calibration.cfg").
+  /// mounted file system root (e.g. "/<partition_label>/omega_calibration.cfg").
   /// Requires that espp::FileSystem's partition/label is already set up
-  /// correctly (see FileSystem::get_root_path()).
+  /// correctly (see FileSystem::get_root_path()). For the separate,
+  /// independently-persisted live settings (deadzone overrides, nudge
+  /// tuning, input mode), see DeviceSettings::default_path().
   static std::filesystem::path default_path(const std::string &filename = "omega_calibration.cfg") {
     return espp::FileSystem::get().get_root_path() / filename;
   }
@@ -620,6 +1127,7 @@ public:
       return false;
     }
 
+    out << "schema=" << SCHEMA_VERSION << "\n";
     out << "center_x=" << center.center_x << "\n";
     out << "center_y=" << center.center_y << "\n";
     out << "center_noise_radius=" << center.noise_radius << "\n";
@@ -646,9 +1154,14 @@ public:
   /// Loads calibration results previously written by save(). Only the
   /// fields needed to reconstruct a Joystick config are required; the
   /// diagnostic fields (noise_radius, usable_radius, etc.) are restored
-  /// when present but default to 0 otherwise. Returns false (with ec set)
-  /// if the file can't be opened, can't be parsed, or is missing a
-  /// required field.
+  /// when present but default to 0 otherwise (a missing usable radius is
+  /// worked out from the range bounds). Returns false (with ec set) if the
+  /// file can't be opened, can't be parsed, or is missing a required field.
+  ///
+  /// A file that parses but fails check_usable() also returns false, with
+  /// Error::calibration_unusable: center and range then hold what the file
+  /// says (so a caller can keep its manual offset), but must not be used to
+  /// drive the output. The file is left in place.
   static bool load(CenterResult &center, RangeResult &range, const std::filesystem::path &path,
                    std::error_code &ec) {
     ec.clear();
@@ -678,6 +1191,9 @@ public:
       }
       values[key] = value;
     }
+    if (!check_schema(values, ec)) {
+      return false;
+    }
 
     static const std::vector<std::string> required = {
         "center_x",    "center_y",    "center_deadzone", "range_min_x",
@@ -704,8 +1220,10 @@ public:
     range.max_x = values["range_max_x"];
     range.min_y = values["range_min_y"];
     range.max_y = values["range_max_y"];
-    range.usable_radius =
-        values.count("range_usable_radius") ? values["range_usable_radius"] : 0.0f;
+    range.usable_radius = values.count("range_usable_radius")
+                              ? values["range_usable_radius"]
+                              : std::min({std::abs(range.min_x), std::abs(range.max_x),
+                                          std::abs(range.min_y), std::abs(range.max_y)});
     range.reliable_max_radius =
         values.count("range_reliable_max_radius") ? values["range_reliable_max_radius"] : 0.0f;
     range.normalized_max_radius =
@@ -713,13 +1231,13 @@ public:
     range.deadzone = values["range_deadzone"];
     range.sector_max_radius.clear(); // not persisted; diagnostic only
 
-    return true;
+    return check_usable(center, range, ec, LOAD_RATIO_TOLERANCE);
   }
 
-  /// Deletes the persisted calibration file at the given path, forcing a
-  /// fresh interactive calibration next time load() is tried (e.g. from a
+  /// Deletes the persisted calibration file at the given path, so the next
+  /// load() finds none and the device waits for a calibration (e.g. from a
   /// "hold button at boot to recalibrate" check, or a debug/console
-  /// command). It is not an error for the file to already be missing —
+  /// command). It is not an error for the file to already be missing:
   /// this returns true in that case too. Returns false (with ec set) only
   /// if the file exists but couldn't actually be removed.
   static bool clear(const std::filesystem::path &path, std::error_code &ec) {
@@ -753,6 +1271,7 @@ protected:
 
   ReadFunction read_;
   MessageFunction message_;
+  SleepFunction sleep_;
   mutable espp::Logger logger_;
 };
 

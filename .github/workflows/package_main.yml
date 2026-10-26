@@ -7,6 +7,11 @@ on:
     types: [published]
   workflow_dispatch:
 
+# Read-only by default; the jobs that attach release assets ask for write
+# access themselves.
+permissions:
+  contents: read
+
 env:
   # Project build settings.
   APP_NAME: "Omega Stick"
@@ -29,19 +34,52 @@ jobs:
 
     steps:
     - name: Checkout repo
-      uses: actions/checkout@v7
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0
+        persist-credentials: false # the release step uses GITHUB_TOKEN directly
+
+    # The firmware number comes from version.txt (see the top-level
+    # CMakeLists.txt). A release is only a release if its tag names that same
+    # number, so the device ends up reporting exactly "MAJOR.MINOR.PATCH".
+    - name: Check release tag matches version.txt
+      if: ${{ github.event.release && github.event.action == 'published' }}
+      run: |
+        expected="v$(tr -d '[:space:]' < version.txt)"
+        if [ "${GITHUB_REF_NAME}" != "${expected}" ]; then
+          echo "Release tag '${GITHUB_REF_NAME}' does not match version.txt ('${expected}')." >&2
+          echo "Bump version.txt in a PR first, then tag the merge commit." >&2
+          exit 1
+        fi
 
     - name: Build Main Code
-      uses: espressif/esp-idf-ci-action@v1
+      uses: espressif/esp-idf-ci-action@9d38657f3d789ca759b2b37aaf5ceffbc42c4f0d # v1
       with:
         esp_idf_version: ${{ env.IDF_VERSION }}
         path: '.'
         target: ${{ env.IDF_TARGET }}
 
+    # One flashable file: bootloader, partition table and app joined at
+    # offset 0 (idf.py merge-bin reads build/flasher_args.json). The first
+    # flash from the web uses it, and it is what lands on the Pages site.
+    - name: Merge into a single full-flash image
+      uses: espressif/esp-idf-ci-action@9d38657f3d789ca759b2b37aaf5ceffbc42c4f0d # v1
+      with:
+        esp_idf_version: ${{ env.IDF_VERSION }}
+        path: '.'
+        target: ${{ env.IDF_TARGET }}
+        command: 'idf.py merge-bin && mkdir -p dist-merged && mv build/merged-binary.bin dist-merged/full.bin'
+
+    - name: Upload merged image
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: merged-image
+        path: dist-merged/full.bin
+        if-no-files-found: error
+        retention-days: 7
+
     - name: Upload Build Outputs
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       id: zip_step
       # Artifacts attached to the build / release. Add e.g.
       # littlefs-flash_args here if a filesystem image is ever added to
@@ -58,7 +96,7 @@ jobs:
         retention-days: 7
 
     - name: Attach files to release
-      uses: softprops/action-gh-release@v3
+      uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
       if: ${{ github.event.release && github.event.action == 'published' }}
       # Artifacts attached to the build / release. Add e.g.
       # littlefs-flash_args here if a filesystem image is ever added to
@@ -74,7 +112,7 @@ jobs:
 
     - name: Determine Size Delta
       if: ${{ github.event.release && github.event.action == 'published' }}
-      uses: esp-cpp/esp-idf-size-delta@v1
+      uses: esp-cpp/esp-idf-size-delta@fb63ac752301845b16670ed609f04e443b3cb354 # v1.2.4
       with:
         app_name: ${{ env.APP_NAME }}
         app_path: "."
@@ -90,9 +128,100 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    # Downloads the build artifact and attaches the programmers to the release.
+    permissions:
+      contents: write
+      actions: read
     steps:
-      - uses: esp-cpp/esp-packaged-programmer-action@v1.0.5
+      - uses: esp-cpp/esp-packaged-programmer-action@de8c8efe3daa81de8d1e0ca66393a5e12fbf284c # v1.0.5
         with:
           zipfile-id: ${{ needs.build.outputs.zipfile-id }}
 
           programmer-name: 'omega_stick_programmer'
+
+  # Publishing: only for a full (non-pre) release. The site carries the
+  # console, the first-flash page and the firmware files (GitHub release
+  # downloads send no CORS headers, GitHub Pages does, so browsers fetch
+  # firmware from Pages). The extra files are also attached to the release.
+  site:
+    name: Assemble the Pages site and release feed
+    needs: build
+    if: ${{ github.event_name == 'release' && github.event.action == 'published' && !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # attach the feed files to the release
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download build outputs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: build-artifacts
+          path: build-artifacts
+
+      - name: Download merged image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: merged-image
+          path: merged-image
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          package-manager-cache: false # this job publishes; never restore a cache into it
+
+      - name: Build the site
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          NOTES_URL: ${{ github.event.release.html_url }}
+          PUBLISHED_AT: ${{ github.event.release.published_at }}
+        run: |
+          set -eu
+          version="$(tr -d '[:space:]' < version.txt)"
+          mkdir -p _site/console
+          cp site/index.html site/flash.html site/site.css _site/
+          touch _site/.nojekyll
+          # A copy of the console, not a fork: it is one self-contained file.
+          cp components/omega_calibration/web/calibration_console.html _site/console/index.html
+          node scripts/release_feed.mjs \
+            --app build-artifacts/omega_stick.bin \
+            --full merged-image/full.bin \
+            --version "${version}" \
+            --tag "${TAG}" \
+            --notes-url "${NOTES_URL}" \
+            --published-at "${PUBLISHED_AT}" \
+            --out _site/firmware
+          ls -l _site _site/firmware
+          (cd _site/firmware && sha256sum -c SHA256SUMS)
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: _site
+
+      - name: Attach versioned images and feed to the release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: _site/firmware/*
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: site
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write # publish the site
+      id-token: write # prove to Pages the deploy comes from this workflow
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

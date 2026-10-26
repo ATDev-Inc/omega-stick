@@ -1,0 +1,70 @@
+name: Host tests
+
+on: [pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc (werror, coverage)
+            os: ubuntu-latest
+            cxx: g++
+            flags: -DOMEGA_HOST_WERROR=ON -DOMEGA_HOST_COVERAGE=ON
+          - name: clang (werror, asan+ubsan)
+            os: ubuntu-latest
+            cxx: clang++
+            flags: -DOMEGA_HOST_WERROR=ON -DOMEGA_HOST_SANITIZE=ON
+          - name: msvc (werror)
+            os: windows-latest
+            flags: -DOMEGA_HOST_WERROR=ON
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install clang
+        if: matrix.cxx == 'clang++'
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-rt-dev
+
+      - name: Configure
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.cxx }}" ]; then
+            cmake -S tests/host -B build-host -DCMAKE_BUILD_TYPE=Debug \
+              -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} ${{ matrix.flags }}
+          else
+            cmake -S tests/host -B build-host ${{ matrix.flags }}
+          fi
+
+      - name: Build
+        run: cmake --build build-host --config Debug
+
+      - name: Test
+        env:
+          ASAN_OPTIONS: halt_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --test-dir build-host -C Debug --output-on-failure
+
+      - name: Coverage report
+        if: matrix.cxx == 'g++'
+        run: |
+          pip install gcovr
+          gcovr -r . --filter 'components/' --filter 'tests/host/' \
+            --exclude 'build-host/' \
+            --html-details build-host/coverage.html --txt coverage.txt
+          { echo '### Coverage'; echo '```'; cat coverage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        if: matrix.cxx == 'g++'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-html
+          path: build-host/coverage*.html

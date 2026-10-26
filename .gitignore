@@ -35,9 +35,18 @@ sdkconfig
 sdkconfig.old
 managed_components/
 
+# clangd index
+.cache/
+
 # Python bytecode, from the build scripts in assets/logo
 __pycache__/
 *.pyc
 
 # Editor settings are per-machine (COM ports, local toolchain paths)
 .vscode/
+
+# Host unit test build tree (tests/host/README.md)
+build-*/
+
+# Desktop simulator build tree is covered by build-*/ above; its default data directory:
+omega_sim_data/

@@ -20,11 +20,21 @@ CONFIG_IDF_TARGET="esp32s3"
 # CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_TINYUSB_CDC_ENABLED=y
 CONFIG_TINYUSB_CDC_COUNT=1
-CONFIG_TINYUSB_VENDOR_COUNT=1
-CONFIG_TINYUSB_HID_COUNT=1
+CONFIG_TINYUSB_VENDOR_COUNT=2
+CONFIG_TINYUSB_HID_COUNT=2
 CONFIG_ESPP_I2C_USE_NEW_API=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
-# Target is the 8 MB QT Py ESP32-S3; partitions.csv needs about 6.1 MB.
 CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+# Target is the 8 MB QT Py ESP32-S3; partitions.csv needs about 6.1 MB.
 CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Stack-smashing protection on every function with local arrays (GCC
+# -fstack-protector-strong). A corrupted frame aborts into a core dump
+# instead of running on silently, which is the failure a joystick must not
+# have. Costs a canary check per protected call; the 10 ms HID loop has
+# plenty of slack, but confirm the loop period on hardware after a change
+# here before shipping (see docs/research/05-sibling-firmware-lessons.md).
+CONFIG_COMPILER_STACK_CHECK_MODE_STRONG=y

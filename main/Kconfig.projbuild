@@ -9,9 +9,25 @@ config OMEGA_STICK_BOOT_FLASH_WINDOW_S
       built-in USB Serial/JTAG still owns the USB port, so `idf.py flash`
       can reset the board into the bootloader without holding BOOT.
 
-      Set this in menuconfig to open that window on every boot. Your local
-      sdkconfig is gitignored, so the setting stays on your machine. Leave it
-      at 0 for anything users run: they would wait this long before the stick
-      responds.
+      Set this in menuconfig (15 works well) to open that window on every
+      boot. Your local sdkconfig is gitignored, so the setting stays on your
+      machine. Leave it at 0 for anything users run: they would wait this
+      long before the stick responds.
+
+config OMEGA_STICK_OTA
+    bool "Firmware updates over USB"
+    default y
+    help
+      On by default. The calibration console can install new firmware over
+      USB, and a new image must be confirmed by the console or the board
+      reverts to the previous one.
+
+      Turn it off to build without the update engine and the post-update
+      health check: the console's firmware update messages then reply
+      function_not_supported, and new firmware is installed from the
+      first-flash page. Use the sdkconfig.no_ota defaults fragment, or
+      menuconfig.
+
+      The bootloader and partition table are the same either way.
 
 endmenu

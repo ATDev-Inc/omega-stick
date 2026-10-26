@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "name": "a saved calibration below the noise ratio boots quiet until a recalibration fixes it",
+  "steps": [
+    { "at_ms": 0, "pattern": "calibrate" },
+    { "at_ms": 500, "action": "recalibrate" },
+    { "at_ms": 40000, "expect": { "calibrated": true, "needs_calibration": false } },
+    { "at_ms": 40500, "stick": [0, 0] },
+    { "at_ms": 41000, "action": "plant_unusable_calibration" },
+    { "at_ms": 41500, "action": "restart" },
+    { "at_ms": 44000, "expect": { "calibrated": false, "needs_calibration": true } },
+    { "at_ms": 44500, "stick": [0.6, 0] },
+    { "at_ms": 46000, "expect": { "neutral": true, "mouse_moved": "none" } },
+    { "at_ms": 46500, "stick": [0, 0] },
+    { "at_ms": 47000, "action": "recalibrate" },
+    { "at_ms": 80000, "expect": { "calibrated": false, "needs_calibration": true } },
+    { "at_ms": 80500, "stick": [0.6, 0] },
+    { "at_ms": 82000, "expect": { "neutral": true, "mouse_moved": "none" } },
+    { "at_ms": 82600, "pattern": "calibrate" },
+    { "at_ms": 83000, "action": "recalibrate" },
+    { "at_ms": 120000, "expect": { "calibrated": true, "needs_calibration": false } },
+    { "at_ms": 120500, "stick": [0, 0] },
+    { "at_ms": 121000, "stick": [0.6, 0] },
+    { "at_ms": 122500, "expect": { "mouse_moved": "right", "neutral": false } }
+  ]
+}
