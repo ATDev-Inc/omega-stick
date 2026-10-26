@@ -79,7 +79,7 @@ Last reviewed: 2026-10-25.
 ## Firmware updates over USB (v0.1.0)
 
 The default build has updates on (D25, amended 2026-10-25); check
-`build/sdkconfig` reads `CONFIG_OMEGA_STICK_OTA=y`. The off variant is built
+the project-root `sdkconfig` reads `CONFIG_OMEGA_STICK_OTA=y`. The off variant is built
 into a separate directory with its own sdkconfig, so the default build's
 `CONFIG_OMEGA_STICK_OTA` setting is not carried over (defaults never override
 a value an existing sdkconfig already has):
