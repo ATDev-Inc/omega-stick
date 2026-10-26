@@ -89,7 +89,7 @@ What works today:
   settings, switching input mode, and re-running calibration.
 - **Firmware updates over USB** from the console, with automatic rollback if a
   new image does not come up healthy, and a button to revert to the previous
-  firmware. Turned off in v0.1.0 builds; it returns in a later 0.x release. See
+  firmware. See
   [Firmware updates and versioning](#firmware-updates-and-versioning).
 - **Sensor fault handling**: if the sensor stops answering or freezes, the
   device reports a centered stick until it recovers.
@@ -129,12 +129,12 @@ Research documents are point-in-time snapshots and are not maintained.
 
 ## Firmware updates and versioning
 
-**v0.1.0 does not update over USB.** Install it, and any later version, from
-the flash page below; that erases saved calibration and settings. After a first
-flash the stick stays still (no cursor or gamepad movement) until it is
-calibrated from the console. The rest of this section describes builds with
-`CONFIG_OMEGA_STICK_OTA=y` (see [decision D25](docs/decisions.md)), which come
-back in a later 0.x release.
+**v0.1.0 updates over USB.** The first install is from the flash page below;
+that erases saved calibration and settings. After a first flash the stick stays
+still (no cursor or gamepad movement) until it is calibrated from the console.
+Updates are on by default (`CONFIG_OMEGA_STICK_OTA=y`, see
+[decision D25](docs/decisions.md)); a build can opt out with `sdkconfig.no_ota`,
+and then new firmware goes on from the flash page.
 
 A new board is flashed once, from the browser at the
 [flash page](https://atdev-inc.github.io/omega-stick/flash.html) or with
@@ -314,7 +314,8 @@ seconds the firmware waits at boot before starting USB. While it waits, the
 built-in USB Serial/JTAG still owns the port, so `idf.py flash` works without
 holding BOOT. As a developer, set it locally in `idf.py menuconfig` (your
 `sdkconfig` is gitignored); leave it at 0 for anything users run.
-`OMEGA_STICK_OTA` (default off) builds in firmware updates over USB; see
+`OMEGA_STICK_OTA` (default on) builds in firmware updates over USB; the
+`sdkconfig.no_ota` defaults fragment turns it off. See
 [docs/firmware-updates.md](docs/firmware-updates.md). The flash layout is in
 [partitions.csv](partitions.csv) and assumes the 8 MB QT Py ESP32-S3.
 

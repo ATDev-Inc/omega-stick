@@ -112,10 +112,10 @@ watch the mouse or gamepad output it reports.
 | `cannot listen on 127.0.0.1:8765 (is another simulator running?)` | Another `omega_sim` is still running (maybe in another window). Close it with Ctrl+C, or start this one with `--port 8766` and change the console's address to match. |
 | Console log: `Simulator connect failed ... Is omega_sim running?` | The simulator is not running, has stopped, or is on another port. Check its window for the `listening on` line and that the address in the console matches. |
 | Connect fails even though the simulator is running | The page was not opened from disk or from `localhost`. The simulator accepts only pages from `file://`, `http://localhost`, `http://127.0.0.1` and the published console, and refuses anything else (for example a page served from your machine's network address). Open the file from disk. |
-| Connected, but the stick does nothing and the console keeps showing calibration prompts | The first-boot sweep is waiting for movement. Play the `calibrate` pattern ([step 5](#5-first-run-let-it-calibrate)). |
+| Connected, but the stick does nothing and the console says it needs calibration | A fresh board holds its output neutral until a calibration succeeds. Play the `calibrate` pattern and re-run calibration ([step 5](#5-first-run-calibrate-it)). |
 | Calibration or settings look wrong, or are left over from earlier | Restart with `--fresh` to wipe the simulated board, or use the Simulator panel's **Wipe**. |
 | Connecting a second console tab disconnects the first | Expected: the simulator serves one console at a time, and the newest connection wins. |
-| Firmware update controls are missing | You started it with `--no-ota`, which acts like a v0.1.0 build with updates turned off. Start it without that option. |
+| Firmware update controls are missing | You started it with `--no-ota`, which mirrors a build with updates turned off (`sdkconfig.no_ota`). Start it without that option. |
 
 If none of these fit, open an issue with your OS, compiler, the exact command,
 and what the simulator window and the console log printed.

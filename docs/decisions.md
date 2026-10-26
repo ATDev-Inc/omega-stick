@@ -547,6 +547,17 @@ well (`sdkconfig.ota`) so the code keeps compiling.
 This narrows D18 and D22 for this release; it does not reverse them. Their
 rules apply unchanged to any build with the option on.
 
+**Amendment, 2026-10-25: reversed for v0.1.0.** After the hardware pass the
+maintainer decided v0.1.0 ships with updates on. On a real stick the update
+path ran: upload, automatic reconnect, console confirm, the 120 s deadline
+rollback, the bootloader rollback on unplug, revert, and installs in both XAC
+and mouse mode. `OMEGA_STICK_OTA` now defaults to on. The opt-out is the
+`sdkconfig.no_ota` defaults fragment (`CONFIG_OMEGA_STICK_OTA=n`), which CI
+builds so the off path keeps compiling. Bootloader rollback and `partitions.csv`
+are unchanged, and the first-flash page remains the way to install the first
+OTA-capable firmware and to recover. The text above is kept as the record of
+the original decision.
+
 ## D26: No usable calibration: boot quiet and calibrate from the console
 
 A stick without a usable calibration boots quiet. It does not run the
