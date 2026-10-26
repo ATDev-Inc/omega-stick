@@ -90,6 +90,10 @@ async function main() {
     }
   };
   const waitLog = (label, re, timeout) => waitFor(label, async () => re.test(await logText()), timeout);
+  // An apply handler logs its result before it refreshes the state, and keeps
+  // its button disabled (and may rewrite the inputs) until the refresh is done.
+  // Wait for that before the next edit or click, or the click is dropped.
+  const waitEnabled = (id, timeout = 8000) => waitFor(id + " enabled again", async () => !(await ev($(id) + ".disabled")), timeout);
   const countIn = async (s) => (await logText()).split(s).length - 1;
   const setValue = (id, v) => ev("(()=>{const e=" + $(id) + ";e.value=" + JSON.stringify(String(v)) + ";e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}))})()");
   const setChecked = (id, on) => ev("(()=>{const e=" + $(id) + ";if(e.checked!==" + on + ")e.click()})()");
@@ -211,13 +215,15 @@ async function main() {
   await setValue("centerDzValue", "0.1");
   await click("applyDeadzoneBtn");
   await waitLog("deadzone applied", /Deadzone override applied live/, 8000);
+  await waitEnabled("applyDeadzoneBtn");
   const appliedOnce = await countIn("Deadzone override applied live");
   const dzCenter = await ev($("centerDzValue") + ".value");
   await setValue("centerDzValue", "0.9");
   await click("applyDeadzoneBtn");
-  await sleep(500);
-  const logD = await logText();
-  const refused = /Center deadzone override must be between 0 and 0\.5/.test(logD);
+  const refusedRe = /Center deadzone override must be between 0 and 0\.5/;
+  await waitLog("the out-of-range refusal", refusedRe, 3000).catch(() => { });
+  await sleep(300);
+  const refused = refusedRe.test(await logText());
   const appliedAfter = await countIn("Deadzone override applied live");
   check("d", "in-range deadzone override applied, 0.9 refused by the console before sending",
     refused && appliedAfter === appliedOnce && appliedOnce >= 1,
@@ -225,6 +231,7 @@ async function main() {
   await setChecked("centerDzEnable", false);
   await click("applyDeadzoneBtn");
   await waitFor("override cleared", async () => (await countIn("Deadzone override applied live")) > appliedOnce, 8000);
+  await waitEnabled("applyDeadzoneBtn");
 
   // ---- e. XAC mode: the sim restarts, the page reconnects by itself ----
   const connBefore = await connectedCount();
