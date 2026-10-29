@@ -13,7 +13,7 @@ v0.1.0, the first release, was published on 2026-10-25 with updates over USB
 on, and v0.1.1 (a console reconnect fix) on 2026-10-26. What is left from the
 first-release list is the hardware pass.
 
-- [ ] Close #12 (`marshall-updates`) and #15 (`fix/xac-descriptor`). Both are
+- [x] Close #12 (`marshall-updates`) and #15 (`fix/xac-descriptor`). Both are
       superseded by what reached `main` through #64; Marshall was asked to close
       them on 2026-10-26.
 - [x] Promote `owen-updates` to `main`. Done 2026-10-25 (#64). The branch is
