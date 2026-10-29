@@ -11,7 +11,7 @@ builds on the hardware verification and release machinery of the one before.
 Nothing here is a medical, therapeutic, or compliance claim (see
 [docs/compliance.md](docs/compliance.md)).
 
-Last reviewed: 2026-10-12.
+Last reviewed: 2026-10-26.
 
 ## Where things stand
 
@@ -20,27 +20,29 @@ tried on a real Xbox Adaptive Controller, calibration persisted to flash, a
 browser console, firmware updates over USB with rollback (on in the first
 release, D25 as amended), and a simulator for
 working without a board. All of it is covered by host, web and fuzz tests in
-CI, and only the update flow has run on hardware (2026-10-25). v0.1.0 is the
-first tagged release. See [README.md](README.md#project-status) for the short
+CI, and only the update flow has run on hardware (2026-10-25). v0.1.0 was the
+first tagged release (2026-10-25), and v0.1.1 followed with a console fix
+(2026-10-26). See [README.md](README.md#project-status) for the short
 version.
 
 ## Milestones
 
-### M0: first tagged release, v0.1.0 (October 2026)
+### M0: first tagged release, v0.1.0 (released 2026-10-25)
 
 The goal is a build a tester can install, and reinstall, from the browser, and
 a `main` branch that reflects it. Firmware updates over USB are on in this release (D25, amended
 2026-10-25); the first-flash page installs the first one and recovers a stick
 that will not connect.
 
-- Land the `owen-updates` integration branch on `main`, including the
-  simulator and the `OMEGA_STICK_OTA` build switch (on by default).
-- Run the first hardware pass on everything that has only been host-tested:
+- Done: the `owen-updates` integration branch landed on `main` (#64),
+  including the simulator and the `OMEGA_STICK_OTA` build switch (on by
+  default).
+- Still open: run the first hardware pass on everything that has only been host-tested:
   mouse mode under slow movement, held positions and rapid reversals; the
   console over WebUSB and Web Serial; the first-flash page's BOOT and RESET
   steps, on a new board and over an existing install.
-- Tag `v0.1.0`, which publishes the Pages site, the release feed and the
-  first-flash page. Closes issue #5.
+- Done: `v0.1.0` is tagged and published, with the Pages site, the release
+  feed and the first-flash page live.
 
 ### M1: hardware-verified and demo-ready, v0.1.x (late October 2026)
 
@@ -54,8 +56,8 @@ beside it.
   [requirements.md](docs/requirements.md#11-known-defects-to-fix-first)) and
   the three known-bug tests are fixed; what remains is confirming them on the
   board in the hardware pass.
-- Decide what a failed first-boot calibration does instead of halting the
-  firmware before USB starts (see [TODO.md](TODO.md)).
+- Done: a stick without a usable calibration boots quiet, output held
+  neutral, and is calibrated from the console (decision D26).
 - Status LED for sensor fault and update states (STA-1, STA-2), so a user can
   tell what is wrong without a console attached (goal G5, decision D21).
 - Measure and publish the prototype's actuation force and throw. This is the

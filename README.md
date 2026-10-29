@@ -74,9 +74,10 @@ it works without drivers or vendor software on the host.
 
 ## Project status
 
-**Early development.** This is pre-release firmware and the interfaces are not
-stable yet. For component-level detail and known gaps, see
-[docs/status.md](docs/status.md).
+**Early development.** Releases are 0.x and the interfaces are not stable yet.
+The latest is on the
+[releases page](https://github.com/ATDev-Inc/omega-stick/releases/latest).
+For component-level detail and known gaps, see [docs/status.md](docs/status.md).
 
 What works today:
 
@@ -129,7 +130,7 @@ Research documents are point-in-time snapshots and are not maintained.
 
 ## Firmware updates and versioning
 
-**v0.1.0 updates over USB.** The first install is from the flash page below;
+**Updates over USB since v0.1.0.** The first install is from the flash page below;
 that erases saved calibration and settings. After a first flash the stick stays
 still (no cursor or gamepad movement) until it is calibrated from the console.
 Updates are on by default (`CONFIG_OMEGA_STICK_OTA=y`, see
@@ -138,9 +139,7 @@ and then new firmware goes on from the flash page.
 
 A new board is flashed once, from the browser at the
 [flash page](https://atdev-inc.github.io/omega-stick/flash.html) or with
-`idf.py -p PORT flash`. (GitHub Pages is set up for this repository, but the
-flash page and the hosted console only go live with the first full release
-built by the current workflow.) After that, firmware is updated over USB from the
+`idf.py -p PORT flash`. After that, firmware is updated over USB from the
 calibration console: open it (the copy at
 <https://atdev-inc.github.io/omega-stick/console/> works too), connect, and
 choose or drag in the app image (`build/omega_stick.bin`, or a release's

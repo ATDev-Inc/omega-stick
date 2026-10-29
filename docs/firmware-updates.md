@@ -196,7 +196,7 @@ interrupted upload left a partial image, so a new upload is the way forward.
 ### Check for latest firmware
 
 The "Check for latest firmware" button reads
-`https://atdev-inc.github.io/omega-stick/firmware/latest.json` (which appears with the first full release; the copy of the
+`https://atdev-inc.github.io/omega-stick/firmware/latest.json` (the copy of the
 console on the Pages site reads its own sibling `firmware/latest.json`; there is
 no way to point it elsewhere from the page address), says whether an
 update is available, and links the release notes. "Download and install" fetches
@@ -291,10 +291,8 @@ in bytes and `sha256` is hex.
 Pages is already set up for this repository (Settings > Pages > Source:
 GitHub Actions, and the `github-pages` environment allows `main` and `v*`
 tags). A fork needs the same two settings before its first release can
-deploy. The site goes live with the first full release whose tag contains the
-Pages workflow; until then (2026-10-25: both URLs return 404) the flash page,
-the hosted console and the feed are not there, and the console's
-latest-release check reports the feed as unreachable.
+deploy. The site went live with v0.1.0 on 2026-10-25, and each full release
+redeploys it.
 
 ## First flash and recovery
 
