@@ -111,11 +111,14 @@ struct EspPorts : espp::omega_control::Ports {
   const uint8_t &sensor_conversion_count; ///< same source; CONV_STATUS.SET_COUNT
   SensorFaultStatus &sensor_status;       ///< published for GET_DIAGNOSTICS
   std::atomic<bool> &needs_calibration;   ///< D26 hold; a successful sweep clears it
+  /// The sweep opens its FINISH_CALIBRATION window here and polls it.
+  espp::omega_control::RecalibrationGate &recalibration_gate;
 
   EspPorts(espp::TMAG5273 &tmag_, espp::OmegaStore &store_, espp::Joystick &js_,
            espp::UsbDevice &usb_, espp::CalibrationService &vendor_, espp::CalibrationService &cdc_,
            const bool &sensor_read_ok_, const uint8_t &sensor_conversion_count_,
-           SensorFaultStatus &sensor_status_, std::atomic<bool> &needs_calibration_)
+           SensorFaultStatus &sensor_status_, std::atomic<bool> &needs_calibration_,
+           espp::omega_control::RecalibrationGate &recalibration_gate_)
       : tmag(tmag_)
       , store(store_)
       , js(js_)
@@ -125,7 +128,8 @@ struct EspPorts : espp::omega_control::Ports {
       , sensor_read_ok(sensor_read_ok_)
       , sensor_conversion_count(sensor_conversion_count_)
       , sensor_status(sensor_status_)
-      , needs_calibration(needs_calibration_) {}
+      , needs_calibration(needs_calibration_)
+      , recalibration_gate(recalibration_gate_) {}
 
   void send_mouse(const espp::omega_control::MouseReport &r) override {
     espp::MouseInputReport<0, 3, true> mouse;
@@ -175,10 +179,20 @@ struct EspPorts : espp::omega_control::Ports {
               return true;
             },
         .message = [](const std::string &text) { printf("%s\n", text.c_str()); },
+        // CALIBRATION_PROGRESS to both links (refusals are dropped quietly),
+        // and the FINISH_CALIBRATION window follows the range stage.
+        .progress =
+            [this](const espp::OmegaCalibration::Progress &p) {
+              recalibration_gate.sweep_stage(p.stage);
+              calibration_vendor.notify_calibration_progress(p);
+              calibration_cdc.notify_calibration_progress(p);
+            },
+        .finish_requested = [this] { return recalibration_gate.take_finish(); },
         .verbosity = espp::Logger::Verbosity::ERROR,
     });
     bool recal_ok = recal.center_calibration(new_center, recal_ec) &&
                     recal.range_calibration(new_center, new_range, recal_ec);
+    recalibration_gate.set_finish_window(false);
     if (recal_ok) {
       // Recalibration redoes only the center/range sweep. A fresh
       // center_calibration() starts the manual offset at zero, so
@@ -368,6 +382,30 @@ static bool reset_reason_is_abnormal(esp_reset_reason_t reason) {
 // polling loops drop such a session after this long without OTA traffic (see
 // CalibrationService::expire_stale_update()).
 static constexpr auto OTA_IDLE_TIMEOUT = espp::CalibrationService::OTA_IDLE_TIMEOUT;
+
+// The console's live position display (SET_POSITION_STREAM): every
+// POSITION_STREAM_PERIOD the polling loops send the latest raw reading as a
+// stage-0 CALIBRATION_PROGRESS to each link whose lease is running. Idle cost
+// is one clock read and a compare per tick. The center is the live
+// calibration's, unless there is none usable (D26).
+static void stream_position(espp::CalibrationService &vendor, espp::CalibrationService &cdc,
+                            const espp::omega_control::StickSample &sample,
+                            const espp::OmegaStore &store, bool calibrated,
+                            espp::omega_control::Clock::time_point &next_at) {
+  const auto now = espp::omega_control::Clock::now();
+  if (now < next_at) {
+    return;
+  }
+  next_at = now + espp::CalibrationService::POSITION_STREAM_PERIOD;
+  if (!vendor.position_stream_active(now) && !cdc.position_stream_active(now)) {
+    return;
+  }
+  const espp::OmegaCalibration::CenterResult center = store.center();
+  const auto live = espp::OmegaCalibration::live_progress(
+      sample.read_ok, sample.raw_x, sample.raw_y, calibrated ? &center : nullptr);
+  vendor.notify_position(live, now);
+  cdc.notify_position(live, now);
+}
 
 #if CONFIG_OMEGA_STICK_OTA
 // The crash-loop handover's note to the boot it starts, in memory that a
@@ -848,6 +886,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
             [&recalibration_gate](std::error_code &start_ec) {
               return recalibration_gate.request(start_ec);
             },
+        .finish_calibration =
+            [&recalibration_gate]() { return recalibration_gate.request_finish(); },
         .restart = []() { esp_restart(); },
         .ota = ota_engine,
         .diagnostics = make_diagnostics,
@@ -929,10 +969,11 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     // Nudge-click state, drift compensation and the recalibration hand-off
     // live in omega_control (see components/omega_control).
     EspPorts ports(tmag, store, js, usb, calibration_vendor, calibration_cdc, sensor_read_ok,
-                   sensor_conversion_count, sensor_status, needs_calibration);
+                   sensor_conversion_count, sensor_status, needs_calibration, recalibration_gate);
     espp::omega_control::MouseState state;
     state.common.center = center;
     state.common.range = range;
+    espp::omega_control::Clock::time_point next_position{}; // SET_POSITION_STREAM pacing
 
 #if CONFIG_OMEGA_STICK_OTA
     espp::FirmwareHealthCheck<> fw_health(ota);
@@ -951,6 +992,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
       // A recalibration requested during an update waits for the hold to end.
       const bool recal = !hold && recalibration_gate.take();
       const auto sample = ports.read_stick();
+      stream_position(calibration_vendor, calibration_cdc, sample, store, !needs_calibration.load(),
+                      next_position);
       mouse_tick(state,
                  {.stick = sample,
                   .now = espp::omega_control::Clock::now(),
@@ -1018,6 +1061,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
             [&recalibration_gate](std::error_code &start_ec) {
               return recalibration_gate.request(start_ec);
             },
+        .finish_calibration =
+            [&recalibration_gate]() { return recalibration_gate.request_finish(); },
         .restart = []() { esp_restart(); },
         .ota = ota_engine,
         .diagnostics = make_diagnostics,
@@ -1111,10 +1156,11 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     // ------------------------------------------------------------
 
     EspPorts ports(tmag, store, js, usb, calibration_vendor, calibration_cdc, sensor_read_ok,
-                   sensor_conversion_count, sensor_status, needs_calibration);
+                   sensor_conversion_count, sensor_status, needs_calibration, recalibration_gate);
     espp::omega_control::XacState state;
     state.common.center = center;
     state.common.range = range;
+    espp::omega_control::Clock::time_point next_position{}; // SET_POSITION_STREAM pacing
 
 #if CONFIG_OMEGA_STICK_OTA
     espp::FirmwareHealthCheck<> fw_health(ota);
@@ -1133,6 +1179,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
       // A recalibration requested during an update waits for the hold to end.
       const bool recal = !hold && recalibration_gate.take();
       const auto sample = ports.read_stick();
+      stream_position(calibration_vendor, calibration_cdc, sample, store, !needs_calibration.load(),
+                      next_position);
       xac_tick(state,
                {.stick = sample,
                 .now = espp::omega_control::Clock::now(),

@@ -27,6 +27,15 @@ const ENCODERS = {
   SET_INPUT_MODE_INVALID: (a) => P.encodeSetInputMode(a.mode),
   SET_NUDGE_ENABLED_OFF: (a) => P.encodeSetNudgeEnabled(a.enabled),
 };
+// Visual calibration entries (any name starting with SET_POSITION_STREAM) arrive
+// when the firmware side regenerates the file; FINISH_CALIBRATION has no payload.
+function encoderFor(name) {
+  if (ENCODERS[name]) return ENCODERS[name];
+  if (name.startsWith("SET_POSITION_STREAM")) {
+    return (a) => P.encodeSetPositionStream(a.leaseMs ?? a.lease_ms ?? a.lease ?? 0);
+  }
+  return null;
+}
 
 // C++ prints each f32 as the shortest decimal that round-trips as a float, so
 // compare after rounding the JS double to float32 as well.
@@ -46,6 +55,7 @@ function decodeReply(frame) {
     case P.TYPE.OK: return { value: P.readU32(frame.payload, 0) };
     case P.TYPE.ERROR: return P.parseErrorReply(frame.payload);
     case P.TYPE.CALIBRATION_RESULT: return { success: frame.payload[0] === 1 };
+    case P.TYPE.CALIBRATION_PROGRESS: return P.parseCalibrationProgress(frame.payload);
     case P.T_LIST_MODULES: return P.parseDiscovery(frame.payload);
     default: throw new Error("no decoder for type " + frame.type);
   }
@@ -59,7 +69,8 @@ test("golden file has the expected shape", () => {
 
 for (const req of golden.requests) {
   test("golden request " + req.name + ": JS encoders produce the C++ bytes", () => {
-    const payload = ENCODERS[req.name] ? ENCODERS[req.name](req.args) : new Uint8Array(0);
+    const enc = encoderFor(req.name);
+    const payload = enc ? enc(req.args) : new Uint8Array(0);
     assert.equal(toHex(payload), req.payload_hex);
     assert.equal(toHex(P.buildFrame(req.module, req.type, payload)), req.frame_hex);
   });
@@ -75,6 +86,21 @@ for (const rep of golden.replies) {
     assert.equal(frame.reply, true);
     assert.equal(frame.module, rep.module);
     assert.equal(frame.type, rep.type);
-    assert.deepEqual(normalise(decodeReply(frame)), normalise(rep.fields));
+    const got = normalise(decodeReply(frame));
+    if (frame.type === P.TYPE.CALIBRATION_PROGRESS) {
+      // The golden field names are the firmware side's choice: compare the ones both
+      // sides name (camelCase or snake_case), and the sector array when present.
+      const camel = (k) => k.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+      const want = Object.fromEntries(Object.entries(normalise(rep.fields)).map(([k, v]) => [camel(k), v]));
+      let compared = 0;
+      for (const [k, v] of Object.entries(want)) {
+        if (!(k in got)) continue;
+        compared++;
+        assert.deepEqual(Array.isArray(got[k]) ? Array.from(got[k]) : got[k], v, k);
+      }
+      assert.ok(compared >= 3, "no comparable CALIBRATION_PROGRESS fields in the golden entry");
+      return;
+    }
+    assert.deepEqual(got, normalise(rep.fields));
   });
 }

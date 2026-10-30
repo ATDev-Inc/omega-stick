@@ -46,3 +46,32 @@ test("mock simulator speaks hello, stick, patterns and binary frames", async () 
     await sim.stop();
   }
 });
+
+test("mock sim: SET_POSITION_STREAM gets OK then progress frames; FINISH_CALIBRATION is refused", async () => {
+  const { startMockSim } = await import(pathToFileURL(path.join(__dirname, "mock_sim.mjs")).href);
+  const sim = await startMockSim({ port: 0 });
+  const bins = [];
+  const ws = new WebSocket("ws://127.0.0.1:" + sim.port);
+  ws.binaryType = "arraybuffer";
+  ws.onmessage = (e) => { if (typeof e.data !== "string") bins.push(new Uint8Array(e.data)); };
+  try {
+    await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = () => reject(new Error("connect failed")); });
+    ws.send(P.buildSetPositionStream(3000));
+    ws.send(P.buildFrame(P.MODULE_CALIBRATION, P.TYPE.FINISH_CALIBRATION));
+    const parser = new P.FrameParser();
+    const frames = [];
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline && frames.length < 5) {
+      for (const b of bins.splice(0)) frames.push(...parser.feed(b).frames);
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    assert.deepEqual(frames.map((f) => f.type), [P.TYPE.OK, 0xD4, 0xD4, 0xD4, P.TYPE.ERROR]);
+    const pr = P.parseCalibrationProgress(frames[1].payload);
+    assert.equal(pr.stage, 0); assert.equal(pr.sectorCount, 32); assert.equal(pr.rawValid, true);
+    assert.deepEqual(sim.seen.streams, [3000]);
+    assert.equal(sim.seen.finishes, 1);
+  } finally {
+    ws.close();
+    await sim.stop();
+  }
+});

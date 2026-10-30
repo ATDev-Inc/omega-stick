@@ -12,12 +12,18 @@ namespace {
 
 constexpr std::array<const char *, 8> kPatterns = {
     "rest", "circle", "calibrate", "nudge_right", "nudge_left", "nudge_up", "nudge_down", "wander"};
-constexpr std::array<const char *, 11> kActions = {"recalibrate",      "save",
-                                                   "restart",          "set_mode",
-                                                   "set_deadzone",     "flash",
-                                                   "revert",           "mark_valid",
-                                                   "fw_info",          "plant_unusable_calibration",
-                                                   "set_nudge_enabled"};
+constexpr std::array<const char *, 12> kActions = {"recalibrate",
+                                                   "save",
+                                                   "restart",
+                                                   "set_mode",
+                                                   "set_deadzone",
+                                                   "flash",
+                                                   "revert",
+                                                   "mark_valid",
+                                                   "fw_info",
+                                                   "plant_unusable_calibration",
+                                                   "set_nudge_enabled",
+                                                   "finish_calibration"};
 constexpr std::array<const char *, 5> kReplies = {"ok", "busy", "invalid", "unsupported", "error"};
 
 template <typename Arr> bool contains(const Arr &arr, const std::string &s) {
