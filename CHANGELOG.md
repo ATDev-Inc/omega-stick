@@ -15,7 +15,7 @@ what each part of the number means and how a release is cut.
   until nudge clicks are turned on with the "Nudge clicks" checkbox in the
   console. A stick that already has saved settings keeps its choice, and a
   settings file from before the on/off switch (no `nudge_enabled` key) still
-  loads with nudge clicks on, so updating does not change how it behaves.
+  loads with nudge clicks on, so updating does not change how it behaves. ([#102](https://github.com/ATDev-Inc/omega-stick/pull/102))
 
 ## [0.1.1] - 2026-10-26
 
