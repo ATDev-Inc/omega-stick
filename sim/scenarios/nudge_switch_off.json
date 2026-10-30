@@ -1,11 +1,15 @@
 {
   "version": 1,
-  "name": "with nudge clicks switched off a nudge only moves the cursor, also after a saved restart",
+  "name": "nudge clicks are off by default; switched on they click, switched off a nudge only moves the cursor, also after a saved restart",
   "steps": [
     { "at_ms": 0, "pattern": "calibrate" },
     { "at_ms": 500, "action": "recalibrate" },
     { "at_ms": 40000, "expect": { "calibrated": true } },
-    { "at_ms": 41000, "pattern": "nudge_right" },
+    { "at_ms": 40200, "pattern": "nudge_right" },
+    { "at_ms": 40900, "expect": { "clicked": "none", "mouse_moved": "right" } },
+    { "at_ms": 41000, "pattern": "rest" },
+    { "at_ms": 41100, "action": "set_nudge_enabled", "value": true },
+    { "at_ms": 41200, "pattern": "nudge_right" },
     { "at_ms": 42000, "expect": { "clicked": "right" } },
     { "at_ms": 42500, "pattern": "rest" },
     { "at_ms": 43000, "action": "set_nudge_enabled", "value": false },

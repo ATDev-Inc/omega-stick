@@ -92,7 +92,7 @@ TEST(service_get_state_encodes_snapshot) {
   CHECK_NEAR(support::get_f32(p, 70), 0.75f, 1e-6);
   CHECK_EQ(stream::get_u32(std::span<const uint8_t>(p).subspan(74)), 120u);
   CHECK_EQ(p[78], 1); // XAC
-  CHECK_EQ(p[79], 1); // nudge clicks on (the default)
+  CHECK_EQ(p[79], 0); // nudge clicks off (the default)
 }
 
 TEST(service_state_reports_nudge_enabled_as_the_last_byte) {
@@ -134,7 +134,7 @@ TEST(service_set_nudge_enabled_rejects_other_values_and_lengths) {
     CHECK(support::error_message(reply).find("SET_NUDGE_ENABLED") != std::string::npos);
   }
   // The rejected requests left the default in place.
-  CHECK(fx.store.settings().nudge_enabled);
+  CHECK(!fx.store.settings().nudge_enabled);
 }
 
 TEST(service_set_manual_offset_updates_store_and_replies_ok) {
