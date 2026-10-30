@@ -7,7 +7,7 @@ Omega Stick.
 | --- | --- |
 | `omega_calibration.hpp` | center and range calibration, deadzones, `key=value` file persistence |
 | `omega_store.hpp` | the live calibration and settings behind one mutex, with change callbacks |
-| `calibration_service.hpp` | the framed request/reply protocol (dispatcher module 5, protocol id `omega.calibration` v1) that the console talks to |
+| `calibration_service.hpp` | the framed request/reply protocol (dispatcher module 5, protocol id `omega.calibration` v2) that the console talks to |
 | `web/calibration_console.html` | the browser console, a single self-contained page |
 | `web/omega_protocol.js` | the console's framing, CRC and payload code, DOM-free so Node can test it (`tests/web`). The page carries an identical inline copy; a test fails if the two differ |
 
@@ -64,7 +64,9 @@ device advertises a different protocol version the page warns in its log.
 | Nudge clicks on/off | `0x60 SET_NUDGE_ENABLED` | the "Nudge clicks" checkbox in the nudge-click block. Off means the stick only moves the cursor: no nudge starts, and a held one is released at once. The tuning values are kept, and saved as `nudge_enabled=0/1` in `omega_settings.cfg` (a file without the key loads as on). XAC mode has no nudge clicks, so it is unaffected. Firmware without this message does not answer it, and its 79-byte STATE reply is read as on |
 | Input mode | `0x54 SET_INPUT_MODE` | mouse or XAC gamepad. The device saves all live settings to flash and restarts to apply it. The OK reply is sent before the restart, so the page then loses the connection; reconnect after the stick re-enumerates |
 | Save current state to flash | `0x55 SAVE_TO_FLASH` | writes `omega_calibration.cfg` and `omega_settings.cfg` to the device's file system |
-| Re-run calibration | `0x56 START_CALIBRATION` | asynchronous. The result arrives later as an unsolicited `0xD1` frame. The device stays busy until the sweep finishes and refuses a second request (`device_or_resource_busy`); the page keeps the button disabled until the result arrives |
+| Re-run calibration | `0x56 START_CALIBRATION` | asynchronous. The result arrives later as an unsolicited `0xD1` frame. The device stays busy until the sweep finishes and refuses a second request (`device_or_resource_busy`); the page keeps the button disabled until the result arrives. While it runs the device sends an unsolicited `0xD4 CALIBRATION_PROGRESS` frame at every stage change and then every 50 ms: the stage and its countdown, the raw position, the measured center and noise radius, and the range sweep's axis extremes, per-sector maximum radius and which of the 32 sectors are covered |
+| Finish the range sweep | `0x61 FINISH_CALIBRATION` | the range sweep is open-ended: it ends by itself once every sector is covered and the stick is released (see below), after 90 s, or on this request, which makes it evaluate what it has at once. For a user who cannot reach every direction: half the sectors (16 of 32) still pass. Refused (`operation_not_permitted`) unless the range sweep is sampling, which `CALIBRATION_PROGRESS` shows as stage 6 with `finish_available` set |
+| Live position | `0x62 SET_POSITION_STREAM` | `u32 lease_ms`: outside a sweep, sends `CALIBRATION_PROGRESS` stage 0 frames (the raw position and the live calibration's center) on this link every 50 ms until the lease runs out, at most 10 s; the page renews it while it shows the position, and `0` stops it. Firmware without these messages (protocol version 1) does not answer them |
 
 Changes apply live but are lost on reboot until you save them to flash (or
 switch input mode, which saves first). The page re-reads the device state
@@ -76,16 +78,32 @@ Firmware update, revert, and diagnostics also go through this protocol; see
 
 ### Protocol
 
-The service advertises the protocol id `omega.calibration`, version 1
+The service advertises the protocol id `omega.calibration`, version 2
 (`CalibrationService::kProtocol` / `kProtocolVersion`), which is what the
-console looks for; module 5 is the default routing id only (decision D24 in
+console looks for. Version 2 added `FINISH_CALIBRATION`,
+`SET_POSITION_STREAM` and `CALIBRATION_PROGRESS`, compatible additions to
+version 1; module 5 is the default routing id only (decision D24 in
 [docs/decisions.md](../../docs/decisions.md)). Change the id only for an
 incompatible wire format.
 
-The wire format (frame layout, every message and payload, and the 80-byte
-STATE reply) is documented at the top of
+The wire format (frame layout, every message and payload, the 80-byte STATE
+reply and the 179-byte CALIBRATION_PROGRESS) is documented at the top of
 [calibration_service.hpp](include/calibration_service.hpp). The page's own
 header comment mirrors it.
+
+### The range sweep
+
+`OmegaCalibration::range_calibration()` samples every 10 ms after a 5 s
+lead-in. A sample counts towards its sector only when it is more than three
+times the center noise radius from the center, so a resting stick covers
+nothing, and a sector is covered after three such samples. The sweep ends by
+itself once all 32 sectors are covered, at least 200 samples (2 s) were taken,
+and the stick has stayed released (back within that radius) for 500 ms. A full
+circle and release therefore takes the lead-in plus a few seconds, at any
+speed. It also ends on `FINISH_CALIBRATION` or after 90 s, and either way the
+result is then checked as before: at least 16 sectors with a sample, and the
+usable radius at least three times the noise radius. The saved file format is
+unchanged.
 
 ### Firmware wiring
 

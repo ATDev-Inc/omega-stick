@@ -1058,3 +1058,54 @@ TEST(recalibration_gate_refuses_a_second_request_until_the_sweep_finishes) {
   CHECK(!ec);
   CHECK(gate.take());
 }
+
+TEST(recalibration_gate_accepts_a_finish_only_while_the_range_stage_samples) {
+  using Stage = Cal::Stage;
+  oc::RecalibrationGate gate;
+  std::error_code ec;
+  CHECK(!gate.request_finish()); // idle
+  CHECK(gate.request(ec));
+  CHECK(!gate.request_finish()); // requested, not running yet
+  CHECK(gate.take());
+  CHECK(!gate.request_finish()); // running, but the window is closed
+
+  // The center stages keep the window closed.
+  for (Stage s : {Stage::CENTER_SETTLE, Stage::CENTER_MEASURE, Stage::NOISE_SETTLE,
+                  Stage::NOISE_MEASURE, Stage::RANGE_PREPARE}) {
+    gate.sweep_stage(s);
+    CHECK(!gate.request_finish());
+  }
+  CHECK(!gate.take_finish());
+
+  gate.sweep_stage(Stage::RANGE_SWEEP);
+  CHECK(!gate.take_finish()); // nothing asked yet
+  CHECK(gate.request_finish());
+  // A later report of the same stage keeps the request (only edges reset it).
+  gate.sweep_stage(Stage::RANGE_SWEEP);
+  CHECK(gate.take_finish());
+  CHECK(!gate.take_finish()); // consumed once
+
+  // Leaving the stage closes the window and drops an unconsumed request.
+  CHECK(gate.request_finish());
+  gate.sweep_stage(Stage::FINISHING);
+  CHECK(!gate.take_finish());
+  CHECK(!gate.request_finish());
+}
+
+TEST(recalibration_gate_finish_never_leaks_into_the_next_sweep) {
+  oc::RecalibrationGate gate;
+  std::error_code ec;
+  CHECK(gate.request(ec));
+  CHECK(gate.take());
+  gate.set_finish_window(true);
+  CHECK(gate.request_finish());
+  gate.finish(); // the sweep ended (say it failed) before polling the request
+  CHECK(!gate.take_finish());
+  CHECK(!gate.request_finish()); // idle again
+
+  CHECK(gate.request(ec));
+  CHECK(gate.take());
+  CHECK(!gate.request_finish()); // a new sweep starts with its window closed
+  gate.sweep_stage(Cal::Stage::RANGE_SWEEP);
+  CHECK(!gate.take_finish());
+}

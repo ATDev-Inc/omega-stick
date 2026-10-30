@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -32,7 +33,6 @@ public:
   // --------------------------------------------------------------------------
 
   static constexpr int CENTER_SAMPLES = 200;
-  static constexpr int RANGE_SAMPLES = 200;
 
   static constexpr int RANGE_SECTORS = 32;
 
@@ -75,6 +75,34 @@ public:
 
   static constexpr auto SETTLE_DELAY = std::chrono::seconds(5);
   static constexpr auto SAMPLE_DELAY = std::chrono::milliseconds(10);
+
+  // The range sweep (range_calibration()) is open-ended: it samples every
+  // SAMPLE_DELAY until the stick has covered the circle and come back, the
+  // caller asks it to finish (Config::finish_requested), or RANGE_TIMEOUT.
+  // Time is counted in requested sleeps, not read from a clock.
+  //
+  // A sample counts towards its sector's coverage only when its radius is
+  // above the noise floor, MIN_USABLE_TO_NOISE_RATIO * the center noise
+  // radius (the same 3x floor check_usable() applies), so a resting stick
+  // covers nothing. A sector is covered once RANGE_SECTOR_MIN_SAMPLES such
+  // samples have landed in it.
+  static constexpr int RANGE_SECTOR_MIN_SAMPLES = 3;
+  // The sweep never finishes by itself before this many valid samples (2 s
+  // of sampling), however fast the circle was.
+  static constexpr int RANGE_MIN_SAMPLES = 200;
+  // Once every sector is covered, the sweep ends when the stick has stayed
+  // within the noise floor of the center (released) for this long.
+  static constexpr auto RANGE_RETURN_HOLD = std::chrono::milliseconds(500);
+  // Upper bound on the sweep. A sweep that times out is still evaluated
+  // (MIN_COVERED_SECTORS, check_usable()) rather than failed outright.
+  static constexpr auto RANGE_TIMEOUT = std::chrono::seconds(90);
+
+  // With a progress callback (Config::progress), progress is reported at
+  // every stage change and then at least this often (counted in sleeps).
+  // Settle pauses are then slept in slices of this length, so countdowns tick.
+  static constexpr auto PROGRESS_PERIOD = std::chrono::milliseconds(50);
+
+  static_assert(RANGE_SECTORS <= 32, "Progress::covered_mask is a 32-bit mask");
 
   // --------------------------------------------------------------------------
   // Types
@@ -127,10 +155,59 @@ public:
   /// instantly.
   using SleepFunction = std::function<void(std::chrono::milliseconds)>;
 
+  /// Where a calibration run is. The values are the console protocol's
+  /// CALIBRATION_PROGRESS stage byte (calibration_service.hpp), so never
+  /// renumber them. LIVE is not a sweep stage: it marks a live-position
+  /// report sent outside a sweep.
+  enum class Stage : uint8_t {
+    LIVE = 0,
+    CENTER_SETTLE = 1,  ///< "Release the joystick": SETTLE_DELAY
+    CENTER_MEASURE = 2, ///< CENTER_SAMPLES samples of the resting position
+    NOISE_SETTLE = 3,   ///< SETTLE_DELAY before the noise measurement
+    NOISE_MEASURE = 4,  ///< CENTER_SAMPLES samples of the center noise
+    RANGE_PREPARE = 5,  ///< "Move the joystick ... circle": SETTLE_DELAY
+    RANGE_SWEEP = 6,    ///< open-ended sampling (see RANGE_TIMEOUT)
+    FINISHING = 7,      ///< sampling stopped; the sweep is being evaluated
+  };
+
+  /// One progress report, the fields of a CALIBRATION_PROGRESS frame. Values
+  /// are raw sensor units. Fields a stage has not produced yet are 0, and the
+  /// *_valid flags say which ones mean something.
+  struct Progress {
+    Stage stage{Stage::LIVE};
+    bool raw_valid{false};         ///< the latest read succeeded: raw_x/raw_y are meaningful
+    bool center_valid{false};      ///< center_x/center_y/noise_radius are meaningful
+    bool coverage_complete{false}; ///< every sector is covered
+    bool finish_available{false};  ///< a finish request would be honoured now
+    uint32_t stage_elapsed_ms{0};  ///< time in this stage (sum of requested sleeps)
+    uint32_t stage_total_ms{0};    ///< the stage's planned length; 0 = open-ended
+    float raw_x{0.0f}, raw_y{0.0f};
+    float center_x{0.0f}, center_y{0.0f}, noise_radius{0.0f};
+    /// Axis extremes relative to the center; 0 until the range sweep has samples.
+    float min_x{0.0f}, max_x{0.0f}, min_y{0.0f}, max_y{0.0f};
+    uint32_t covered_mask{0}; ///< bit i set: sector i is covered (RANGE_SECTOR_MIN_SAMPLES)
+    std::array<float, RANGE_SECTORS> sector_max_radius{}; ///< 0 = no sample yet
+  };
+
+  /// Receives progress reports (see Config::progress).
+  using ProgressFunction = std::function<void(const Progress &)>;
+
+  /// Polled once per sample during the range sweep; returning true ends the
+  /// sweep early and evaluates what it has. A true return is consumed.
+  using FinishPollFunction = std::function<bool()>;
+
   struct Config {
     ReadFunction read;                 ///< Required.
     MessageFunction message = nullptr; ///< Optional; defaults to logger_.
     SleepFunction sleep = nullptr;     ///< Optional; defaults to std::this_thread::sleep_for.
+    /// Optional: called at every stage change and at least every
+    /// PROGRESS_PERIOD while a stage runs. With it set, settle pauses are
+    /// slept in PROGRESS_PERIOD slices and the sensor is read once per slice
+    /// so raw_x/raw_y stay live (those reads do not enter the calibration).
+    /// Runs on the calibrating task, so it must not block for long.
+    ProgressFunction progress = nullptr;
+    /// Optional: lets the caller end the range sweep early (a "Done" button).
+    FinishPollFunction finish_requested = nullptr;
     espp::Logger::Verbosity verbosity{espp::Logger::Verbosity::INFO};
   };
 
@@ -167,6 +244,28 @@ public:
     float deadzone{0.0f};              ///< Normalized [0, MAX_RANGE_DEADZONE].
     std::vector<float> sector_max_radius;
   };
+
+  /// A stage-0 (LIVE) report of a raw reading taken outside a sweep, for a
+  /// live position display. `center`, when given, is the live calibration:
+  /// its effective center (measured center plus manual offset) and noise
+  /// radius are reported with center_valid set.
+  static Progress live_progress(bool raw_valid, float raw_x, float raw_y,
+                                const CenterResult *center = nullptr) {
+    Progress p;
+    p.stage = Stage::LIVE;
+    p.raw_valid = raw_valid;
+    if (raw_valid) {
+      p.raw_x = raw_x;
+      p.raw_y = raw_y;
+    }
+    if (center) {
+      p.center_valid = true;
+      p.center_x = center->effective_center_x();
+      p.center_y = center->effective_center_y();
+      p.noise_radius = center->noise_radius;
+    }
+    return p;
+  }
 
   /// Which USB HID device the stick currently drives. Persisted and
   /// live-adjustable via DeviceSettings, so the firmware doesn't need a
@@ -444,6 +543,8 @@ public:
       , sleep_(config.sleep ? config.sleep : SleepFunction([](std::chrono::milliseconds d) {
         std::this_thread::sleep_for(d);
       }))
+      , progress_fn_(config.progress)
+      , finish_requested_(config.finish_requested)
       , logger_({.tag = "OmegaCalibration", .level = config.verbosity}) {}
 
   // --------------------------------------------------------------------------
@@ -452,13 +553,16 @@ public:
 
   /// Measures the resting center position and center noise, and derives a
   /// center deadzone. Blocks for roughly 2 * CENTER_SAMPLES * SAMPLE_DELAY
-  /// plus two SETTLE_DELAY pauses. Returns false (with ec set) on failure.
+  /// plus two SETTLE_DELAY pauses (stages CENTER_SETTLE to NOISE_MEASURE).
+  /// Returns false (with ec set) on failure.
   bool center_calibration(CenterResult &out, std::error_code &ec) {
     ec.clear();
+    progress_ = Progress{};
 
     message("Release the joystick completely.");
     message("Do not touch or move it.");
-    sleep_(SETTLE_DELAY);
+    begin_stage(Stage::CENTER_SETTLE, SETTLE_DELAY);
+    settle(SETTLE_DELAY);
 
     // ------------------------------------------------------------------
     // Determine center
@@ -469,11 +573,14 @@ public:
     MedianFilter3 x_filter, y_filter;
 
     message("Measuring center...");
+    begin_stage(Stage::CENTER_MEASURE, CENTER_SAMPLES * SAMPLE_DELAY);
 
     for (int i = 0; i < CENTER_SAMPLES; i++) {
-      float x, y;
-      if (!read_(&x, &y)) {
-        sleep_(SAMPLE_DELAY);
+      float x = 0.0f, y = 0.0f;
+      const bool ok = read_(&x, &y);
+      note_raw(ok, x, y);
+      if (!ok) {
+        wait(SAMPLE_DELAY);
         continue;
       }
       x = x_filter.update(x);
@@ -481,7 +588,7 @@ public:
       sum_x += x;
       sum_y += y;
       valid_samples++;
-      sleep_(SAMPLE_DELAY);
+      wait(SAMPLE_DELAY);
     }
 
     if (valid_samples == 0) {
@@ -502,16 +609,20 @@ public:
     // ------------------------------------------------------------------
     message("Measuring center movement/noise...");
     message("shake it a bit but do not touch the end effector.");
-    sleep_(SETTLE_DELAY);
+    begin_stage(Stage::NOISE_SETTLE, SETTLE_DELAY);
+    settle(SETTLE_DELAY);
 
     std::vector<float> center_radii;
     center_radii.reserve(CENTER_SAMPLES);
     MedianFilter3 noise_x_filter, noise_y_filter;
+    begin_stage(Stage::NOISE_MEASURE, CENTER_SAMPLES * SAMPLE_DELAY);
 
     for (int i = 0; i < CENTER_SAMPLES; i++) {
-      float x, y;
-      if (!read_(&x, &y)) {
-        sleep_(SAMPLE_DELAY);
+      float x = 0.0f, y = 0.0f;
+      const bool ok = read_(&x, &y);
+      note_raw(ok, x, y);
+      if (!ok) {
+        wait(SAMPLE_DELAY);
         continue;
       }
       x = noise_x_filter.update(x);
@@ -519,7 +630,7 @@ public:
       const float dx = x - center_x;
       const float dy = y - center_y;
       center_radii.push_back(std::sqrt(dx * dx + dy * dy));
-      sleep_(SAMPLE_DELAY);
+      wait(SAMPLE_DELAY);
     }
 
     if (center_radii.empty()) {
@@ -548,16 +659,39 @@ public:
 
   /// Sweeps the stick through its full range of motion to find axis extrema
   /// and a reliable reachable radius per angular sector, then derives a
-  /// range deadzone. Requires a completed CenterResult. Blocks for roughly
-  /// RANGE_SAMPLES * SAMPLE_DELAY plus a ~10s lead-in.
+  /// range deadzone. Requires a completed CenterResult.
+  ///
+  /// After one SETTLE_DELAY lead-in (RANGE_PREPARE) it samples every
+  /// SAMPLE_DELAY (RANGE_SWEEP, open-ended) until the first of:
+  ///  - every sector is covered (see RANGE_SECTOR_MIN_SAMPLES), at least
+  ///    RANGE_MIN_SAMPLES valid samples were taken, and the stick has been
+  ///    back within the noise floor of the center for RANGE_RETURN_HOLD;
+  ///  - Config::finish_requested returns true (the user is done, e.g. with
+  ///    a limited reach);
+  ///  - RANGE_TIMEOUT.
+  /// It then reports FINISHING and evaluates whatever it has: at least
+  /// MIN_COVERED_SECTORS sectors with a sample, and check_usable(). So a
+  /// full circle and release blocks for the lead-in plus a few seconds, and
+  /// a stick nobody moves runs to RANGE_TIMEOUT and fails check_usable().
   bool range_calibration(const CenterResult &center, RangeResult &out, std::error_code &ec) {
     ec.clear();
+    // Keep the last raw reading (from center_calibration()) so a position
+    // display does not blank between the two calls.
+    const Progress previous = progress_;
+    progress_ = Progress{};
+    progress_.raw_valid = previous.raw_valid;
+    progress_.raw_x = previous.raw_x;
+    progress_.raw_y = previous.raw_y;
+    progress_.center_valid = true;
+    progress_.center_x = center.center_x;
+    progress_.center_y = center.center_y;
+    progress_.noise_radius = center.noise_radius;
 
     message("Move the joystick slowly through a COMPLETE circle.");
     message("Reach the physical maximum in every direction.");
     message("Try to reach all edges of the joystick.");
-    sleep_(SETTLE_DELAY);
-    sleep_(SETTLE_DELAY);
+    begin_stage(Stage::RANGE_PREPARE, SETTLE_DELAY);
+    settle(SETTLE_DELAY);
     message("START!");
 
     float min_x = std::numeric_limits<float>::max();
@@ -566,13 +700,30 @@ public:
     float max_y = std::numeric_limits<float>::lowest();
 
     std::vector<float> sector_max_radius(RANGE_SECTORS, 0.0f);
+    std::array<int, RANGE_SECTORS> sector_hits{};
+    int covered_sectors = 0;
     int valid_samples = 0;
+    // Samples at or inside this radius are the stick at rest: they cover no
+    // sector, and a run of them is the release that ends a full sweep.
+    const float noise_floor = MIN_USABLE_TO_NOISE_RATIO * center.noise_radius;
+    std::chrono::milliseconds released_for{0};
     MedianFilter3 sweep_x_filter, sweep_y_filter;
+    const char *end_reason = "time limit reached";
 
-    for (int i = 0; i < RANGE_SAMPLES; i++) {
-      float x, y;
-      if (!read_(&x, &y)) {
-        sleep_(SAMPLE_DELAY);
+    begin_stage(Stage::RANGE_SWEEP, std::chrono::milliseconds(0));
+    while (true) {
+      if (finish_requested_ && finish_requested_()) {
+        end_reason = "finish requested";
+        break;
+      }
+      if (stage_elapsed_ >= RANGE_TIMEOUT) {
+        break;
+      }
+      float x = 0.0f, y = 0.0f;
+      const bool ok = read_(&x, &y);
+      note_raw(ok, x, y);
+      if (!ok) {
+        wait(SAMPLE_DELAY);
         continue;
       }
 
@@ -600,11 +751,37 @@ public:
 
       sector_max_radius[sector] = std::max(sector_max_radius[sector], radius);
 
+      if (radius > noise_floor) {
+        released_for = std::chrono::milliseconds(0);
+        if (sector_hits[sector] < RANGE_SECTOR_MIN_SAMPLES &&
+            ++sector_hits[sector] == RANGE_SECTOR_MIN_SAMPLES) {
+          covered_sectors++;
+          progress_.covered_mask |= 1u << sector;
+        }
+      } else {
+        released_for += SAMPLE_DELAY;
+      }
+
       valid_samples++;
-      sleep_(SAMPLE_DELAY);
+      progress_.min_x = min_x;
+      progress_.max_x = max_x;
+      progress_.min_y = min_y;
+      progress_.max_y = max_y;
+      progress_.sector_max_radius[sector] = sector_max_radius[sector];
+      progress_.coverage_complete = covered_sectors == RANGE_SECTORS;
+      wait(SAMPLE_DELAY);
+
+      if (progress_.coverage_complete && valid_samples >= RANGE_MIN_SAMPLES &&
+          released_for >= RANGE_RETURN_HOLD) {
+        end_reason = "every direction covered and the stick released";
+        break;
+      }
     }
 
     message("STOP!");
+    logger_.info("Range sweep ended ({}) after {} ms: {} valid samples, {} of {} sectors covered",
+                 end_reason, stage_elapsed_.count(), valid_samples, covered_sectors, RANGE_SECTORS);
+    begin_stage(Stage::FINISHING, std::chrono::milliseconds(0));
 
     if (valid_samples == 0) {
       logger_.error("No valid range samples!");
@@ -1269,10 +1446,69 @@ protected:
     }
   }
 
+  // ---- progress bookkeeping (see Config::progress) --------------------------
+
+  /// Enters a stage: resets its clock and reports it.
+  void begin_stage(Stage stage, std::chrono::milliseconds total) {
+    progress_.stage = stage;
+    progress_.stage_total_ms = static_cast<uint32_t>(total.count());
+    progress_.finish_available = stage == Stage::RANGE_SWEEP && finish_requested_ != nullptr;
+    stage_elapsed_ = std::chrono::milliseconds(0);
+    progress_.stage_elapsed_ms = 0;
+    emit_progress();
+  }
+
+  /// Sleeps through sleep_, counts the time towards the stage, and reports
+  /// progress once PROGRESS_PERIOD has passed since the last report.
+  void wait(std::chrono::milliseconds d) {
+    sleep_(d);
+    stage_elapsed_ += d;
+    progress_.stage_elapsed_ms = static_cast<uint32_t>(stage_elapsed_.count());
+    if (progress_fn_ && stage_elapsed_ - last_emit_ >= PROGRESS_PERIOD) {
+      emit_progress();
+    }
+  }
+
+  /// A settle pause. Without a progress callback it is one sleep (as it
+  /// always was); with one it is PROGRESS_PERIOD slices, each after a read
+  /// that keeps the reported raw position live. The total slept is the same.
+  void settle(std::chrono::milliseconds total) {
+    if (!progress_fn_) {
+      wait(total);
+      return;
+    }
+    while (stage_elapsed_ < total) {
+      float x = 0.0f, y = 0.0f;
+      const bool ok = read_(&x, &y);
+      note_raw(ok, x, y);
+      wait(std::min<std::chrono::milliseconds>(PROGRESS_PERIOD, total - stage_elapsed_));
+    }
+  }
+
+  void note_raw(bool ok, float x, float y) {
+    progress_.raw_valid = ok;
+    if (ok) {
+      progress_.raw_x = x;
+      progress_.raw_y = y;
+    }
+  }
+
+  void emit_progress() {
+    last_emit_ = stage_elapsed_;
+    if (progress_fn_) {
+      progress_fn_(progress_);
+    }
+  }
+
   ReadFunction read_;
   MessageFunction message_;
   SleepFunction sleep_;
+  ProgressFunction progress_fn_;
+  FinishPollFunction finish_requested_;
   mutable espp::Logger logger_;
+  Progress progress_{};
+  std::chrono::milliseconds stage_elapsed_{0};
+  std::chrono::milliseconds last_emit_{0};
 };
 
 } // namespace espp

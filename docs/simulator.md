@@ -85,8 +85,10 @@ to 127.0.0.1 only.
 
 **Binary messages** carry the device byte stream in both directions, byte for
 byte what the CDC (Web Serial) interface carries on a real stick: protocol
-frames, plus plain console text such as the calibration prompts. The console
-feeds received bytes to the same parser it uses for USB.
+frames (including the unsolicited CALIBRATION_PROGRESS frames a sweep and a
+SET_POSITION_STREAM lease produce), plus plain console text such as the
+calibration prompts. The console feeds received bytes to the same parser it
+uses for USB.
 
 **Text messages** are JSON objects with a `type` field.
 
@@ -155,7 +157,7 @@ Origin gets 403.
 |---|---|
 | `rest` | Stick released at center, noise only |
 | `circle` | Slow full circle at full deflection, about 8 s per turn, for the range sweep |
-| `calibrate` | Released for the center phases, then circles for the range phase, timed to the firmware's calibration prompts |
+| `calibrate` | Released for the center phases; at the firmware's "START!" prompt, one full circle at full deflection in 8 s, then released, so the range sweep covers every sector and ends by itself about 8.5 s after the prompt |
 | `nudge_right`, `nudge_left`, `nudge_up`, `nudge_down` | A short push past the nudge threshold and back, which should produce a click |
 | `wander` | Slow random movement around the whole range |
 
@@ -188,7 +190,7 @@ Each step has `at_ms` and exactly one of:
 | `stick: [x, y]` | Keyframe. The stick moves linearly between consecutive keyframes |
 | `pattern: name` | Play a built-in pattern from this time (optional `duration_ms`) |
 | `fault`, `drift`, `noise`, `next_image` | Same values as the WebSocket messages |
-| `action` | A console request sent through the real protocol: `recalibrate`, `save`, `restart`, `set_mode` (with `value`: `mouse` or `xac`), `set_nudge_enabled` (with `value`: `true` or `false`, SET_NUDGE_ENABLED; `save` keeps it across a `restart`), `set_deadzone` (with `value`: `{"center": 0.1, "range": 0.05}`, either may be omitted), `flash` (uploads a generated firmware image through OTA_BEGIN/DATA/FINISH; optional `version`, default `9.9.9-sim`), `revert`, `mark_valid`, `fw_info` (GET_FW_INFO), and `plant_unusable_calibration`, which is not a console request: it writes a calibration file below the usable-to-noise ratio (the numbers of a board calibrated with the stick untouched) straight to the simulated flash for the next boot to load (follow it with `restart`), replying `ok` once written. Optional `expect_reply`: `ok`, `busy`, `invalid`, `unsupported` (function_not_supported), `error`; without it the reply must be `ok`. For `flash` the reply checked is the first failure, else OTA_FINISH's |
+| `action` | A console request sent through the real protocol: `recalibrate`, `save`, `restart`, `set_mode` (with `value`: `mouse` or `xac`), `set_nudge_enabled` (with `value`: `true` or `false`, SET_NUDGE_ENABLED; `save` keeps it across a `restart`), `set_deadzone` (with `value`: `{"center": 0.1, "range": 0.05}`, either may be omitted), `flash` (uploads a generated firmware image through OTA_BEGIN/DATA/FINISH; optional `version`, default `9.9.9-sim`), `revert`, `mark_valid`, `fw_info` (GET_FW_INFO), `finish_calibration` (FINISH_CALIBRATION: ends a running range sweep early and evaluates it; replies `error` unless the range sweep is sampling, which starts 19 s after the sweep begins: 14 s of center stages and the 5 s range lead-in), and `plant_unusable_calibration`, which is not a console request: it writes a calibration file below the usable-to-noise ratio (the numbers of a board calibrated with the stick untouched) straight to the simulated flash for the next boot to load (follow it with `restart`), replying `ok` once written. Optional `expect_reply`: `ok`, `busy`, `invalid`, `unsupported` (function_not_supported), `error`; without it the reply must be `ok`. For `flash` the reply checked is the first failure, else OTA_FINISH's |
 | `expect` | Assertions, checked at that time (headless mode reports them; interactive mode logs them) |
 
 `expect` keys:
@@ -215,7 +217,9 @@ motion; below that it reads `none`.
 
 Scenarios kept in [sim/scenarios/](../sim/scenarios/) run headless in CI.
 `fresh_board_calibrates.json` checks that a fresh board stays neutral until the
-console calibrates it, and `unusable_calibration_boots_quiet.json` that a saved
+console calibrates it, `finish_calibration_early.json` that a sweep missing one
+diagonal ends on FINISH_CALIBRATION and still calibrates (and that the request
+is refused outside the range sweep), and `unusable_calibration_boots_quiet.json` that a saved
 calibration below the usable-to-noise ratio boots quiet, reports it in
 GET_DIAGNOSTICS, survives a failed sweep still quiet, and resumes after a good
 one. `nudge_switch_off.json` turns nudge clicks off and checks that nudges

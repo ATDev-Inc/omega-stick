@@ -477,13 +477,17 @@ TEST(range_calibration_rejects_insufficient_sector_coverage) {
 }
 
 TEST(range_calibration_sleep_schedule_matches_the_documented_duration) {
+  // The sweep used to be a fixed 2 s window after two SETTLE_DELAY pauses. It
+  // is now open-ended after one: this replay ends out at the edge and never
+  // comes back to center, so it samples until RANGE_TIMEOUT.
   Recorder rec;
   Cal cal(make_config(rec, replay(sector_sweep(0.0f, 0.0f, constant_radii(32, 30.0f)))));
   Cal::RangeResult range;
   std::error_code ec;
   CHECK(cal.range_calibration(center_at(0.0f, 0.0f), range, ec));
-  // Two SETTLE_DELAY lead-in pauses, then one SAMPLE_DELAY per sample.
-  CHECK_EQ(rec.total_sleep(), milliseconds(2 * 5000 + 200 * 10));
+  // One SETTLE_DELAY lead-in pause, then one SAMPLE_DELAY per sample.
+  CHECK_EQ(rec.total_sleep(), milliseconds(5000 + 90000));
+  CHECK_EQ(rec.sleeps.front(), milliseconds(5000));
   const auto start = [&] {
     for (std::size_t i = 0; i < rec.messages.size(); ++i) {
       if (rec.messages[i] == "START!") {
@@ -494,6 +498,345 @@ TEST(range_calibration_sleep_schedule_matches_the_documented_duration) {
   }();
   CHECK(start + 2 == rec.messages.size()); // START!, then STOP!
   CHECK(rec.said("STOP!"));
+}
+
+// ---- open-ended range sweep: coverage, release, finish, timeout -----------
+
+namespace {
+
+/// sector_sweep() with every point repeated `reps` times instead of three.
+std::vector<Point> sector_sweep_n(float cx, float cy, const std::vector<float> &radii, int reps) {
+  std::vector<Point> pts;
+  for (std::size_t k = 0; k < radii.size(); ++k) {
+    const float angle = (static_cast<float>(k) + 0.5f) * 2.0f * kPi / 32.0f;
+    const Point p{cx + radii[k] * std::cos(angle), cy + radii[k] * std::sin(angle)};
+    for (int rep = 0; rep < reps; ++rep) {
+      pts.push_back(p);
+    }
+  }
+  return pts;
+}
+
+/// Appends `n` readings of the stick released at (cx, cy).
+std::vector<Point> then_rest(std::vector<Point> pts, float cx, float cy, int n) {
+  pts.insert(pts.end(), static_cast<std::size_t>(n), Point{cx, cy});
+  return pts;
+}
+
+/// With a progress callback the range lead-in reads the sensor once per
+/// PROGRESS_PERIOD slice (for the live position) and those reads do not enter
+/// the sweep: prepends that many released readings so a replay's sweep starts
+/// with the sampling.
+std::vector<Point> after_lead_in(const std::vector<Point> &pts) {
+  std::vector<Point> out(5000 / 50, Point{0.0f, 0.0f});
+  out.insert(out.end(), pts.begin(), pts.end());
+  return out;
+}
+
+Cal::CenterResult center_with_noise(float cx, float cy, float noise_radius) {
+  Cal::CenterResult c = center_at(cx, cy);
+  c.noise_radius = noise_radius;
+  return c;
+}
+
+/// A finish poll that answers true from its `n`th call on, counting calls.
+struct FinishAfter {
+  int n;
+  int calls{0};
+  bool operator()() { return ++calls >= n; }
+};
+
+Cal::Config make_progress_config(Recorder &rec, std::vector<Cal::Progress> &reports,
+                                 Cal::ReadFunction read, Cal::FinishPollFunction finish = nullptr) {
+  return Cal::Config{.read = std::move(read),
+                     .message = [&rec](const std::string &m) { rec.messages.push_back(m); },
+                     .sleep = [&rec](milliseconds d) { rec.sleeps.push_back(d); },
+                     .progress = [&reports](const Cal::Progress &p) { reports.push_back(p); },
+                     .finish_requested = std::move(finish),
+                     .verbosity = espp::Logger::Verbosity::NONE};
+}
+
+constexpr milliseconds kLeadIn{5000}; // the range stage's one SETTLE_DELAY
+
+} // namespace
+
+TEST(range_sweep_constants_are_the_documented_ones) {
+  CHECK_EQ(Cal::RANGE_MIN_SAMPLES, 200);
+  CHECK_EQ(Cal::RANGE_SECTOR_MIN_SAMPLES, 3);
+  CHECK_EQ(milliseconds(Cal::RANGE_RETURN_HOLD), milliseconds(500));
+  CHECK_EQ(milliseconds(Cal::RANGE_TIMEOUT), milliseconds(90000));
+  CHECK_EQ(milliseconds(Cal::PROGRESS_PERIOD), milliseconds(50));
+}
+
+TEST(range_sweep_ends_once_covered_and_released_but_not_before_the_minimum_samples) {
+  // A quick circle (4 samples per sector, 128 samples) and then the stick is
+  // released. Coverage and the 500 ms release are both met by sample 178, so
+  // the sweep runs on to RANGE_MIN_SAMPLES (200) and stops exactly there.
+  Recorder rec;
+  Cal cal(
+      make_config(rec, replay(then_rest(sector_sweep_n(0.0f, 0.0f, constant_radii(32, 30.0f), 4),
+                                        0.0f, 0.0f, 1000))));
+  Cal::RangeResult range;
+  std::error_code ec;
+  CHECK(cal.range_calibration(center_with_noise(0.0f, 0.0f, 0.1f), range, ec));
+  CHECK(!ec);
+  CHECK_EQ(rec.total_sleep(), kLeadIn + Cal::RANGE_MIN_SAMPLES * Cal::SAMPLE_DELAY);
+  CHECK_NEAR(range.usable_radius, axis_extreme(30.0f), 1e-3);
+}
+
+TEST(range_sweep_ends_after_the_release_hold_once_past_the_minimum) {
+  // A slow circle (10 samples per sector, 320 samples), then released. The
+  // first released sample still reads the edge (median of three), the second
+  // is back at center; RANGE_RETURN_HOLD (50 samples) later the sweep ends.
+  Recorder rec;
+  Cal cal(
+      make_config(rec, replay(then_rest(sector_sweep_n(0.0f, 0.0f, constant_radii(32, 30.0f), 10),
+                                        0.0f, 0.0f, 1000))));
+  Cal::RangeResult range;
+  std::error_code ec;
+  CHECK(cal.range_calibration(center_with_noise(0.0f, 0.0f, 0.1f), range, ec));
+  CHECK_EQ(rec.total_sleep(), kLeadIn + (320 + 1 + 50) * Cal::SAMPLE_DELAY);
+  CHECK_NEAR(range.reliable_max_radius, 30.0f, 1e-3);
+}
+
+TEST(range_sweep_without_full_coverage_runs_to_the_timeout_and_is_still_evaluated) {
+  // Sectors 0..27 only (one diagonal never reached), then released: rule A
+  // needs every sector, so only RANGE_TIMEOUT ends it. 28 sectors pass
+  // MIN_COVERED_SECTORS and every axis was reached, so it calibrates.
+  Recorder rec;
+  Cal cal(make_config(
+      rec,
+      replay(then_rest(sector_sweep_n(0.0f, 0.0f, constant_radii(28, 30.0f), 4), 0.0f, 0.0f, 1))));
+  Cal::RangeResult range;
+  std::error_code ec;
+  CHECK(cal.range_calibration(center_with_noise(0.0f, 0.0f, 0.1f), range, ec));
+  CHECK(!ec);
+  CHECK_EQ(rec.total_sleep(), kLeadIn + milliseconds(Cal::RANGE_TIMEOUT));
+}
+
+TEST(range_sweep_finish_request_ends_it_early_and_evaluates) {
+  // The same partial sweep, but the user presses Done: it ends at once and
+  // passes with the 28 sectors it has.
+  Recorder rec;
+  std::vector<Cal::Progress> reports;
+  FinishAfter finish{150};
+  Cal cal(make_progress_config(
+      rec, reports,
+      replay(after_lead_in(
+          then_rest(sector_sweep_n(0.0f, 0.0f, constant_radii(28, 30.0f), 4), 0.0f, 0.0f, 1))),
+      std::ref(finish)));
+  Cal::RangeResult range;
+  std::error_code ec;
+  CHECK(cal.range_calibration(center_with_noise(0.0f, 0.0f, 0.1f), range, ec));
+  CHECK(!ec);
+  // Polled once before each sample: the 150th poll comes after 149 samples.
+  CHECK_EQ(finish.calls, 150);
+  CHECK_EQ(rec.total_sleep(), kLeadIn + 149 * Cal::SAMPLE_DELAY);
+  CHECK(reports.back().stage == Cal::Stage::FINISHING);
+  CHECK(!reports.back().coverage_complete);
+}
+
+TEST(range_sweep_finish_with_half_the_sectors_passes_and_with_fewer_fails) {
+  // MIN_COVERED_SECTORS still decides after a finish request.
+  {
+    Recorder rec;
+    FinishAfter finish{100};
+    std::vector<Cal::Progress> reports;
+    Cal cal(make_progress_config(
+        rec, reports,
+        replay(after_lead_in(sector_sweep_n(0.0f, 0.0f, constant_radii(16, 30.0f), 4))),
+        std::ref(finish)));
+    Cal::RangeResult range;
+    std::error_code ec;
+    CHECK(cal.range_calibration(center_at(0.0f, 0.0f), range, ec));
+  }
+  {
+    Recorder rec;
+    FinishAfter finish{100};
+    std::vector<Cal::Progress> reports;
+    Cal cal(make_progress_config(
+        rec, reports,
+        replay(after_lead_in(sector_sweep_n(0.0f, 0.0f, constant_radii(8, 30.0f), 4))),
+        std::ref(finish)));
+    Cal::RangeResult range;
+    std::error_code ec;
+    CHECK(!cal.range_calibration(center_at(0.0f, 0.0f), range, ec));
+    CHECK(support::is_error(ec, Cal::Error::no_range_samples));
+    CHECK_EQ(rec.total_sleep(), kLeadIn + 99 * Cal::SAMPLE_DELAY);
+  }
+}
+
+TEST(range_sweep_of_a_resting_stick_covers_no_sector_and_fails_after_a_finish) {
+  // Noise all the way round at 0.056 against a noise radius of 0.08: below
+  // the 3x floor (0.24), so not one sector counts as covered.
+  Recorder rec;
+  std::vector<Cal::Progress> reports;
+  FinishAfter finish{300};
+  Cal cal(make_progress_config(
+      rec, reports,
+      replay(after_lead_in(sector_sweep_n(0.0f, 0.0f, constant_radii(32, 0.056f), 6))),
+      std::ref(finish)));
+  Cal::RangeResult range;
+  std::error_code ec;
+  CHECK(!cal.range_calibration(center_with_noise(0.0f, 0.0f, 0.08f), range, ec));
+  CHECK(support::is_error(ec, Cal::Error::calibration_unusable));
+  for (const auto &p : reports) {
+    CHECK_EQ(p.covered_mask, 0u);
+    CHECK(!p.coverage_complete);
+  }
+  // The sector maxima still show where the noise went.
+  CHECK_NEAR(reports.back().sector_max_radius[5], 0.056f, 1e-4);
+}
+
+TEST(range_sweep_covers_a_sector_only_after_three_samples_beyond_the_floor) {
+  // Through the median filter: four readings in sector 0 give it five
+  // samples (the first sector-8 reading still filters to sector 0), and two
+  // readings in sector 8 give it two (the first center reading still filters
+  // to sector 8), one short of RANGE_SECTOR_MIN_SAMPLES.
+  const float a0 = 0.5f * 2.0f * kPi / 32.0f;
+  const float a8 = 8.5f * 2.0f * kPi / 32.0f;
+  std::vector<Point> pts(4, Point{30.0f * std::cos(a0), 30.0f * std::sin(a0)});
+  pts.insert(pts.end(), 2, Point{30.0f * std::cos(a8), 30.0f * std::sin(a8)});
+  pts.push_back({0.0f, 0.0f});
+  Recorder rec;
+  std::vector<Cal::Progress> reports;
+  FinishAfter finish{50};
+  Cal cal(make_progress_config(rec, reports, replay(after_lead_in(pts)), std::ref(finish)));
+  Cal::RangeResult range;
+  std::error_code ec;
+  CHECK(!cal.range_calibration(center_with_noise(0.0f, 0.0f, 0.1f), range, ec));
+  CHECK_EQ(reports.back().covered_mask, 1u << 0);
+  CHECK(reports.back().sector_max_radius[8] > 29.0f); // sampled, just not covered
+}
+
+TEST(calibration_progress_walks_the_stages_in_order) {
+  // The read follows the stage the sweep last reported: noise around the
+  // center until the range sweep, then a slow circle and a release.
+  Recorder rec;
+  std::vector<Cal::Progress> reports;
+  NoisyCenter noise{0.0f, 0.0f, 0.05f};
+  const std::vector<Point> sweep =
+      then_rest(sector_sweep_n(0.0f, 0.0f, constant_radii(32, 30.0f), 10), 0.0f, 0.0f, 1000);
+  std::size_t sweep_i = 0;
+  int finish_polls_outside_the_sweep = 0;
+  Cal cal(make_progress_config(
+      rec, reports,
+      [&](float *x, float *y) {
+        if (reports.empty() || reports.back().stage != Cal::Stage::RANGE_SWEEP) {
+          noise(x, y);
+        } else {
+          const Point &p = sweep[std::min(sweep_i++, sweep.size() - 1)];
+          *x = p.first;
+          *y = p.second;
+        }
+        return true;
+      },
+      [&] {
+        if (reports.back().stage != Cal::Stage::RANGE_SWEEP) {
+          ++finish_polls_outside_the_sweep;
+        }
+        return false;
+      }));
+  Cal::CenterResult center;
+  Cal::RangeResult range;
+  std::error_code ec;
+  CHECK(cal.calibrate(center, range, ec));
+  CHECK_EQ(finish_polls_outside_the_sweep, 0);
+
+  // Stage order, each entered once, at elapsed 0, with its planned length.
+  std::vector<Cal::Stage> order;
+  for (std::size_t i = 0; i < reports.size(); ++i) {
+    if (i == 0 || reports[i].stage != reports[i - 1].stage) {
+      order.push_back(reports[i].stage);
+      CHECK_EQ(reports[i].stage_elapsed_ms, 0u);
+    } else {
+      // Within a stage: one report per PROGRESS_PERIOD of sleeps.
+      CHECK_EQ(reports[i].stage_elapsed_ms - reports[i - 1].stage_elapsed_ms, 50u);
+    }
+  }
+  const std::vector<Cal::Stage> expected = {Cal::Stage::CENTER_SETTLE, Cal::Stage::CENTER_MEASURE,
+                                            Cal::Stage::NOISE_SETTLE,  Cal::Stage::NOISE_MEASURE,
+                                            Cal::Stage::RANGE_PREPARE, Cal::Stage::RANGE_SWEEP,
+                                            Cal::Stage::FINISHING};
+  CHECK(order == expected);
+  const auto total_of = [&](Cal::Stage s) {
+    for (const auto &p : reports) {
+      if (p.stage == s) {
+        return p.stage_total_ms;
+      }
+    }
+    return 0xFFFFFFFFu;
+  };
+  CHECK_EQ(total_of(Cal::Stage::CENTER_SETTLE), 5000u);
+  CHECK_EQ(total_of(Cal::Stage::CENTER_MEASURE), 2000u);
+  CHECK_EQ(total_of(Cal::Stage::NOISE_SETTLE), 5000u);
+  CHECK_EQ(total_of(Cal::Stage::NOISE_MEASURE), 2000u);
+  CHECK_EQ(total_of(Cal::Stage::RANGE_PREPARE), 5000u);
+  CHECK_EQ(total_of(Cal::Stage::RANGE_SWEEP), 0u);
+  CHECK_EQ(total_of(Cal::Stage::FINISHING), 0u);
+
+  uint32_t mask = 0;
+  CHECK(!reports.front().raw_valid); // reported on entry, before the first read
+  for (const auto &p : reports) {
+    CHECK(p.raw_valid || &p == &reports.front());
+    const bool range_stage = p.stage >= Cal::Stage::RANGE_PREPARE;
+    CHECK_EQ(p.center_valid, range_stage);
+    CHECK_EQ(p.finish_available, p.stage == Cal::Stage::RANGE_SWEEP);
+    CHECK_EQ(p.covered_mask & mask, mask); // coverage only ever grows
+    mask = p.covered_mask;
+    if (p.stage < Cal::Stage::RANGE_SWEEP) {
+      CHECK_EQ(p.covered_mask, 0u);
+      CHECK_NEAR(p.max_x, 0.0f, 0.0);
+    }
+  }
+  const Cal::Progress &last = reports.back();
+  CHECK(last.stage == Cal::Stage::FINISHING);
+  CHECK(last.coverage_complete);
+  CHECK_EQ(last.covered_mask, 0xFFFFFFFFu);
+  CHECK_NEAR(last.center_x, center.center_x, 0.0);
+  CHECK_NEAR(last.noise_radius, center.noise_radius, 0.0);
+  CHECK_NEAR(last.max_x, range.max_x, 0.0);
+  CHECK_NEAR(last.sector_max_radius[3], range.sector_max_radius[3], 0.0);
+
+  // Settles are sliced for the countdown; the time slept is unchanged.
+  for (const auto &s : rec.sleeps) {
+    CHECK(s <= milliseconds(50));
+  }
+  CHECK_EQ(rec.total_sleep(),
+           milliseconds(2 * 5000 + 2 * 2000) + kLeadIn + (320 + 1 + 50) * Cal::SAMPLE_DELAY);
+}
+
+TEST(center_calibration_with_progress_keeps_its_documented_duration) {
+  Recorder rec;
+  std::vector<Cal::Progress> reports;
+  Cal cal(make_progress_config(rec, reports, replay({{1.0f, 1.0f}})));
+  Cal::CenterResult out;
+  std::error_code ec;
+  CHECK(cal.center_calibration(out, ec));
+  CHECK_EQ(rec.total_sleep(), milliseconds(2 * 5000 + 2 * 200 * 10));
+  CHECK_EQ(rec.sleeps.front(), milliseconds(50));
+  CHECK(reports.back().stage == Cal::Stage::NOISE_MEASURE);
+  CHECK_EQ(reports.back().stage_elapsed_ms, 2000u);
+}
+
+TEST(live_progress_reports_the_effective_center_when_given_one) {
+  Cal::CenterResult c = center_at(10.0f, -5.0f);
+  c.noise_radius = 0.2f;
+  Cal::set_manual_offset(c, 0.5f, -0.25f);
+  const Cal::Progress p = Cal::live_progress(true, 11.0f, -4.0f, &c);
+  CHECK(p.stage == Cal::Stage::LIVE);
+  CHECK(p.raw_valid);
+  CHECK(p.center_valid);
+  CHECK_NEAR(p.raw_x, 11.0f, 0.0);
+  CHECK_NEAR(p.center_x, 10.5f, 1e-6);
+  CHECK_NEAR(p.center_y, -5.25f, 1e-6);
+  CHECK_NEAR(p.noise_radius, 0.2f, 0.0);
+  CHECK_EQ(p.covered_mask, 0u);
+
+  const Cal::Progress q = Cal::live_progress(false, 11.0f, -4.0f);
+  CHECK(!q.raw_valid);
+  CHECK(!q.center_valid);
+  CHECK_NEAR(q.raw_x, 0.0f, 0.0); // a failed read reports no position
 }
 
 // ---- finalize_center_deadzone ----------------------------------------------

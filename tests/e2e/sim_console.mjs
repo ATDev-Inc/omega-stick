@@ -135,9 +135,28 @@ async function main() {
   await pattern("calibrate");
   await waitFor("the recalibrate button", async () => !(await ev($("recalibrateBtn") + ".disabled")), 10000);
   await click("recalibrateBtn");
-  await waitLog("the range calibration prompt", /Move the joystick slowly/, 30000);
-  const logA = await logText();
+  // The visual calibration panel follows the sweep: the stage line advances through
+  // the steps and the ring reaches 32 of 32 directions (needs the firmware's progress
+  // frames and the sim's one-lap calibrate pattern). Poll from the click, since the
+  // center steps are over before the range prompt is printed.
+  const stagesSeen = new Set();
+  let maxDirections = 0;
+  const vizEnd = Date.now() + 60000;
+  while (Date.now() < vizEnd && !/Recalibration finished successfully/.test(await logText())) {
+    const m = /^Step (\d) of 6/.exec(await text("calStageLine"));
+    if (m) stagesSeen.add(+m[1]);
+    const d = /(\d+) of 32 directions/.exec(await text("calSectorCount"));
+    if (d) maxDirections = Math.max(maxDirections, +d[1]);
+    await sleep(200);
+  }
   await waitLog("state refresh after the sweep", /Recalibration finished successfully/, 40000);
+  // After the result the panel keeps the sweep's final count ("Last calibration: 32 of 32 directions").
+  { const d = /(\d+) of 32 directions/.exec(await text("calSectorCount")); if (d) maxDirections = Math.max(maxDirections, +d[1]); }
+  await waitLog("the range calibration prompt", /Move the joystick slowly/, 1000);
+  const logA = await logText();
+  check("a2", "visual calibration panel: the stage text advances to the sweep and the ring reaches 32 of 32 directions",
+    stagesSeen.has(6) && stagesSeen.size >= 3 && maxDirections === 32,
+    "stages seen " + [...stagesSeen].join(",") + " | most directions " + maxDirections);
   await waitFor("the notice to clear", async () => await ev($("calNeededNotice") + ".hidden"), 10000).catch(() => { });
   await sleep(500);
   const noticeAfterHidden = await ev($("calNeededNotice") + ".hidden");

@@ -1186,3 +1186,242 @@ TEST(service_dropped_reboot_reply_keeps_the_hold_of_a_running_upload) {
   std::this_thread::sleep_for(std::chrono::milliseconds(1200));
   CHECK(!restarted.load()); // the dropped reboot never runs
 }
+
+// ---- visual calibration (protocol version 2) --------------------------------
+
+namespace {
+
+using Progress = CalibrationService::Progress;
+using Stage = espp::OmegaCalibration::Stage;
+
+/// A stage-6 report with a few sectors covered and every field distinct.
+Progress sample_progress() {
+  Progress p;
+  p.stage = Stage::RANGE_SWEEP;
+  p.raw_valid = true;
+  p.center_valid = true;
+  p.coverage_complete = false;
+  p.finish_available = true;
+  p.stage_elapsed_ms = 1250;
+  p.stage_total_ms = 0;
+  p.raw_x = 31.5f;
+  p.raw_y = -2.25f;
+  p.center_x = 12.5f;
+  p.center_y = -3.25f;
+  p.noise_radius = 0.75f;
+  p.min_x = -4.0f;
+  p.max_x = 19.0f;
+  p.min_y = -0.5f;
+  p.max_y = 8.0f;
+  p.covered_mask = 0x0000000Fu;
+  for (size_t i = 0; i < 4; ++i) {
+    p.sector_max_radius[i] = 19.0f + static_cast<float>(i);
+  }
+  p.sector_max_radius[31] = 1.5f;
+  return p;
+}
+
+} // namespace
+
+TEST(service_advertises_protocol_version_2) {
+  Fixture fx("svc_proto_v2");
+  CHECK_EQ(CalibrationService::kProtocolVersion, uint16_t{2});
+  CHECK_EQ(fx.service.module_info().protocol_version, uint16_t{2});
+}
+
+TEST(service_calibration_progress_has_the_documented_layout) {
+  Fixture fx("svc_progress");
+  fx.sent.clear();
+  fx.service.notify_calibration_progress(sample_progress());
+  const auto f = support::decode_one(fx.sent);
+  CHECK(f.has_value());
+  CHECK(is(*f, Msg::CalibrationProgress));
+  CHECK(f->is_reply());
+  CHECK_EQ(f->module, CalibrationService::kModule);
+  const auto &p = f->payload;
+  const std::span<const uint8_t> s(p);
+  CHECK_EQ(p.size(), size_t{179});
+  CHECK_EQ(p.size(), CalibrationService::kProgressPayloadSize);
+  CHECK_EQ(p[0], 6);    // stage: range_sweep
+  CHECK_EQ(p[1], 0x0B); // raw_valid | center_valid | finish_available
+  CHECK_EQ(stream::get_u32(s.subspan(2)), 1250u);
+  CHECK_EQ(stream::get_u32(s.subspan(6)), 0u);
+  CHECK_NEAR(support::get_f32(p, 10), 31.5f, 0.0);  // raw_x
+  CHECK_NEAR(support::get_f32(p, 14), -2.25f, 0.0); // raw_y
+  CHECK_NEAR(support::get_f32(p, 18), 12.5f, 0.0);  // center_x
+  CHECK_NEAR(support::get_f32(p, 22), -3.25f, 0.0); // center_y
+  CHECK_NEAR(support::get_f32(p, 26), 0.75f, 0.0);  // noise_radius
+  CHECK_NEAR(support::get_f32(p, 30), -4.0f, 0.0);  // min_x
+  CHECK_NEAR(support::get_f32(p, 34), 19.0f, 0.0);  // max_x
+  CHECK_NEAR(support::get_f32(p, 38), -0.5f, 0.0);  // min_y
+  CHECK_NEAR(support::get_f32(p, 42), 8.0f, 0.0);   // max_y
+  CHECK_EQ(stream::get_u32(s.subspan(46)), 0x0Fu);  // covered_mask
+  CHECK_EQ(p[50], 32);                              // sector_count
+  CHECK_NEAR(support::get_f32(p, 51), 19.0f, 0.0);  // sector 0
+  CHECK_NEAR(support::get_f32(p, 51 + 3 * 4), 22.0f, 0.0);
+  CHECK_NEAR(support::get_f32(p, 51 + 4 * 4), 0.0f, 0.0);
+  CHECK_NEAR(support::get_f32(p, 51 + 31 * 4), 1.5f, 0.0); // the last 4 bytes
+
+  // Each flag bit on its own.
+  const auto byte_of = [](const Progress &r, size_t i) -> uint8_t {
+    return CalibrationService::build_progress_payload(r)[i];
+  };
+  Progress q;
+  q.coverage_complete = true;
+  CHECK_EQ(byte_of(q, 1), 0x04);
+  q = Progress{};
+  q.center_valid = true;
+  CHECK_EQ(byte_of(q, 1), 0x02);
+  q = Progress{};
+  CHECK_EQ(byte_of(q, 0), 0); // stage 0: live
+  CHECK_EQ(byte_of(q, 1), 0x00);
+}
+
+TEST(service_progress_refused_by_the_transport_is_dropped_quietly) {
+  TempDir dir("svc_progress_refused");
+  OmegaStore store({.calibration_path = dir.file("c.cfg"), .settings_path = dir.file("s.cfg")});
+  int calls = 0;
+  CalibrationService svc({.store = store, .send = [&](std::span<const uint8_t>) {
+                            ++calls;
+                            return false;
+                          }});
+  svc.notify_calibration_progress(sample_progress()); // no retry, no throw
+  CHECK_EQ(calls, 1);
+}
+
+TEST(service_finish_calibration_reply_rules) {
+  {
+    Fixture fx("svc_finish_nohook");
+    const auto reply = fx.request(Msg::FinishCalibration);
+    CHECK(is(reply, Msg::Error));
+    CHECK_EQ(stream::get_u32(reply.payload),
+             static_cast<uint32_t>(std::errc::function_not_supported));
+  }
+  TempDir dir("svc_finish");
+  OmegaStore store({.calibration_path = dir.file("c.cfg"), .settings_path = dir.file("s.cfg")});
+  std::vector<uint8_t> sent;
+  bool sampling = false;
+  int asked = 0;
+  CalibrationService svc({.store = store,
+                          .send =
+                              [&](std::span<const uint8_t> f) {
+                                sent.assign(f.begin(), f.end());
+                                return true;
+                              },
+                          .finish_calibration =
+                              [&] {
+                                ++asked;
+                                return sampling;
+                              }});
+  auto request = [&](std::vector<uint8_t> payload) {
+    sent.clear();
+    CHECK(svc.handle_frame(static_cast<uint8_t>(Msg::FinishCalibration), payload));
+    auto f = support::decode_one(sent);
+    CHECK(f.has_value());
+    return *f;
+  };
+
+  auto f = request({});
+  CHECK(is(f, Msg::Error));
+  CHECK_EQ(stream::get_u32(f.payload), static_cast<uint32_t>(std::errc::operation_not_permitted));
+  CHECK(support::error_message(f).find("no range sweep is running") != std::string::npos);
+
+  sampling = true;
+  f = request({});
+  CHECK(is(f, Msg::Ok));
+  CHECK_EQ(stream::get_u32(f.payload), 0u);
+  CHECK_EQ(asked, 2);
+
+  f = request({1}); // a payload is refused before the hook is asked
+  CHECK(is(f, Msg::Error));
+  CHECK_EQ(stream::get_u32(f.payload), static_cast<uint32_t>(std::errc::invalid_argument));
+  CHECK_EQ(asked, 2);
+}
+
+TEST(service_position_stream_is_a_lease) {
+  Fixture fx("svc_position_lease");
+  using std::chrono::milliseconds;
+  using steady = std::chrono::steady_clock;
+  CHECK(!fx.service.position_stream_active());
+
+  // Start: active until lease_ms after the request.
+  auto before = steady::now();
+  auto reply = fx.request(Msg::SetPositionStream, u32le(1000));
+  auto after = steady::now();
+  CHECK(is(reply, Msg::Ok));
+  CHECK_EQ(stream::get_u32(reply.payload), 0u);
+  CHECK(fx.service.position_stream_active(before + milliseconds(999)));
+  CHECK(!fx.service.position_stream_active(after + milliseconds(1000)));
+
+  // Renew: the new lease runs from the renewal.
+  before = steady::now();
+  CHECK(is(fx.request(Msg::SetPositionStream, u32le(3000)), Msg::Ok));
+  CHECK(fx.service.position_stream_active(before + milliseconds(2999)));
+
+  // Stop: 0 ends it at once.
+  CHECK(is(fx.request(Msg::SetPositionStream, u32le(0)), Msg::Ok));
+  CHECK(!fx.service.position_stream_active());
+  CHECK(!fx.service.position_stream_active(steady::time_point{}));
+
+  // Clamp: a lease longer than MAX_POSITION_STREAM_LEASE gets 10 s.
+  before = steady::now();
+  CHECK(is(fx.request(Msg::SetPositionStream, u32le(0xFFFFFFFFu)), Msg::Ok));
+  after = steady::now();
+  CHECK(fx.service.position_stream_active(before + milliseconds(9999)));
+  CHECK(!fx.service.position_stream_active(after + CalibrationService::MAX_POSITION_STREAM_LEASE));
+
+  // Wrong payload lengths are refused and leave the lease alone.
+  for (const std::vector<uint8_t> &bad : {std::vector<uint8_t>{}, std::vector<uint8_t>{1, 2, 3},
+                                          std::vector<uint8_t>{1, 2, 3, 4, 5}}) {
+    reply = fx.request(Msg::SetPositionStream, bad);
+    CHECK(is(reply, Msg::Error));
+    CHECK_EQ(stream::get_u32(reply.payload), static_cast<uint32_t>(std::errc::invalid_argument));
+  }
+  CHECK(fx.service.position_stream_active(before + milliseconds(9999)));
+}
+
+TEST(service_notify_position_sends_only_while_the_lease_runs) {
+  Fixture fx("svc_position_notify");
+  using std::chrono::milliseconds;
+  const auto live = espp::OmegaCalibration::live_progress(true, 1.5f, -2.5f);
+
+  fx.sent.clear();
+  CHECK(!fx.service.notify_position(live)); // no lease yet
+  CHECK(fx.sent.empty());
+
+  const auto start = std::chrono::steady_clock::now();
+  CHECK(is(fx.request(Msg::SetPositionStream, u32le(500)), Msg::Ok));
+  fx.sent.clear();
+  CHECK(fx.service.notify_position(live, start));
+  const auto f = support::decode_one(fx.sent);
+  CHECK(f && is(*f, Msg::CalibrationProgress));
+  CHECK_EQ(f->payload[0], 0);    // stage 0: live
+  CHECK_EQ(f->payload[1], 0x01); // raw_valid only
+  CHECK_NEAR(support::get_f32(f->payload, 10), 1.5f, 0.0);
+
+  // Expired: nothing more is sent.
+  fx.sent.clear();
+  CHECK(!fx.service.notify_position(live, std::chrono::steady_clock::now() + milliseconds(600)));
+  CHECK(fx.sent.empty());
+}
+
+TEST(service_position_lease_is_per_service) {
+  TempDir dir("svc_position_two");
+  OmegaStore store({.calibration_path = dir.file("c.cfg"), .settings_path = dir.file("s.cfg")});
+  std::vector<uint8_t> vendor_sent, cdc_sent;
+  CalibrationService vendor({.store = store, .send = [&](std::span<const uint8_t> f) {
+                               vendor_sent.insert(vendor_sent.end(), f.begin(), f.end());
+                               return true;
+                             }});
+  CalibrationService cdc({.store = store, .send = [&](std::span<const uint8_t> f) {
+                            cdc_sent.insert(cdc_sent.end(), f.begin(), f.end());
+                            return true;
+                          }});
+  CHECK(vendor.handle_frame(static_cast<uint8_t>(Msg::SetPositionStream), u32le(1000)));
+  vendor_sent.clear();
+  const auto live = espp::OmegaCalibration::live_progress(true, 1.0f, 2.0f);
+  CHECK(vendor.notify_position(live));
+  CHECK(!cdc.notify_position(live));
+  CHECK(!vendor_sent.empty());
+  CHECK(cdc_sent.empty());
+}

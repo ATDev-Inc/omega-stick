@@ -13,7 +13,7 @@
 // routing by module).
 //
 // The service is found by its protocol id, not its module id: it advertises
-// kProtocol ("omega.calibration") and kProtocolVersion (1) through dispatcher
+// kProtocol ("omega.calibration") and kProtocolVersion (2) through dispatcher
 // discovery, and the console talks to whichever module id discovery reports
 // for that protocol (a discovery v1 peer falls back to module 5). The module
 // id is only a routing key; change the protocol id only for an incompatible
@@ -129,6 +129,36 @@
 //                                 Reply: OK / ERROR (invalid_argument for any
 //                                 other value or payload length). Older
 //                                 firmware ignores the frame (no reply).
+//   0x61 FINISH_CALIBRATION     : no payload. Asks the running range sweep
+//                                 to stop sampling now and evaluate what it
+//                                 has (a "Done" button: a user with limited
+//                                 reach still passes with
+//                                 OmegaCalibration::MIN_COVERED_SECTORS
+//                                 sectors). Reply: OK (u32 0) when a range
+//                                 sweep is sampling (CALIBRATION_PROGRESS
+//                                 stage 6 with finish_available set), else
+//                                 ERROR (operation_not_permitted, "no range
+//                                 sweep is running"); ERROR invalid_argument
+//                                 with a payload, function_not_supported when
+//                                 Config::finish_calibration is unset. The
+//                                 outcome still arrives as the usual
+//                                 CalibrationResult. Protocol version 2;
+//                                 older firmware ignores the frame (no reply).
+//   0x62 SET_POSITION_STREAM    : payload: u32 lease_ms. Starts (or renews)
+//                                 a LEASE: while it lasts the device sends
+//                                 CALIBRATION_PROGRESS stage 0 (live raw
+//                                 position) frames on THIS link every
+//                                 POSITION_STREAM_PERIOD (50 ms) outside a
+//                                 sweep. The lease ends lease_ms after this
+//                                 request (clamped to MAX_POSITION_STREAM_
+//                                 LEASE, 10000 ms), so a host that goes away
+//                                 stops the stream by itself; send it again
+//                                 before it runs out to keep the stream
+//                                 going. lease_ms = 0 stops it at once.
+//                                 Reply: OK / ERROR (invalid_argument for a
+//                                 payload that is not exactly 4 bytes).
+//                                 Protocol version 2; older firmware ignores
+//                                 the frame (no reply).
 //
 // Message types & payloads (device -> host), same module, reply flag set:
 //   0xD3 DIAGNOSTICS : payload (see build_diagnostics_payload() below):
@@ -221,20 +251,73 @@
 //                ERROR). A sweep whose result fails
 //                OmegaCalibration::check_usable() reports success = 0 with
 //                that error's message and is not applied (D26).
+//   0xD4 CALIBRATION_PROGRESS - UNSOLICITED. Payload, little-endian, in this
+//                exact order (see build_progress_payload(); 179 bytes today):
+//                  u8  stage   0 live (no sweep running), 1 center_settle,
+//                              2 center_measure, 3 noise_settle,
+//                              4 noise_measure, 5 range_prepare,
+//                              6 range_sweep, 7 finishing (evaluating)
+//                  u8  flags   bit0 raw_valid (the latest sensor read
+//                              succeeded: raw_x/raw_y are meaningful),
+//                              bit1 center_valid (center_x/center_y/
+//                              noise_radius are meaningful), bit2
+//                              coverage_complete (every sector covered),
+//                              bit3 finish_available (FINISH_CALIBRATION
+//                              would be accepted right now)
+//                  u32 stage_elapsed_ms
+//                  u32 stage_total_ms   (0 = open-ended: stages 0, 6, 7)
+//                  f32 raw_x, raw_y     (raw sensor units)
+//                  f32 center_x, center_y, noise_radius
+//                                       (stage 0: the live calibration's
+//                                       effective center, i.e. with the
+//                                       manual offset, when one is usable)
+//                  f32 min_x, max_x, min_y, max_y
+//                                       (relative to center; 0 until the
+//                                       range sweep has samples)
+//                  u32 covered_mask     (bit i: sector i is covered, i.e.
+//                                       OmegaCalibration::RANGE_SECTOR_MIN_
+//                                       SAMPLES samples above 3x the center
+//                                       noise radius landed in it)
+//                  u8  sector_count     (OmegaCalibration::RANGE_SECTORS, 32)
+//                  sector_count x f32 sector_max_radius
+//                                       (raw units; 0 = no sample yet;
+//                                       sector i spans angles
+//                                       [i, i + 1) * 360 / sector_count
+//                                       degrees of atan2(y - center_y,
+//                                       x - center_x), raw +x towards +y)
+//                Hosts must stop parsing when the payload runs out: later
+//                firmware may append fields. During a calibration sweep it
+//                is sent on every link at each stage change and then every
+//                50 ms (OmegaCalibration::PROGRESS_PERIOD) through settles
+//                and sampling. Outside a sweep it is sent only on a link
+//                whose SET_POSITION_STREAM lease is running, as stage 0,
+//                every POSITION_STREAM_PERIOD from the polling loop.
+//
+// Calibration flow (protocol version 2): START_CALIBRATION -> OK, then
+// CALIBRATION_PROGRESS through stages 1 to 5 (fixed lengths, so a countdown
+// can be shown), stage 6 (open-ended: it ends by itself once every sector is
+// covered, at least OmegaCalibration::RANGE_MIN_SAMPLES samples were taken
+// and the stick has been released for RANGE_RETURN_HOLD; on
+// FINISH_CALIBRATION; or after RANGE_TIMEOUT), stage 7, and finally the
+// CalibrationResult. Hosts that predate version 2 see only the
+// CalibrationResult.
 //
 // Flow control: same as coredump_service.hpp: the host serializes
-// transactions, one request in flight, waits for its reply. The one
-// exception is START_CALIBRATION/CalibrationResult, which is intentionally
-// async (see both fields' docs) since the underlying calibration sequence
-// can take far longer than a normal request-reply round trip and must not
-// block whatever context feed()/handle_frame() runs on.
+// transactions, one request in flight, waits for its reply. The exceptions
+// are START_CALIBRATION/CalibrationResult, which is intentionally async (see
+// both fields' docs) since the underlying calibration sequence can take far
+// longer than a normal request-reply round trip and must not block whatever
+// context feed()/handle_frame() runs on, and CALIBRATION_PROGRESS, which can
+// arrive between any request and its reply: hosts must route it by type.
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -326,13 +409,16 @@ public:
     Revert = 0x5E,              ///< boot the other OTA slot (previous firmware), then reboot
     GetDiagnostics = 0x5F,      ///< request the sensor fault status and reset log
     SetNudgeEnabled = 0x60,     ///< u8: turn nudge clicks off (0) or on (1)
+    FinishCalibration = 0x61,   ///< end the running range sweep now and evaluate it
+    SetPositionStream = 0x62,   ///< u32 lease_ms: stream live positions on this link (0 stops)
     // device -> host
-    State = 0xD0,             ///< fixed 80-byte calibration + settings struct
-    CalibrationResult = 0xD1, ///< UNSOLICITED: outcome of an async StartCalibration
-    FwInfo = 0xD2,            ///< u8 pending_verify, u8 session_active, str project, str version
-    Diagnostics = 0xD3,       ///< variable-length sensor fault status + reset log
-    Ok = 0xDF,                ///< u32 context-dependent success value
-    Error = 0xFE,             ///< u32 informational code + authoritative UTF-8 message
+    State = 0xD0,               ///< fixed 80-byte calibration + settings struct
+    CalibrationResult = 0xD1,   ///< UNSOLICITED: outcome of an async StartCalibration
+    FwInfo = 0xD2,              ///< u8 pending_verify, u8 session_active, str project, str version
+    Diagnostics = 0xD3,         ///< variable-length sensor fault status + reset log
+    CalibrationProgress = 0xD4, ///< UNSOLICITED: sweep progress or live position
+    Ok = 0xDF,                  ///< u32 context-dependent success value
+    Error = 0xFE,               ///< u32 informational code + authoritative UTF-8 message
   };
 
   /// Default dispatcher module id of the calibration protocol (the frame
@@ -345,8 +431,9 @@ public:
   /// routing key; a peer finds this service by this id. Never reuse it for an
   /// incompatible wire format: bump kProtocolVersion instead.
   static constexpr const char *kProtocol = "omega.calibration";
-  /// Version of the calibration protocol this build speaks.
-  static constexpr uint16_t kProtocolVersion = 1;
+  /// Version of the calibration protocol this build speaks. 2 added
+  /// FINISH_CALIBRATION, SET_POSITION_STREAM and CALIBRATION_PROGRESS.
+  static constexpr uint16_t kProtocolVersion = 2;
 
   /// How long a queued reply is given to reach the wire before a reboot the
   /// same request asked for (RESTART, REVERT, OTA_FINISH).
@@ -360,6 +447,20 @@ public:
   /// Wire size of the STATE payload (see the header comment for the exact
   /// field layout).
   static constexpr size_t kStatePayloadSize = 80;
+
+  /// One calibration progress report (the CALIBRATION_PROGRESS fields).
+  using Progress = OmegaCalibration::Progress;
+
+  /// Wire size of the CALIBRATION_PROGRESS payload this build sends.
+  static constexpr size_t kProgressPayloadSize =
+      1 + 1 + 4 + 4 + 2 * 4 + 3 * 4 + 4 * 4 + 4 + 1 + OmegaCalibration::RANGE_SECTORS * 4;
+  static_assert(kProgressPayloadSize == 179);
+
+  /// How often the polling loop sends a live position on a link with a
+  /// running SET_POSITION_STREAM lease.
+  static constexpr std::chrono::milliseconds POSITION_STREAM_PERIOD{50};
+  /// Longest lease SET_POSITION_STREAM grants; longer requests are clamped.
+  static constexpr std::chrono::milliseconds MAX_POSITION_STREAM_LEASE{10000};
 
   /**
    * @brief Function used to transmit one encoded reply frame to the host.
@@ -424,6 +525,13 @@ public:
     /// way to learn that. When left unset, START_CALIBRATION always replies
     /// with ERROR (function_not_supported).
     std::function<bool(std::error_code &ec)> start_calibration{nullptr};
+    /// Optional: handles Msg::FinishCalibration by asking the running range
+    /// sweep to stop sampling and evaluate what it has. Returns whether the
+    /// request was accepted (a range sweep is sampling right now). Runs under
+    /// this service's internal mutex, so it must return at once: raise a
+    /// flag the sweep polls (main.cpp: RecalibrationGate::request_finish()).
+    /// When unset, FINISH_CALIBRATION replies ERROR (function_not_supported).
+    std::function<bool()> finish_calibration{nullptr};
     /// Reboot the device (RESTART message). Invoked ~750 ms after the OK reply
     /// from a detached thread. When unset, RESTART replies with ERROR.
     std::function<void()> restart{nullptr};
@@ -463,6 +571,7 @@ public:
       , send_(config.send)
       , module_(config.module)
       , start_calibration_(config.start_calibration)
+      , finish_calibration_(config.finish_calibration)
       , diagnostics_(config.diagnostics)
       , output_hold_(config.output_hold)
       , restart_(config.restart)
@@ -639,6 +748,68 @@ public:
     }
     logger_.info("notify_calibration_result success={}", success);
     send(build(Msg::CalibrationResult, payload, module_id()), /*unsolicited=*/true);
+  }
+
+  /**
+   * @brief Send an unsolicited CALIBRATION_PROGRESS frame.
+   *
+   * Whatever runs the calibration sweep calls this on every service, as for
+   * notify_calibration_result(), from OmegaCalibration's progress callback.
+   * A refused frame (no host on this link) is dropped without a log line:
+   * the sweep reports 20 times a second.
+   */
+  void notify_calibration_progress(const Progress &progress) {
+    send_quietly(build(Msg::CalibrationProgress, build_progress_payload(progress), module_id()));
+  }
+
+  /// True while this link's SET_POSITION_STREAM lease runs. Lock-free; the
+  /// polling loop may call it every tick.
+  bool position_stream_active(
+      std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now()) const {
+    return now.time_since_epoch().count() < position_stream_until_.load(std::memory_order_relaxed);
+  }
+
+  /**
+   * @brief Send a live position (a stage-0 CALIBRATION_PROGRESS, see
+   *        OmegaCalibration::live_progress()) if this link's lease runs.
+   *
+   * The polling loop calls this on every service every
+   * POSITION_STREAM_PERIOD; each service sends only while its own lease
+   * runs. Refusals are dropped silently, as in notify_calibration_progress().
+   * @return true if the frame was handed to the transport.
+   */
+  bool
+  notify_position(const Progress &progress,
+                  std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now()) {
+    if (!position_stream_active(now)) {
+      return false;
+    }
+    send_quietly(build(Msg::CalibrationProgress, build_progress_payload(progress), module_id()));
+    return true;
+  }
+
+  /// Encode a Progress into the CALIBRATION_PROGRESS payload (see the
+  /// header comment for the exact field layout).
+  static std::vector<uint8_t> build_progress_payload(const Progress &p) {
+    namespace stream = espp::stream_frame;
+    std::vector<uint8_t> payload;
+    payload.reserve(kProgressPayloadSize);
+    payload.push_back(static_cast<uint8_t>(p.stage));
+    payload.push_back(static_cast<uint8_t>((p.raw_valid ? 0x01 : 0) | (p.center_valid ? 0x02 : 0) |
+                                           (p.coverage_complete ? 0x04 : 0) |
+                                           (p.finish_available ? 0x08 : 0)));
+    stream::put_u32(payload, p.stage_elapsed_ms);
+    stream::put_u32(payload, p.stage_total_ms);
+    for (const float v : {p.raw_x, p.raw_y, p.center_x, p.center_y, p.noise_radius, p.min_x,
+                          p.max_x, p.min_y, p.max_y}) {
+      put_f32(payload, v);
+    }
+    stream::put_u32(payload, p.covered_mask);
+    payload.push_back(static_cast<uint8_t>(p.sector_max_radius.size()));
+    for (const float r : p.sector_max_radius) {
+      put_f32(payload, r);
+    }
+    return payload;
   }
 
 protected:
@@ -1032,6 +1203,40 @@ protected:
       reply = build_ok();
       return true;
     }
+    case Msg::FinishCalibration: {
+      if (!payload.empty()) {
+        reply = build_error(std::errc::invalid_argument, "FINISH_CALIBRATION takes no payload");
+        return true;
+      }
+      if (!finish_calibration_) {
+        reply = build_error(std::errc::function_not_supported,
+                            "FINISH_CALIBRATION not wired on this build");
+        return true;
+      }
+      // Like start_calibration_, this only raises a flag the sweep polls.
+      if (!finish_calibration_()) {
+        reply = build_error(std::errc::operation_not_permitted, "no range sweep is running");
+        return true;
+      }
+      logger_.info("FINISH_CALIBRATION accepted");
+      reply = build_ok();
+      return true;
+    }
+    case Msg::SetPositionStream: {
+      if (payload.size() != 4) {
+        reply = build_error(std::errc::invalid_argument, "SET_POSITION_STREAM needs u32 lease_ms");
+        return true;
+      }
+      const std::chrono::milliseconds lease{std::min<uint32_t>(
+          stream::get_u32(payload), static_cast<uint32_t>(MAX_POSITION_STREAM_LEASE.count()))};
+      const auto until =
+          lease.count() == 0
+              ? std::numeric_limits<std::chrono::steady_clock::rep>::lowest()
+              : (std::chrono::steady_clock::now() + lease).time_since_epoch().count();
+      position_stream_until_.store(until, std::memory_order_relaxed);
+      reply = build_ok();
+      return true;
+    }
     default:
       // Not a calibration protocol frame: IGNORE it (no error reply), so
       // this service can share a stream with other espp protocols.
@@ -1178,6 +1383,15 @@ protected:
     return true;
   }
 
+  /// Hands a frequent unsolicited frame (CALIBRATION_PROGRESS) to the
+  /// transport and ignores a refusal: no host may have this link open, and a
+  /// log line per refused frame would flood the console 20 times a second.
+  void send_quietly(const std::vector<uint8_t> &frame) {
+    if (send_) {
+      send_(frame);
+    }
+  }
+
   /// Forwards changes of this service's hold to Config::output_hold, when one
   /// is wired. Only edges are forwarded, so services sharing one counter (see
   /// main.cpp) can never release each other's hold.
@@ -1277,6 +1491,7 @@ private:
   send_fn send_;
   const uint8_t module_; // Config::module: routing id for requests + replies
   std::function<bool(std::error_code &ec)> start_calibration_; // Config::start_calibration
+  std::function<bool()> finish_calibration_;                   // Config::finish_calibration
   diagnostics_fn diagnostics_;                                 // Config::diagnostics
   std::function<void(bool)> output_hold_;                      // Config::output_hold
   std::function<void()> restart_;                              // Config::restart
@@ -1285,6 +1500,11 @@ private:
       false}; // true while an upload begun by this service is active (guarded by mutex_)
   std::chrono::steady_clock::time_point ota_last_activity_{}; // last OTA_BEGIN/OTA_DATA success
   bool holding_{false}; // this service's output hold, as last forwarded (guarded by mutex_)
+  /// End of the SET_POSITION_STREAM lease, as steady_clock ticks since its
+  /// epoch (lowest() = no lease). Written on the dispatcher task, read by
+  /// the polling loop, hence atomic rather than under mutex_.
+  std::atomic<std::chrono::steady_clock::rep> position_stream_until_{
+      std::numeric_limits<std::chrono::steady_clock::rep>::lowest()};
 
   /// The otadata state of an app slot as the FW_INFO "previous state" string.
   static const char *ota_state_name(esp_ota_img_states_t state) {

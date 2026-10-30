@@ -9,9 +9,12 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kCircleMs = 8000.0;
-// The range sweep samples for RANGE_SAMPLES * SAMPLE_DELAY = 2 s, so the calibrate
-// pattern goes around once in a little under that.
-constexpr double kCalibrateCircleMs = 1800.0;
+// The range sweep is open-ended: it ends once every sector is covered, at least
+// RANGE_MIN_SAMPLES (2 s) were taken and the stick has been released for RANGE_RETURN_HOLD.
+// So the calibrate pattern goes around once, slowly enough to put several samples in
+// every sector even when interactive mode runs at --speed 4 and the OS timer stretches
+// each 10 ms step (8 s is about 25 per sector at full rate), then lets go.
+constexpr double kCalibrateCircleMs = 8000.0;
 constexpr double kNudgeStartMs = 50.0;
 constexpr double kNudgeHoldMs = 400.0;
 constexpr double kNudgeLengthMs = 600.0;

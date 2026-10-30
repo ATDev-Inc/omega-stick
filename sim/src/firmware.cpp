@@ -173,10 +173,12 @@ struct SimPorts : espp::omega_control::Ports {
   const uint8_t &sensor_conversion_count;
   SensorFaultStatus &sensor_status;
   std::atomic<bool> &needs_calibration;
+  espp::omega_control::RecalibrationGate &recalibration_gate;
 
   SimPorts(Host &host_, espp::TMAG5273 &tmag_, FakeTmagBus &bus_, espp::OmegaStore &store_,
            espp::Joystick &js_, espp::CalibrationService &calibration_, const bool &ok_,
-           const uint8_t &count_, SensorFaultStatus &status_, std::atomic<bool> &needs_)
+           const uint8_t &count_, SensorFaultStatus &status_, std::atomic<bool> &needs_,
+           espp::omega_control::RecalibrationGate &gate_)
       : host(host_)
       , tmag(tmag_)
       , bus(bus_)
@@ -186,7 +188,8 @@ struct SimPorts : espp::omega_control::Ports {
       , sensor_read_ok(ok_)
       , sensor_conversion_count(count_)
       , sensor_status(status_)
-      , needs_calibration(needs_) {}
+      , needs_calibration(needs_)
+      , recalibration_gate(gate_) {}
 
   void send_mouse(const espp::omega_control::MouseReport &r) override { host.on_mouse(r); }
   void send_xac(const espp::omega_control::XacReport &r) override { host.on_xac(r); }
@@ -211,10 +214,18 @@ struct SimPorts : espp::omega_control::Ports {
         // sim: prompts also go to the page, and the sweep's sleeps advance simulated time.
         .message = [this](const std::string &text) { host.calibration_prompt(text); },
         .sleep = [this](std::chrono::milliseconds d) { host.sleep(d); },
+        // As main.cpp, with one link (sim: the WebSocket).
+        .progress =
+            [this](const espp::OmegaCalibration::Progress &p) {
+              recalibration_gate.sweep_stage(p.stage);
+              calibration.notify_calibration_progress(p);
+            },
+        .finish_requested = [this] { return recalibration_gate.take_finish(); },
         .verbosity = espp::Logger::Verbosity::ERROR,
     });
     bool recal_ok = recal.center_calibration(new_center, recal_ec) &&
                     recal.range_calibration(new_center, new_range, recal_ec);
+    recalibration_gate.set_finish_window(false);
     if (recal_ok) {
       recal.finalize_center_deadzone(new_center, new_range);
       range = new_range;
@@ -508,6 +519,7 @@ std::string boot(Host &host, int reset_reason) {
           [&recalibration_gate](std::error_code &start_ec) {
             return recalibration_gate.request(start_ec);
           },
+      .finish_calibration = [&recalibration_gate]() { return recalibration_gate.request_finish(); },
       .restart = [&host]() { host.request_restart("restart"); },
       .ota = ota,
       .diagnostics = make_diagnostics,
@@ -556,13 +568,14 @@ std::string boot(Host &host, int reset_reason) {
   live_joystick = &js;
 
   SimPorts ports(host, tmag, bus, store, js, calibration, sensor_read_ok, sensor_conversion_count,
-                 sensor_status, needs_calibration);
+                 sensor_status, needs_calibration, recalibration_gate);
   espp::omega_control::MouseState mouse_state;
   mouse_state.common.center = center;
   mouse_state.common.range = range;
   espp::omega_control::XacState xac_state;
   xac_state.common.center = center;
   xac_state.common.range = range;
+  int64_t next_position_ns = 0; // SET_POSITION_STREAM pacing, as main.cpp's next_position
 
   std::optional<Health> fw_health;
   if (ota) {
@@ -629,6 +642,20 @@ std::string boot(Host &host, int reset_reason) {
     const bool hold = output_holds.load() > 0;
     const bool recal = !hold && recalibration_gate.take();
     const auto sample = ports.read_stick();
+    // As main.cpp's stream_position(), paced on simulated time. sim: the lease itself is
+    // stamped and checked on the real steady clock (CalibrationService's default), like the
+    // OTA idle expiry above.
+    if (host.now_ns() >= next_position_ns) {
+      next_position_ns =
+          host.now_ns() +
+          std::chrono::nanoseconds(espp::CalibrationService::POSITION_STREAM_PERIOD).count();
+      if (calibration.position_stream_active()) {
+        const espp::OmegaCalibration::CenterResult live_center = store.center();
+        calibration.notify_position(espp::OmegaCalibration::live_progress(
+            sample.read_ok, sample.raw_x, sample.raw_y,
+            needs_calibration.load() ? nullptr : &live_center));
+      }
+    }
     const espp::omega_control::StepInput input{.stick = sample,
                                                .now = steady_at(host.now_ns()),
                                                .recalibration_requested = recal,

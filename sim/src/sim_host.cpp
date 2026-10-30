@@ -560,6 +560,10 @@ std::string Host::action_reply(const Step &step) {
   if (step.name == "recalibrate") {
     return request(type(Msg::StartCalibration), {});
   }
+  if (step.name == "finish_calibration") {
+    // FINISH_CALIBRATION: "error" (operation_not_permitted) unless a range sweep is sampling.
+    return request(type(Msg::FinishCalibration), {});
+  }
   if (step.name == "save") {
     return request(type(Msg::SaveToFlash), {});
   }

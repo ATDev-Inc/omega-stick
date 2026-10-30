@@ -9,7 +9,20 @@ what each part of the number means and how a release is cut.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **Calibration you can watch.** The console's Recalibration section now shows
+  a live picture of the stick while a calibration runs: a dot for the sensor
+  reading, the measured center and its noise circle, and a ring of 32
+  directions that fills in as the stick reaches each one. The range stage no
+  longer stops after a fixed 2 seconds; it ends by itself once every direction
+  is covered and the stick has come back to rest, or when you press the new
+  Done button, so you can move as slowly as you need. The same dot is shown
+  whenever the console is connected, so a stick that never reached one side
+  is visible before you start. Saved calibrations and older firmware keep
+  working; the console falls back to the printed prompts when the firmware
+  does not stream progress.
+  ([#103](https://github.com/ATDev-Inc/omega-stick/pull/103))
 
 ## [0.1.1] - 2026-10-26
 
