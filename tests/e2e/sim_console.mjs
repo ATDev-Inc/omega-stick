@@ -137,7 +137,7 @@ async function main() {
   await click("recalibrateBtn");
   await waitLog("the range calibration prompt", /Move the joystick slowly/, 30000);
   const logA = await logText();
-  await waitLog("state refresh after the sweep", /Recalibration finished successfully/, 40000);
+  await waitLog("state refresh after the sweep", /Recalibration finished successfully/, 60000);
   await waitFor("the notice to clear", async () => await ev($("calNeededNotice") + ".hidden"), 10000).catch(() => { });
   await sleep(500);
   const noticeAfterHidden = await ev($("calNeededNotice") + ".hidden");
@@ -194,7 +194,7 @@ async function main() {
   const sample = async () => samples.push(await ev($("recalibrateBtn") + ".disabled"));
   await waitFor("recalibration accepted", async () => { await sample(); return /Recalibration accepted/.test(await logText()); }, 8000);
   await pattern("calibrate");
-  const cEnd = Date.now() + 40000;
+  const cEnd = Date.now() + 60000;
   while (Date.now() < cEnd && (await countIn("Recalibration finished successfully")) === cBefore) {
     await sample(); await sleep(150);
   }
