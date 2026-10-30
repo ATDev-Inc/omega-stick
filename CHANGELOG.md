@@ -21,7 +21,8 @@ what each part of the number means and how a release is cut.
   whenever the console is connected, so a stick that never reached one side
   is visible before you start. Saved calibrations and older firmware keep
   working; the console falls back to the printed prompts when the firmware
-  does not stream progress. (PR_LINK)
+  does not stream progress.
+  ([#103](https://github.com/ATDev-Inc/omega-stick/pull/103))
 
 ## [0.1.1] - 2026-10-26
 
