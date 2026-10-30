@@ -124,7 +124,7 @@ TEST(patterns_have_the_documented_shapes) {
   CHECK_NEAR(std::hypot(pattern_position("calibrate", 5000, 900).x,
                         pattern_position("calibrate", 5000, 900).y),
              1.0, 1e-9);
-  CHECK_NEAR(std::hypot(pattern_position("calibrate", 5000, 2500).x, 0), 0, 0);
+  CHECK_NEAR(std::hypot(pattern_position("calibrate", 5000, 10000).x, 0), 0, 0);
   // nudges: a push past the threshold and back
   CHECK_NEAR(pattern_position("nudge_right", 200, -1).x, 1.0, 0);
   CHECK_NEAR(pattern_position("nudge_left", 200, -1).x, -1.0, 0);

@@ -273,7 +273,7 @@ quiet: USB and the console come up, but the output is held neutral until a
 calibration succeeds (decision D26). Calibrate it from the console with
 "Re-run calibration" (connect over Web Serial to see the prompts): leave the
 stick alone while the center is measured, then move it slowly through a
-complete circle. The result is checked, saved to the `littlefs` partition and
+complete circle (the range step records for about 10 s). The result is checked, saved to the `littlefs` partition and
 loaded on later boots.
 
 That is the last the monitor shows. The firmware's log goes to the built-in USB

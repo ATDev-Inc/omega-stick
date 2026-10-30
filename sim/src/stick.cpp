@@ -9,9 +9,9 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kCircleMs = 8000.0;
-// The range sweep samples for RANGE_SAMPLES * SAMPLE_DELAY = 2 s, so the calibrate
+// The range sweep samples for RANGE_SAMPLES * SAMPLE_DELAY = 10 s, so the calibrate
 // pattern goes around once in a little under that.
-constexpr double kCalibrateCircleMs = 1800.0;
+constexpr double kCalibrateCircleMs = 9800.0;
 constexpr double kNudgeStartMs = 50.0;
 constexpr double kNudgeHoldMs = 400.0;
 constexpr double kNudgeLengthMs = 600.0;

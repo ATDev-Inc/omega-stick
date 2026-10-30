@@ -4,12 +4,12 @@
   "steps": [
     { "at_ms": 0, "pattern": "calibrate" },
     { "at_ms": 500, "action": "recalibrate" },
-    { "at_ms": 40000, "expect": { "calibrated": true } },
-    { "at_ms": 41000, "pattern": "nudge_right" },
-    { "at_ms": 42000, "expect": { "clicked": "right" } },
-    { "at_ms": 43000, "pattern": "nudge_up" },
-    { "at_ms": 44000, "expect": { "clicked": "left" } },
-    { "at_ms": 45000, "pattern": "rest" },
-    { "at_ms": 46000, "expect": { "clicked": "none", "neutral": true } }
+    { "at_ms": 50000, "expect": { "calibrated": true } },
+    { "at_ms": 51000, "pattern": "nudge_right" },
+    { "at_ms": 52000, "expect": { "clicked": "right" } },
+    { "at_ms": 53000, "pattern": "nudge_up" },
+    { "at_ms": 54000, "expect": { "clicked": "left" } },
+    { "at_ms": 55000, "pattern": "rest" },
+    { "at_ms": 56000, "expect": { "clicked": "none", "neutral": true } }
   ]
 }

@@ -32,7 +32,7 @@ public:
   // --------------------------------------------------------------------------
 
   static constexpr int CENTER_SAMPLES = 200;
-  static constexpr int RANGE_SAMPLES = 200;
+  static constexpr int RANGE_SAMPLES = 1000;
 
   static constexpr int RANGE_SECTORS = 32;
 
@@ -549,7 +549,8 @@ public:
   /// Sweeps the stick through its full range of motion to find axis extrema
   /// and a reliable reachable radius per angular sector, then derives a
   /// range deadzone. Requires a completed CenterResult. Blocks for roughly
-  /// RANGE_SAMPLES * SAMPLE_DELAY plus a ~10s lead-in.
+  /// RANGE_SAMPLES * SAMPLE_DELAY (10 s) plus a ~10s lead-in; each sample also
+  /// costs an I2C read, so the real sweep is a little longer.
   bool range_calibration(const CenterResult &center, RangeResult &out, std::error_code &ec) {
     ec.clear();
 

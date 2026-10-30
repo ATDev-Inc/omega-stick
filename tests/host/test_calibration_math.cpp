@@ -483,7 +483,9 @@ TEST(range_calibration_sleep_schedule_matches_the_documented_duration) {
   std::error_code ec;
   CHECK(cal.range_calibration(center_at(0.0f, 0.0f), range, ec));
   // Two SETTLE_DELAY lead-in pauses, then one SAMPLE_DELAY per sample.
-  CHECK_EQ(rec.total_sleep(), milliseconds(2 * 5000 + 200 * 10));
+  CHECK_EQ(rec.total_sleep(), milliseconds(2 * 5000 + Cal::RANGE_SAMPLES * 10));
+  // The sweep window itself is at least 10 s, so a slow user can reach every edge.
+  CHECK(Cal::RANGE_SAMPLES * Cal::SAMPLE_DELAY >= std::chrono::seconds(10));
   const auto start = [&] {
     for (std::size_t i = 0; i < rec.messages.size(); ++i) {
       if (rec.messages[i] == "START!") {

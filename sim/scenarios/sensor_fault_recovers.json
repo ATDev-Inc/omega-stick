@@ -4,15 +4,15 @@
   "steps": [
     { "at_ms": 0, "pattern": "calibrate" },
     { "at_ms": 500, "action": "recalibrate" },
-    { "at_ms": 40000, "expect": { "calibrated": true } },
-    { "at_ms": 41000, "stick": [0.8, 0] },
-    { "at_ms": 42000, "fault": "no_response" },
-    { "at_ms": 42100, "expect": { "sensor_fault": true } },
-    { "at_ms": 43000, "expect": { "sensor_fault": true, "neutral": true, "mouse_moved": "none" } },
-    { "at_ms": 43100, "fault": "ok" },
-    { "at_ms": 43500, "expect": { "sensor_fault": false } },
-    { "at_ms": 44000, "stick": [0.8, 0] },
-    { "at_ms": 47000, "stick": [0.8, 0] },
-    { "at_ms": 47500, "expect": { "sensor_fault": false, "mouse_moved": "right" } }
+    { "at_ms": 50000, "expect": { "calibrated": true } },
+    { "at_ms": 51000, "stick": [0.8, 0] },
+    { "at_ms": 52000, "fault": "no_response" },
+    { "at_ms": 52100, "expect": { "sensor_fault": true } },
+    { "at_ms": 53000, "expect": { "sensor_fault": true, "neutral": true, "mouse_moved": "none" } },
+    { "at_ms": 53100, "fault": "ok" },
+    { "at_ms": 53500, "expect": { "sensor_fault": false } },
+    { "at_ms": 54000, "stick": [0.8, 0] },
+    { "at_ms": 57000, "stick": [0.8, 0] },
+    { "at_ms": 57500, "expect": { "sensor_fault": false, "mouse_moved": "right" } }
   ]
 }
