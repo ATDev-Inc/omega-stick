@@ -235,7 +235,10 @@ public:
     /// Master switch for nudge clicks. When false the control loop never
     /// starts a nudge and releases one that is held, so the stick only moves
     /// the cursor; the three tuning values above are kept as they are.
-    bool nudge_enabled{true};
+    /// Off by default: a fresh board (no settings file) does not click on a
+    /// nudge until the user turns it on. A saved file from before the switch
+    /// existed has no key and loads as on (see load()).
+    bool nudge_enabled{false};
 
     // ------------------------------------------------------------------
     // Input mode
@@ -345,7 +348,10 @@ public:
       settings.nudge_hold_time = std::chrono::milliseconds(
           values.count("nudge_hold_time_ms") ? static_cast<long long>(values["nudge_hold_time_ms"])
                                              : 100);
-      // A file without the key (older firmware) keeps nudge clicks on.
+      // Asymmetric on purpose: a fresh board defaults to off (the member
+      // initializer), but a file written by firmware older than the on/off
+      // switch has no key and loads as on, because those sticks were already
+      // clicking on nudges and an update must not change that silently.
       settings.nudge_enabled =
           values.count("nudge_enabled") ? values["nudge_enabled"] != 0.0f : true;
       settings.input_mode = values.count("input_mode")

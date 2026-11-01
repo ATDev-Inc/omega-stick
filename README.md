@@ -84,7 +84,7 @@ What works today:
   ([components/tmag5273/include/tmag5273.hpp](components/tmag5273/include/tmag5273.hpp)),
   center and range calibration, and idle drift correction, persisted to flash.
 - **Mouse mode**: the default. Relative X/Y plus stick nudge gestures for clicks
-  and scroll.
+  and scroll. Nudge clicks are off on a fresh board; turn them on in the console.
 - **Browser calibration console**: WebUSB and Web Serial, for viewing and tuning
   settings, switching input mode, and re-running calibration.
 - **Firmware updates over USB** from the console, with automatic rollback if a

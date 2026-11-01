@@ -11,13 +11,11 @@ what each part of the number means and how a release is cut.
 
 ### Changed
 
-- **The calibration range sweep now records for 10 seconds instead of 2.**
-  Circling the stick slowly could leave part of the circle outside the short
-  window, giving a lopsided range, or miss the window entirely and fail as
-  unusable. The window is now long enough to reach every edge at a gentle
-  pace. A full calibration from the console takes about 10 seconds longer, so
-  about 40 seconds in all; the page needs no change and waits for the result.
-  ([#101](https://github.com/ATDev-Inc/omega-stick/pull/101))
+- **Nudge clicks are now off by default.** A fresh board only moves the cursor
+  until nudge clicks are turned on with the "Nudge clicks" checkbox in the
+  console. A stick that already has saved settings keeps its choice, and a
+  settings file from before the on/off switch (no `nudge_enabled` key) still
+  loads with nudge clicks on, so updating does not change how it behaves. ([#102](https://github.com/ATDev-Inc/omega-stick/pull/102))
 
 ## [0.1.1] - 2026-10-26
 
