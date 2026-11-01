@@ -218,9 +218,9 @@ Scenarios kept in [sim/scenarios/](../sim/scenarios/) run headless in CI.
 console calibrates it, and `unusable_calibration_boots_quiet.json` that a saved
 calibration below the usable-to-noise ratio boots quiet, reports it in
 GET_DIAGNOSTICS, survives a failed sweep still quiet, and resumes after a good
-one. `nudge_switch_off.json` turns nudge clicks off and checks that nudges
-then only move the cursor, also after a saved restart, until they are turned
-back on. `update_never_confirmed.json` flashes a good image that nobody confirms and
+one. `nudge_switch_off.json` checks that nudge clicks are off on a fresh board (nudges only
+move the cursor), turns them on and off again, and checks the choice survives a
+saved restart. `update_never_confirmed.json` flashes a good image that nobody confirms and
 checks that the deadline rolls it back. `update_crash_loop_after_confirm.json`
 confirms an image that then crash-loops and checks that the crash-loop handover
 sticks with no console attached.

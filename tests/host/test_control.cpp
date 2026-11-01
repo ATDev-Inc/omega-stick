@@ -36,7 +36,10 @@ oc::StepInput input(float x, float y, int ms, bool recal = false, float raw_x = 
   in.stick = {x, y, raw_x, raw_y};
   in.now = at(ms);
   in.recalibration_requested = recal;
-  return in; // default DeviceSettings: 100 ms hold, 0.5 enter, 0.8 exit
+  // DeviceSettings defaults (100 ms hold, 0.5 enter, 0.8 exit), but with nudge
+  // clicks on: they are off by default and these tests exercise them.
+  in.settings.nudge_enabled = true;
+  return in;
 }
 
 // An input whose sensor read failed: the sample is the stale previous one.
@@ -509,7 +512,7 @@ oc::StepInput nudge_off(oc::StepInput in) {
 } // namespace
 
 TEST(control_mouse_nudge_disabled_never_starts_a_nudge) {
-  // Each push would nudge with the switch on (the default)...
+  // Each push would nudge with the switch on...
   struct Push {
     float x, y;
     NudgeDirection when_on;
