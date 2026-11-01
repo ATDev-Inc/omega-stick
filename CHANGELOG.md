@@ -9,13 +9,11 @@ what each part of the number means and how a release is cut.
 
 ## [Unreleased]
 
-### Changed
+### Fixed
 
-- **Nudge clicks are now off by default.** A fresh board only moves the cursor
-  until nudge clicks are turned on with the "Nudge clicks" checkbox in the
-  console. A stick that already has saved settings keeps its choice, and a
-  settings file from before the on/off switch (no `nudge_enabled` key) still
-  loads with nudge clicks on, so updating does not change how it behaves. ([#102](https://github.com/ATDev-Inc/omega-stick/pull/102))
+- **The console frame log no longer dumps whole firmware chunks.** Two helpers
+  named `hex` clashed, so with "Log frames" ticked every firmware update chunk
+  was written in full into the log. Frames are shortened again. [#95](https://github.com/ATDev-Inc/omega-stick/pull/95).
 
 ## [0.1.1] - 2026-10-26
 
