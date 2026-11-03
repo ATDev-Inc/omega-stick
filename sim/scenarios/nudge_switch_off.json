@@ -27,6 +27,18 @@
     { "at_ms": 53000, "pattern": "rest" },
     { "at_ms": 53500, "action": "set_nudge_enabled", "value": true },
     { "at_ms": 54000, "pattern": "nudge_right" },
-    { "at_ms": 55000, "expect": { "clicked": "right" } }
+    { "at_ms": 55000, "expect": { "clicked": "none", "mouse_moved": "right" } },
+    { "at_ms": 55500, "pattern": "nudge_up" },
+    { "at_ms": 56500, "expect": { "clicked": "none", "mouse_moved": "up" } },
+    { "at_ms": 57000, "pattern": "rest" },
+    { "at_ms": 57500, "action": "save" },
+    { "at_ms": 58000, "action": "restart" },
+    { "at_ms": 61000, "expect": { "calibrated": true, "clicked": "none" } },
+    { "at_ms": 61500, "pattern": "nudge_right" },
+    { "at_ms": 62500, "expect": { "clicked": "none", "mouse_moved": "right" } },
+    { "at_ms": 63000, "pattern": "rest" },
+    { "at_ms": 63500, "action": "set_nudge_enabled", "value": true },
+    { "at_ms": 64000, "pattern": "nudge_right" },
+    { "at_ms": 65000, "expect": { "clicked": "right" } }
   ]
 }

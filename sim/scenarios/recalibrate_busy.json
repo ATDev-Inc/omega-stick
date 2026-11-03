@@ -5,11 +5,11 @@
     { "at_ms": 0, "pattern": "calibrate" },
     { "at_ms": 500, "action": "recalibrate" },
     { "at_ms": 10000, "action": "recalibrate", "expect_reply": "busy" },
-    { "at_ms": 40000, "expect": { "calibrated": true } },
-    { "at_ms": 41000, "action": "recalibrate" },
-    { "at_ms": 41100, "action": "recalibrate", "expect_reply": "busy" },
-    { "at_ms": 55000, "action": "recalibrate", "expect_reply": "busy" },
-    { "at_ms": 80000, "expect": { "calibrated": true, "center_max": 0.05 } },
-    { "at_ms": 81000, "action": "recalibrate" }
+    { "at_ms": 50000, "expect": { "calibrated": true } },
+    { "at_ms": 51000, "action": "recalibrate" },
+    { "at_ms": 51100, "action": "recalibrate", "expect_reply": "busy" },
+    { "at_ms": 65000, "action": "recalibrate", "expect_reply": "busy" },
+    { "at_ms": 100000, "expect": { "calibrated": true, "center_max": 0.05 } },
+    { "at_ms": 101000, "action": "recalibrate" }
   ]
 }

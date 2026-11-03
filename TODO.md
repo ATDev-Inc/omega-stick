@@ -123,7 +123,7 @@ Check `build-no-ota/sdkconfig` has `CONFIG_OMEGA_STICK_OTA` not set. See
 - [ ] On-device calibration gesture (CAL-2).
 - [ ] Console-driven capture calibration: the page shows the live reading and
       the user presses "set center" and "set <edge>" while holding the stick
-      there, at their own pace, instead of the timed 2 s sweep with invisible
+      there, at their own pace, instead of the timed 10 s sweep with invisible
       prompts. Fields stay editable afterwards and the usable-range rule from
       D26 still applies. Needs one new protocol message for a live reading.
       Proposed by Marshall on 2026-10-25 after a stick with a noise-sized

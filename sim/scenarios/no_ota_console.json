@@ -4,11 +4,11 @@
   "steps": [
     { "at_ms": 0, "pattern": "calibrate" },
     { "at_ms": 500, "action": "recalibrate" },
-    { "at_ms": 40000, "expect": { "calibrated": true, "fw_slot": "ota_0", "fw_pending": false } },
-    { "at_ms": 41000, "action": "fw_info", "expect_reply": "unsupported" },
-    { "at_ms": 42000, "action": "flash", "version": "9.9.9-sim", "expect_reply": "unsupported" },
-    { "at_ms": 43000, "action": "mark_valid", "expect_reply": "unsupported" },
-    { "at_ms": 44000, "action": "revert", "expect_reply": "unsupported" },
-    { "at_ms": 45000, "expect": { "fw_slot": "ota_0", "fw_pending": false, "calibrated": true } }
+    { "at_ms": 50000, "expect": { "calibrated": true, "fw_slot": "ota_0", "fw_pending": false } },
+    { "at_ms": 51000, "action": "fw_info", "expect_reply": "unsupported" },
+    { "at_ms": 52000, "action": "flash", "version": "9.9.9-sim", "expect_reply": "unsupported" },
+    { "at_ms": 53000, "action": "mark_valid", "expect_reply": "unsupported" },
+    { "at_ms": 54000, "action": "revert", "expect_reply": "unsupported" },
+    { "at_ms": 55000, "expect": { "fw_slot": "ota_0", "fw_pending": false, "calibrated": true } }
   ]
 }

@@ -9,6 +9,6 @@
     { "at_ms": 1200, "action": "set_deadzone", "value": { "center": -0.1, "range": 0.05 }, "expect_reply": "invalid" },
     { "at_ms": 1300, "action": "set_deadzone", "value": { "center": 0.1, "range": 0.05 } },
     { "at_ms": 1400, "action": "set_deadzone", "value": { "center": 0.5, "range": 0.1 } },
-    { "at_ms": 40000, "expect": { "calibrated": true } }
+    { "at_ms": 50000, "expect": { "calibrated": true } }
   ]
 }

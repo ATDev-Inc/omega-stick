@@ -4,15 +4,15 @@
   "steps": [
     { "at_ms": 0, "pattern": "calibrate" },
     { "at_ms": 500, "action": "recalibrate" },
-    { "at_ms": 40000, "expect": { "calibrated": true } },
-    { "at_ms": 41000, "next_image": "crash_when_confirmed" },
-    { "at_ms": 42000, "action": "flash", "version": "9.9.9-sim" },
-    { "at_ms": 50000, "expect": { "fw_slot": "ota_1", "fw_pending": true, "fw_version": "9.9.9-sim" } },
-    { "at_ms": 51000, "action": "mark_valid" },
-    { "at_ms": 52000, "expect": { "fw_slot": "ota_1", "fw_pending": false } },
-    { "at_ms": 53000, "action": "restart" },
-    { "at_ms": 60000, "expect": { "fw_slot": "ota_0", "fw_pending": false, "calibrated": true } },
-    { "at_ms": 200000, "expect": { "fw_slot": "ota_0", "fw_pending": false, "calibrated": true } },
-    { "at_ms": 260000, "expect": { "fw_slot": "ota_0", "fw_pending": false } }
+    { "at_ms": 50000, "expect": { "calibrated": true } },
+    { "at_ms": 51000, "next_image": "crash_when_confirmed" },
+    { "at_ms": 52000, "action": "flash", "version": "9.9.9-sim" },
+    { "at_ms": 60000, "expect": { "fw_slot": "ota_1", "fw_pending": true, "fw_version": "9.9.9-sim" } },
+    { "at_ms": 61000, "action": "mark_valid" },
+    { "at_ms": 62000, "expect": { "fw_slot": "ota_1", "fw_pending": false } },
+    { "at_ms": 63000, "action": "restart" },
+    { "at_ms": 70000, "expect": { "fw_slot": "ota_0", "fw_pending": false, "calibrated": true } },
+    { "at_ms": 210000, "expect": { "fw_slot": "ota_0", "fw_pending": false, "calibrated": true } },
+    { "at_ms": 270000, "expect": { "fw_slot": "ota_0", "fw_pending": false } }
   ]
 }

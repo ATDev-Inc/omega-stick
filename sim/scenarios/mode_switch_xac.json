@@ -4,15 +4,15 @@
   "steps": [
     { "at_ms": 0, "pattern": "calibrate" },
     { "at_ms": 500, "action": "recalibrate" },
-    { "at_ms": 40000, "expect": { "calibrated": true, "mode": "mouse" } },
-    { "at_ms": 41000, "action": "set_mode", "value": "xac" },
-    { "at_ms": 42000, "stick": [0.5, 0] },
-    { "at_ms": 45000, "expect": { "mode": "xac", "calibrated": true, "xac_x": 0.5, "xac_y": 0, "sensor_fault": false } },
-    { "at_ms": 45500, "stick": [0.5, 0] },
-    { "at_ms": 46000, "stick": [0, 0.5] },
-    { "at_ms": 47500, "stick": [0, 0.5] },
-    { "at_ms": 48000, "expect": { "xac_x": 0, "xac_y": 0.5 } },
-    { "at_ms": 49000, "action": "set_mode", "value": "mouse" },
-    { "at_ms": 52000, "expect": { "mode": "mouse" } }
+    { "at_ms": 50000, "expect": { "calibrated": true, "mode": "mouse" } },
+    { "at_ms": 51000, "action": "set_mode", "value": "xac" },
+    { "at_ms": 52000, "stick": [0.5, 0] },
+    { "at_ms": 55000, "expect": { "mode": "xac", "calibrated": true, "xac_x": 0.5, "xac_y": 0, "sensor_fault": false } },
+    { "at_ms": 55500, "stick": [0.5, 0] },
+    { "at_ms": 56000, "stick": [0, 0.5] },
+    { "at_ms": 57500, "stick": [0, 0.5] },
+    { "at_ms": 58000, "expect": { "xac_x": 0, "xac_y": 0.5 } },
+    { "at_ms": 59000, "action": "set_mode", "value": "mouse" },
+    { "at_ms": 62000, "expect": { "mode": "mouse" } }
   ]
 }
