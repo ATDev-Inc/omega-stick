@@ -440,8 +440,8 @@ public:
     /*
      * CONV_AVG is located in DEVICE_CONFIG_1.
      */
-    reg &= ~(0x07 << 4);
-    reg |= (static_cast<uint8_t>(average) & 0x07) << 4;
+    reg &= ~(0x07 << 2);
+    reg |= (static_cast<uint8_t>(average) & 0x07) << 2;
 
     write_u8_to_register(DEVICE_CONFIG_1, reg, ec);
 
@@ -460,7 +460,7 @@ public:
       return ConversionAverage::AVG_1;
     }
 
-    return static_cast<ConversionAverage>((reg >> 4) & 0x07);
+    return static_cast<ConversionAverage>((reg >> 2) & 0x07);
   }
 
   // ==========================================================================
