@@ -689,7 +689,7 @@
       <fieldset>
         <legend>Nudge-click tuning</legend>
         <div class="edit-row">
-          <label><input type="checkbox" id="nudgeEnabled" checked disabled> Nudge clicks</label>
+          <label><input type="checkbox" id="nudgeEnabled" disabled> Nudge clicks</label>
           <span class="muted">unchecked: the stick only moves the cursor, no clicks or scrolling. Applies live; the values below are kept</span>
         </div>
         <p class="muted" id="nudgeEnabledNote" style="margin: 0 0 8px;" hidden></p>
@@ -4373,7 +4373,7 @@
       checkLatest(true);
     }
 
-    function hex(buf) {
+    function hexDigest(buf) {
       return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
     }
     // Reads the response body up to `size` bytes, reporting progress. Returns a
@@ -4429,7 +4429,7 @@
         setStep("verify", "Checking the download...");
         if (bytes.length !== rel.size) throw { kind: "size" };
         if (!(globalThis.crypto && crypto.subtle)) throw { kind: "nohash" };
-        const digest = hex(await crypto.subtle.digest("SHA-256", bytes));
+        const digest = hexDigest(await crypto.subtle.digest("SHA-256", bytes));
         if (digest !== rel.sha256) throw { kind: "sha" };
       } catch (e) {
         clearTimeout(stall);

@@ -171,12 +171,22 @@ TEST(store_save_to_flash_persists_both_files) {
   CHECK(reloaded.settings().input_mode == OmegaStore::InputMode::XAC);
 }
 
+// A fresh board has no settings file: nudge clicks are off. A file from before
+// the switch (no key, see below) loads as on.
+TEST(device_settings_nudge_defaults_to_off) {
+  CHECK(!OmegaCalibration::DeviceSettings{}.nudge_enabled);
+  TempDir dir("store_nudge_fresh");
+  auto cfg = config_for(dir);
+  OmegaStore store(cfg);
+  CHECK(!store.settings().nudge_enabled);
+}
+
 TEST(store_nudge_enabled_saves_and_loads) {
   TempDir dir("store_nudge_enabled");
   auto cfg = config_for(dir);
   {
     OmegaStore store(cfg);
-    CHECK(store.settings().nudge_enabled); // default on
+    CHECK(!store.settings().nudge_enabled); // default off
     store.set_nudge_settings(0.3f, 0.6f, std::chrono::milliseconds(80));
     store.set_nudge_enabled(false);
     CHECK(!store.settings().nudge_enabled);

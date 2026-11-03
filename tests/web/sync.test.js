@@ -79,3 +79,20 @@ test("the hidden update controls do not contain the update result or the version
     assert.ok(ancestors[id].includes("fwControls"), "#" + id + " should be inside #fwControls");
   }
 });
+
+test("no function name is declared twice at the same indent in one script block", () => {
+  // A second `function hex` once silently replaced the first, so the frame
+  // log dumped whole OTA chunks. Same-indent duplicates share a scope here.
+  const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)];
+  assert.ok(scripts.length > 0, "no <script> block found");
+  const dups = [];
+  scripts.forEach((m, i) => {
+    const seen = new Set();
+    for (const d of m[1].matchAll(/^( *)(?:async +)?function\s+([A-Za-z_$][\w$]*)/gm)) {
+      const key = d[1].length + ":" + d[2];
+      if (seen.has(key)) dups.push("script " + i + ": " + d[2]);
+      seen.add(key);
+    }
+  });
+  assert.deepEqual(dups, []);
+});
