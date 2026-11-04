@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "name": "a good update that the host never confirms is rolled back at the deadline",
+  "steps": [
+    { "at_ms": 0, "pattern": "calibrate" },
+    { "at_ms": 500, "action": "recalibrate" },
+    { "at_ms": 40000, "expect": { "calibrated": true } },
+    { "at_ms": 42000, "action": "flash", "version": "9.9.9-sim" },
+    { "at_ms": 50000, "expect": { "fw_slot": "ota_1", "fw_pending": true, "fw_version": "9.9.9-sim", "sensor_fault": false } },
+    { "at_ms": 120000, "expect": { "fw_slot": "ota_1", "fw_pending": true } },
+    { "at_ms": 190000, "expect": { "fw_slot": "ota_0", "fw_pending": false, "calibrated": true } }
+  ]
+}

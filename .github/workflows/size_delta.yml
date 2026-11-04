@@ -24,7 +24,7 @@ jobs:
     # This action does its own checkout and builds both HEAD and the base ref,
     # so no checkout step is needed here.
     - name: Determine Size Delta
-      uses: esp-cpp/esp-idf-size-delta@v1
+      uses: esp-cpp/esp-idf-size-delta@fb63ac752301845b16670ed609f04e443b3cb354 # v1.2.4
       with:
         app_name: ${{ env.APP_NAME }}
         app_path: "."

@@ -11,6 +11,7 @@
 // control loop's own reads.
 
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <mutex>
@@ -83,12 +84,10 @@ public:
 
   /// Loads calibration + settings from flash if present. A missing or
   /// unparseable file is logged and left at that struct's default-
-  /// constructed values -- exactly the "no usable cached calibration"
-  /// fallback the interactive calibration flow already handles; the
-  /// application is responsible for then running an interactive
-  /// calibration (as before OmegaStore existed) when center()/range() come
-  /// back at their defaults, and can push the result in via
-  /// set_calibration().
+  /// constructed values; a calibration file that parses but fails
+  /// OmegaCalibration::check_usable() keeps what the file says. Either way
+  /// the application loads the calibration itself, decides whether it is
+  /// usable, and pushes what it runs with in via set_calibration().
   explicit OmegaStore(const Config &config)
       : BaseComponent("OmegaStore", config.log_level)
       , calibration_path_(config.calibration_path)
@@ -103,6 +102,13 @@ public:
     if (!DeviceSettings::load(settings_, settings_path_, ec)) {
       logger_.info("no usable cached settings ({}); settings left at defaults", ec.message());
     }
+    // A saved override outside the limits the service enforces (hand-edited
+    // file, or saved by firmware that did not check) would suppress normal
+    // travel on every boot, so fall back to the calibration-derived value.
+    drop_out_of_range_override(settings_.manual_center_deadzone,
+                               OmegaCalibration::MAX_CENTER_DEADZONE, "center");
+    drop_out_of_range_override(settings_.manual_range_deadzone,
+                               OmegaCalibration::MAX_RANGE_DEADZONE, "range");
   }
 
   /// A consistent, point-in-time copy of everything (center + range +
@@ -132,14 +138,34 @@ public:
     return settings_;
   }
 
-  /// Replaces center/range outright -- e.g. right after an interactive
-  /// recalibration (center_calibration() + range_calibration() +
-  /// finalize_center_deadzone(), run from the main task or a console
-  /// command). Fires on_calibration_changed().
+  /// Replaces center/range outright, manual offsets included -- e.g. at
+  /// boot, after loading or running the first calibration. The control
+  /// loop uses set_measured_calibration() instead. Fires
+  /// on_calibration_changed().
   void set_calibration(const CenterResult &center, const RangeResult &range) {
     {
       std::lock_guard<std::mutex> lock(mutex_);
       center_ = center;
+      range_ = range;
+    }
+    if (on_calibration_changed_) {
+      on_calibration_changed_();
+    }
+  }
+
+  /// Replaces the measured center/range but keeps the live manual offsets.
+  /// For the control loop (drift correction, console-triggered
+  /// recalibration): its local CenterResult can hold offsets older than a
+  /// SET_MANUAL_OFFSET the console has since applied, and copying it
+  /// wholesale would silently revert that trim. Read center() back
+  /// afterwards to pick up the live offsets. Fires on_calibration_changed().
+  void set_measured_calibration(const CenterResult &center, const RangeResult &range) {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      const float offset_x = center_.manual_offset_x;
+      const float offset_y = center_.manual_offset_y;
+      center_ = center;
+      OmegaCalibration::set_manual_offset(center_, offset_x, offset_y);
       range_ = range;
     }
     if (on_calibration_changed_) {
@@ -186,11 +212,22 @@ public:
     settings_.nudge_hold_time = time_window;
   }
 
+  /// Turns nudge clicks on or off live, keeping the tuning values. No
+  /// change-notification is fired: the control loop reads settings() every
+  /// iteration and releases a held nudge as soon as it sees false.
+  void set_nudge_enabled(bool enabled) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    settings_.nudge_enabled = enabled;
+  }
+
   /// Sets the input mode live and fires on_mode_changed() (outside the
-  /// lock) so the application can act on it -- see ModeChangedFn.
+  /// lock) so the application can act on it -- see ModeChangedFn. Setting
+  /// the mode that is already active does nothing.
   void set_input_mode(InputMode mode) {
     {
       std::lock_guard<std::mutex> lock(mutex_);
+      if (settings_.input_mode == mode)
+        return;
       settings_.input_mode = mode;
     }
     if (on_mode_changed_) {
@@ -223,6 +260,13 @@ private:
   mutable std::mutex mutex_;
   CenterResult center_{};
   RangeResult range_{};
+  void drop_out_of_range_override(std::optional<float> &value, float max, const char *name) {
+    if (value && !(std::isfinite(*value) && *value >= 0.0f && *value <= max)) {
+      logger_.warn("ignoring saved {} deadzone override {} (allowed 0..{})", name, *value, max);
+      value.reset();
+    }
+  }
+
   DeviceSettings settings_{};
   std::filesystem::path calibration_path_;
   std::filesystem::path settings_path_;

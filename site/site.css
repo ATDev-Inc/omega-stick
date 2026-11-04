@@ -1,0 +1,99 @@
+/* Shared styles for the Omega Stick site. The colour variables are the same
+   ones calibration_console.html uses, so the pages look like one tool. */
+:root {
+  --bg: #f4f6f9;
+  --panel-bg: #ffffff;
+  --panel-border: #d9dee6;
+  --text: #1c2330;
+  --text-muted: #5c6675;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-contrast: #ffffff;
+  --danger: #dc2626;
+  --ok: #16a34a;
+  --warn: #b45309;
+  --chip-bg: #eef2f8;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0e14;
+    --panel-bg: #151a23;
+    --panel-border: #262d3a;
+    --text: #e6eaf2;
+    --text-muted: #98a2b3;
+    --accent: #3b82f6;
+    --accent-hover: #60a5fa;
+    --accent-contrast: #0b0e14;
+    --danger: #ef4444;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+    --chip-bg: #1b2230;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.55;
+  min-height: 100vh;
+}
+.wrap { max-width: 760px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 22px; margin: 8px 0 4px; }
+h2 { font-size: 18px; margin: 0 0 8px; }
+p, ul, ol { margin: 0 0 10px; }
+li { margin-bottom: 6px; }
+a { color: var(--accent); }
+a:hover { color: var(--accent-hover); }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.muted { color: var(--text-muted); }
+.panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 14px 0;
+  box-shadow: var(--shadow);
+}
+.panel.warn { border-left: 6px solid var(--warn); }
+.chip {
+  display: inline-block;
+  background: var(--chip-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 14px;
+}
+.btn {
+  display: inline-block;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border: 0;
+  border-radius: 6px;
+  padding: 12px 20px;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn:hover { background: var(--accent-hover); color: var(--accent-contrast); }
+kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--chip-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+.skip {
+  position: absolute;
+  left: -999px;
+  top: 0;
+  background: var(--panel-bg);
+  padding: 8px 12px;
+}
+.skip:focus { left: 8px; top: 8px; z-index: 10; }

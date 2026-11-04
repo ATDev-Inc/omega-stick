@@ -1,0 +1,3 @@
+# Requests reviews from the maintainers on pull requests.
+# This does not block merges unless branch protection requires code-owner review.
+*  @owenpkent @msaltz-atdev

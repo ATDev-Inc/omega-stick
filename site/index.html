@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Omega Stick</title>
+  <meta name="description" content="Tune and update an Omega Stick joystick from your browser.">
+  <link rel="stylesheet" href="site.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to main content</a>
+  <div class="wrap">
+    <header>
+      <h1>Omega Stick</h1>
+      <p class="muted">An open, low-force joystick for people who cannot use a standard mouse.
+        <span id="version" class="chip" hidden></span></p>
+    </header>
+
+    <main id="main">
+      <section class="panel" aria-labelledby="h-console">
+        <h2 id="h-console">Calibrate, tune, or update your stick</h2>
+        <p>The console connects to a stick that is already running Omega Stick firmware.
+          Use it to calibrate, change settings, and install new firmware. Updates from the
+          console keep your calibration.</p>
+        <p><a class="btn" href="console/">Open the console</a></p>
+      </section>
+
+      <section class="panel" aria-labelledby="h-flash">
+        <h2 id="h-flash">First install or recovery</h2>
+        <p>A new board, or a stick that no longer connects to the console, needs the firmware
+          written from scratch. This erases the calibration and settings.</p>
+        <p><a class="btn" href="flash.html">Open the first-flash page</a></p>
+      </section>
+
+      <section class="panel" aria-labelledby="h-more">
+        <h2 id="h-more">More</h2>
+        <ul>
+          <li><a href="https://github.com/ATDev-Inc/omega-stick/releases">All releases and release notes</a></li>
+          <li><a href="https://github.com/ATDev-Inc/omega-stick">Source code and documentation</a></li>
+        </ul>
+        <p class="muted">The console and the first-flash page need desktop Chrome or Edge,
+          because they talk to the stick over USB from the browser.</p>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    // Show the latest released version. The page works without it.
+    fetch("firmware/latest.json", { cache: "no-cache" })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (f) {
+        var el = document.getElementById("version");
+        el.textContent = "Latest firmware " + f.version;
+        el.hidden = false;
+      })
+      .catch(function () {});
+  </script>
+</body>
+</html>

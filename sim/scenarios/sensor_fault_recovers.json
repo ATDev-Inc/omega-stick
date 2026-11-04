@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "a missing sensor gives a fault and a neutral output, and recovery restores it",
+  "steps": [
+    { "at_ms": 0, "pattern": "calibrate" },
+    { "at_ms": 500, "action": "recalibrate" },
+    { "at_ms": 40000, "expect": { "calibrated": true } },
+    { "at_ms": 41000, "stick": [0.8, 0] },
+    { "at_ms": 42000, "fault": "no_response" },
+    { "at_ms": 42100, "expect": { "sensor_fault": true } },
+    { "at_ms": 43000, "expect": { "sensor_fault": true, "neutral": true, "mouse_moved": "none" } },
+    { "at_ms": 43100, "fault": "ok" },
+    { "at_ms": 43500, "expect": { "sensor_fault": false } },
+    { "at_ms": 44000, "stick": [0.8, 0] },
+    { "at_ms": 47000, "stick": [0.8, 0] },
+    { "at_ms": 47500, "expect": { "sensor_fault": false, "mouse_moved": "right" } }
+  ]
+}
