@@ -201,12 +201,19 @@ async function main() {
   await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: rect.x, y: upY, button: "left", buttons: 0, clickCount: 1 });
   await sleep(500);
   await click("simClearOutBtn");
+  // Nudge clicks are off on a fresh board (#102), so the console switch must be
+  // unchecked here. Turn them on through the console before nudging.
+  const nudgeOffByDefault = !(await ev($("nudgeEnabled") + ".checked"));
+  await setChecked("nudgeEnabled", true);
+  await waitLog("nudge clicks on", /Nudge clicks turned on live/, 8000);
+  await waitEnabled("nudgeEnabled");
   await pattern("nudge_right");
   await waitFor("a click indicator", async () => /Last click: (left|right)/.test(await text("simLastClick")), 8000).catch(() => { });
   const click1 = await text("simLastClick");
-  check("b", "stick right moves the dot right, pushing up moves it up (negative dy), a nudge clicks",
-    b1 && b1.dx > b0.dx + 3 && b2 && b2.dy < -3 && /Last click: (left|right)/.test(click1),
-    "right: dx " + b0.dx + " -> " + (b1 && b1.dx) + "; up: " + stickText + ", totals " + JSON.stringify(b2) + "; nudge: " + click1);
+  check("b", "stick right moves the dot right, pushing up moves it up (negative dy), nudge is off by default and clicks once turned on",
+    b1 && b1.dx > b0.dx + 3 && b2 && b2.dy < -3 && nudgeOffByDefault && /Last click: (left|right)/.test(click1),
+    "right: dx " + b0.dx + " -> " + (b1 && b1.dx) + "; up: " + stickText + ", totals " + JSON.stringify(b2) +
+    "; nudge off by default: " + nudgeOffByDefault + "; nudge: " + click1);
   await sleep(1500);
   await click("simStopBtn");
 
