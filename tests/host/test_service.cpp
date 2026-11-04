@@ -1380,6 +1380,39 @@ TEST(service_position_stream_is_a_lease) {
   CHECK(fx.service.position_stream_active(before + milliseconds(9999)));
 }
 
+TEST(service_unsolicited_frames_use_their_own_send_hook) {
+  // Progress and position frames go through Config::send_unsolicited (which may
+  // drop them under backpressure); replies keep using Config::send.
+  TempDir dir("svc_unsolicited");
+  OmegaStore::Config cfg;
+  cfg.calibration_path = dir.file("omega_calibration.cfg");
+  cfg.settings_path = dir.file("omega_settings.cfg");
+  OmegaStore store(cfg);
+  std::vector<uint8_t> replies, pushed;
+  CalibrationService svc({.store = store,
+                          .send =
+                              [&](std::span<const uint8_t> f) {
+                                replies.assign(f.begin(), f.end());
+                                return true;
+                              },
+                          .send_unsolicited =
+                              [&](std::span<const uint8_t> f) {
+                                pushed.assign(f.begin(), f.end());
+                                return false; // dropped: never retried, never logged
+                              }});
+  svc.notify_calibration_progress(sample_progress());
+  CHECK(replies.empty());
+  const auto progress = support::decode_one(pushed);
+  CHECK(progress.has_value());
+  CHECK(is(*progress, Msg::CalibrationProgress));
+  pushed.clear();
+  CHECK(svc.handle_frame(static_cast<uint8_t>(Msg::GetState), {}));
+  CHECK(pushed.empty());
+  const auto reply = support::decode_one(replies);
+  CHECK(reply.has_value());
+  CHECK(is(*reply, Msg::State));
+}
+
 TEST(service_notify_position_sends_only_while_the_lease_runs) {
   Fixture fx("svc_position_notify");
   using std::chrono::milliseconds;

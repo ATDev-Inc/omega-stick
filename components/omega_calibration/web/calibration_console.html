@@ -3586,7 +3586,7 @@
       ctx.lineWidth = 1; ctx.strokeStyle = line;
       ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy); ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R); ctx.stroke();
-      if (!pr) return;
+      if (!pr) { delete cv.dataset.dotDx; delete cv.dataset.dotDy; return; }
       if (calViz.stage !== pr.stage) calViz = { stage: pr.stage, extent: 0, ref: null };
       // Reference point: the measured center when known, else the first raw sample of this stage.
       let refX = 0, refY = 0;
@@ -3607,22 +3607,26 @@
       if (need > calViz.extent * 0.92) calViz.extent = Math.max(need * 1.25, 0.02);
       const ext = calViz.extent || 0.02;
       const px = (u) => (u / ext) * R;
-      const toX = (u) => cx + px(u), toY = (v) => cy - px(v);
+      // Raw sensor y grows toward the user (pushing the stick up/forward makes it
+      // negative, as the mouse path's negative dy does), which is also the canvas
+      // y direction, so no flip: up on the stick is up on the screen. The sector
+      // angles below follow the same rule (firmware atan2(dy, dx), 0 at +x, clockwise on screen).
+      const toX = (u) => cx + px(u), toY = (v) => cy + px(v);
       const n = pr.sectorCount || pr.sectors.length || 32;
       const floorPx = Math.max(12, px(noise3));
       // Sector ring: outline for every sector, filled out to its max radius when covered.
       for (let i = 0; i < n; i++) {
-        const a0 = -(i * 2 * Math.PI / n), a1 = -((i + 1) * 2 * Math.PI / n);
+        const a0 = i * 2 * Math.PI / n, a1 = (i + 1) * 2 * Math.PI / n;
         const covered = ((pr.coveredMask >>> i) & 1) === 1;
         const rr = covered ? Math.min(R, Math.max(floorPx + 3, px(pr.sectors[i] || 0))) : R;
         if (covered) {
           ctx.beginPath();
-          ctx.arc(cx, cy, floorPx, a0, a1, true); ctx.arc(cx, cy, rr, a1, a0, false); ctx.closePath();
+          ctx.arc(cx, cy, floorPx, a0, a1, false); ctx.arc(cx, cy, rr, a1, a0, true); ctx.closePath();
           ctx.fillStyle = pr.coverageComplete ? ok : accent; ctx.globalAlpha = 0.55; ctx.fill(); ctx.globalAlpha = 1;
         }
         if (pr.stage >= 5 && pr.stage <= 7) {
           ctx.beginPath();
-          ctx.arc(cx, cy, floorPx, a0, a1, true); ctx.arc(cx, cy, R, a1, a0, false); ctx.closePath();
+          ctx.arc(cx, cy, floorPx, a0, a1, false); ctx.arc(cx, cy, R, a1, a0, true); ctx.closePath();
           ctx.lineWidth = 0.75; ctx.strokeStyle = covered ? (pr.coverageComplete ? ok : accent) : fg; ctx.stroke();
         }
       }
@@ -3642,6 +3646,8 @@
       }
       // The stick itself.
       const sx = Math.min(W - 6, Math.max(6, toX(dotX))), sy = Math.min(W - 6, Math.max(6, toY(dotY)));
+      // Where the dot was drawn, relative to the center, for the e2e check.
+      cv.dataset.dotDx = String(Math.round(sx - cx)); cv.dataset.dotDy = String(Math.round(sy - cy));
       ctx.beginPath(); ctx.arc(sx, sy, 7, 0, Math.PI * 2);
       if (pr.rawValid) { ctx.fillStyle = accent; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = cssVar("--panel-bg", "#fff"); ctx.stroke(); }
       else { ctx.lineWidth = 2; ctx.strokeStyle = warn; ctx.stroke(); }

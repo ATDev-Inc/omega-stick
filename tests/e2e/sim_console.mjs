@@ -201,6 +201,16 @@ async function main() {
   await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: rect.x, y: upY, button: "left", buttons: 0, clickCount: 1 });
   await sleep(500);
   await click("simClearOutBtn");
+  // Live stick view: pushing up must draw the dot above the center (up on the
+  // stick is up on the screen). The lease is renewed only while the canvas is
+  // on screen, so bring it into view first; the pad keeps keyboard focus.
+  await ev($("calCanvas") + ".scrollIntoView({block:'center'})");
+  await waitFor("live stick dot", async () => (await ev($("calCanvas") + ".dataset.dotDy")) !== undefined, 8000).catch(() => { });
+  await key("ArrowUp", 10);
+  await waitFor("dot above center", async () => Number(await ev($("calCanvas") + ".dataset.dotDy")) < -3, 8000).catch(() => { });
+  const dotDyUp = await ev($("calCanvas") + ".dataset.dotDy");
+  await key("Home");
+  await sleep(300);
   // Nudge clicks are off on a fresh board (#102), so the console switch must be
   // unchecked here. Turn them on through the console before nudging.
   const nudgeOffByDefault = !(await ev($("nudgeEnabled") + ".checked"));
@@ -210,10 +220,11 @@ async function main() {
   await pattern("nudge_right");
   await waitFor("a click indicator", async () => /Last click: (left|right)/.test(await text("simLastClick")), 8000).catch(() => { });
   const click1 = await text("simLastClick");
-  check("b", "stick right moves the dot right, pushing up moves it up (negative dy), nudge is off by default and clicks once turned on",
-    b1 && b1.dx > b0.dx + 3 && b2 && b2.dy < -3 && nudgeOffByDefault && /Last click: (left|right)/.test(click1),
+  check("b", "stick right moves the dot right, pushing up moves it up (negative dy) and draws the live dot above center, nudge is off by default and clicks once turned on",
+    b1 && b1.dx > b0.dx + 3 && b2 && b2.dy < -3 && Number(dotDyUp) < -3 && nudgeOffByDefault &&
+    /Last click: (left|right)/.test(click1),
     "right: dx " + b0.dx + " -> " + (b1 && b1.dx) + "; up: " + stickText + ", totals " + JSON.stringify(b2) +
-    "; nudge off by default: " + nudgeOffByDefault + "; nudge: " + click1);
+    "; live dot dy when up: " + dotDyUp + "; nudge off by default: " + nudgeOffByDefault + "; nudge: " + click1);
   await sleep(1500);
   await click("simStopBtn");
 

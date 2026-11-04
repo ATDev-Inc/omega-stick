@@ -515,6 +515,9 @@ std::string boot(Host &host, int reset_reason) {
   espp::CalibrationService::Config calibration_cfg{
       .store = store,
       .send = transmit,
+      // sim: the WebSocket send never waits for buffer room, so unsolicited frames
+      // take the same path (main.cpp drops them when the USB FIFO is full).
+      .send_unsolicited = transmit,
       .start_calibration =
           [&recalibration_gate](std::error_code &start_ec) {
             return recalibration_gate.request(start_ec);

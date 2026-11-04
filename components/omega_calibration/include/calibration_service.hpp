@@ -499,6 +499,12 @@ public:
     /// the service then drops any action the request deferred until after
     /// its reply, since the host never saw that reply.
     send_fn send{nullptr};
+    /// Transmits an unsolicited frame (CALIBRATION_PROGRESS from the sweep and
+    /// the leased position stream). Optional: defaults to `send`. These frames
+    /// come from the control loop 20 times a second and no host may be reading
+    /// the link, so the hook should drop a frame that does not fit the
+    /// transport's buffer instead of waiting for room (see main.cpp).
+    send_fn send_unsolicited{nullptr};
     /// Dispatcher module id this instance answers on (and stamps on its
     /// replies). Defaults to kModule (5). `calibration_console.html` finds
     /// the service by its protocol id (kProtocol) through discovery and uses
@@ -569,6 +575,7 @@ public:
       : BaseComponent("CalibrationService", config.log_level)
       , store_(config.store)
       , send_(config.send)
+      , send_unsolicited_(config.send_unsolicited ? config.send_unsolicited : config.send)
       , module_(config.module)
       , start_calibration_(config.start_calibration)
       , finish_calibration_(config.finish_calibration)
@@ -1387,8 +1394,8 @@ protected:
   /// transport and ignores a refusal: no host may have this link open, and a
   /// log line per refused frame would flood the console 20 times a second.
   void send_quietly(const std::vector<uint8_t> &frame) {
-    if (send_) {
-      send_(frame);
+    if (send_unsolicited_) {
+      send_unsolicited_(frame);
     }
   }
 
@@ -1489,7 +1496,8 @@ private:
 
   OmegaStore &store_;
   send_fn send_;
-  const uint8_t module_; // Config::module: routing id for requests + replies
+  send_fn send_unsolicited_; // Config::send_unsolicited, or send_ when not set
+  const uint8_t module_;     // Config::module: routing id for requests + replies
   std::function<bool(std::error_code &ec)> start_calibration_; // Config::start_calibration
   std::function<bool()> finish_calibration_;                   // Config::finish_calibration
   diagnostics_fn diagnostics_;                                 // Config::diagnostics

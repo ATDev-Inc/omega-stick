@@ -873,15 +873,42 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     // One sender per link, shared by the service and its worker. Both USB
     // writes are fail-fast, and the bool tells the service whether a reply
     // was queued.
+    // write_vendor() has no lock of its own (write_cdc() does): the dispatcher
+    // worker's replies and the control loop's progress/position frames share
+    // the vendor TX FIFO, so serialise them here or the frames interleave.
+    static std::mutex vendor_tx_mutex;
     auto send_vendor = [](std::span<const uint8_t> frame) {
-      return usb_ptr && usb_ptr->write_vendor(frame);
+      if (!usb_ptr)
+        return false;
+      std::lock_guard<std::mutex> lock(vendor_tx_mutex);
+      return usb_ptr->write_vendor(frame);
     };
     auto send_cdc = [](std::span<const uint8_t> frame) {
       return usb_ptr && usb_ptr->write_cdc(frame);
     };
+    // Unsolicited frames (CALIBRATION_PROGRESS, live positions) are sent from
+    // the control loop whether or not a host reads the link. A write that
+    // waits for FIFO room would block that loop ~250 ms per frame when no
+    // host is reading (console on Web Serial, tab closed, no console), so a
+    // frame that does not fit right now is dropped instead. The FIFO holds
+    // a whole frame (CONFIG_TINYUSB_VENDOR_TX_BUFSIZE in sdkconfig.defaults).
+    auto send_vendor_unsolicited = [](std::span<const uint8_t> frame) {
+      if (!usb_ptr)
+        return false;
+      std::lock_guard<std::mutex> lock(vendor_tx_mutex);
+      if (usb_ptr->vendor_write_available() < frame.size())
+        return false;
+      return usb_ptr->write_vendor(frame);
+    };
+    auto send_cdc_unsolicited = [](std::span<const uint8_t> frame) {
+      if (!usb_ptr || usb_ptr->cdc_write_available() < frame.size())
+        return false;
+      return usb_ptr->write_cdc(frame);
+    };
     espp::CalibrationService::Config calibration_cfg{
         .store = store,
         .send = send_vendor,
+        .send_unsolicited = send_vendor_unsolicited,
         .start_calibration =
             [&recalibration_gate](std::error_code &start_ec) {
               return recalibration_gate.request(start_ec);
@@ -903,6 +930,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     };
     espp::CalibrationService calibration_vendor(calibration_cfg);
     calibration_cfg.send = send_cdc;
+    calibration_cfg.send_unsolicited = send_cdc_unsolicited;
     espp::CalibrationService calibration_cdc(calibration_cfg);
     espp::DispatcherWorker vendor_link({
         .send = send_vendor,
@@ -1048,15 +1076,42 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     // One sender per link, shared by the service and its worker. Both USB
     // writes are fail-fast, and the bool tells the service whether a reply
     // was queued.
+    // write_vendor() has no lock of its own (write_cdc() does): the dispatcher
+    // worker's replies and the control loop's progress/position frames share
+    // the vendor TX FIFO, so serialise them here or the frames interleave.
+    static std::mutex vendor_tx_mutex;
     auto send_vendor = [](std::span<const uint8_t> frame) {
-      return usb_ptr && usb_ptr->write_vendor(frame);
+      if (!usb_ptr)
+        return false;
+      std::lock_guard<std::mutex> lock(vendor_tx_mutex);
+      return usb_ptr->write_vendor(frame);
     };
     auto send_cdc = [](std::span<const uint8_t> frame) {
       return usb_ptr && usb_ptr->write_cdc(frame);
     };
+    // Unsolicited frames (CALIBRATION_PROGRESS, live positions) are sent from
+    // the control loop whether or not a host reads the link. A write that
+    // waits for FIFO room would block that loop ~250 ms per frame when no
+    // host is reading (console on Web Serial, tab closed, no console), so a
+    // frame that does not fit right now is dropped instead. The FIFO holds
+    // a whole frame (CONFIG_TINYUSB_VENDOR_TX_BUFSIZE in sdkconfig.defaults).
+    auto send_vendor_unsolicited = [](std::span<const uint8_t> frame) {
+      if (!usb_ptr)
+        return false;
+      std::lock_guard<std::mutex> lock(vendor_tx_mutex);
+      if (usb_ptr->vendor_write_available() < frame.size())
+        return false;
+      return usb_ptr->write_vendor(frame);
+    };
+    auto send_cdc_unsolicited = [](std::span<const uint8_t> frame) {
+      if (!usb_ptr || usb_ptr->cdc_write_available() < frame.size())
+        return false;
+      return usb_ptr->write_cdc(frame);
+    };
     espp::CalibrationService::Config calibration_cfg{
         .store = store,
         .send = send_vendor,
+        .send_unsolicited = send_vendor_unsolicited,
         .start_calibration =
             [&recalibration_gate](std::error_code &start_ec) {
               return recalibration_gate.request(start_ec);
@@ -1078,6 +1133,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     };
     espp::CalibrationService calibration_vendor(calibration_cfg);
     calibration_cfg.send = send_cdc;
+    calibration_cfg.send_unsolicited = send_cdc_unsolicited;
     espp::CalibrationService calibration_cdc(calibration_cfg);
     espp::DispatcherWorker vendor_link({
         .send = send_vendor,
