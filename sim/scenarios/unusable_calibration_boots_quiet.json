@@ -13,6 +13,7 @@
     { "at_ms": 46000, "expect": { "neutral": true, "mouse_moved": "none" } },
     { "at_ms": 46500, "stick": [0, 0] },
     { "at_ms": 47000, "action": "recalibrate" },
+    { "at_ms": 70000, "action": "finish_calibration" },
     { "at_ms": 80000, "expect": { "calibrated": false, "needs_calibration": true } },
     { "at_ms": 80500, "stick": [0.6, 0] },
     { "at_ms": 82000, "expect": { "neutral": true, "mouse_moved": "none" } },
