@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Omega Stick first flash</title>
+  <meta name="description" content="Install Omega Stick firmware on a new or unresponsive board from your browser.">
+  <link rel="stylesheet" href="site.css">
+  <style>
+    .steps li { margin-bottom: 10px; }
+    #unsupported { display: none; }
+    .no-serial #unsupported { display: block; }
+    .no-serial #install-panel { display: none; }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to main content</a>
+  <div class="wrap">
+    <header>
+      <p><a href="./">Omega Stick home</a></p>
+      <h1>First flash and recovery</h1>
+      <p class="muted">Write Omega Stick firmware onto a board from your browser. No software to install.</p>
+    </header>
+
+    <main id="main">
+      <section class="panel warn" aria-labelledby="h-when">
+        <h2 id="h-when">Use this page only if you need to</h2>
+        <ul>
+          <li><strong>Use this page</strong> for a brand new board, to install the first version that updates over USB, or for a stick that will not connect to the console at all.</li>
+          <li>If the <a href="console/">console</a> offers a firmware update for your stick, use that
+            instead. It keeps your calibration and settings.</li>
+          <li><strong>This erases everything on the board</strong>, including calibration and saved
+            settings. Calibrate again from the console afterwards (step 3).</li>
+        </ul>
+      </section>
+
+      <section class="panel" id="unsupported" role="alert" aria-labelledby="h-browser">
+        <h2 id="h-browser">This browser cannot talk to USB devices</h2>
+        <p>Open this page in Chrome or Edge on a desktop or laptop (Windows, macOS, Linux, or ChromeOS).
+          Firefox, Safari, and phone browsers do not support the Web Serial feature this page needs.</p>
+      </section>
+
+      <section class="panel" aria-labelledby="h-prep">
+        <h2 id="h-prep">Step 1: put the board in download mode</h2>
+        <p>A blank board usually enters download mode by itself, but doing these steps does no harm.
+          A board that already has firmware needs them: its USB port is busy acting as a mouse,
+          so you have to ask the chip to wait for new firmware.</p>
+        <p><strong>No buttons needed if the board waits at start-up.</strong> Firmware built with the
+          flashing window (a developer setting, off in releases) keeps the serial port open for the
+          first seconds after plug-in, and the installer can take the board into download mode by
+          itself. If you know the board has it: unplug, plug back in, and choose
+          <strong>Connect and install</strong> within that window. If the mouse comes back first,
+          use the buttons below.</p>
+        <p><strong>Never plug or unplug the sensor cable (the small Qwiic connector) while the board
+          has power.</strong> Those connectors do not connect power in a safe order and can damage
+          the board. Unplug USB first, change cables, then plug USB back in.</p>
+        <p>The board has two small buttons, labelled <kbd>BOOT</kbd> and <kbd>RESET</kbd>. On the
+          QT Py ESP32-S3 they sit side by side on the top of the board next to the USB-C connector:
+          <kbd>BOOT</kbd> is the one nearer the USB-C connector, <kbd>RESET</kbd> the one nearer the
+          small LED and the sensor connector.</p>
+        <ol class="steps">
+          <li>Plug the board into your computer with a USB cable that carries data (some cables only charge).</li>
+          <li>Press and hold <kbd>BOOT</kbd>.</li>
+          <li>While still holding <kbd>BOOT</kbd>, press and release <kbd>RESET</kbd>.</li>
+          <li>Let go of <kbd>BOOT</kbd>.</li>
+        </ol>
+        <p>No <kbd>RESET</kbd> button, or that did not work? Unplug the board, hold <kbd>BOOT</kbd>,
+          plug it in while holding, then let go.</p>
+        <p class="muted">The board will look inactive: no mouse movement and usually no light.
+          That is normal in download mode. Your computer may play its USB connect sound and the
+          board will show up as a serial device (often named &ldquo;USB JTAG/serial debug unit&rdquo;).</p>
+      </section>
+
+      <section class="panel" id="install-panel" aria-labelledby="h-install">
+        <h2 id="h-install">Step 2: install</h2>
+        <p>Firmware to install: <span id="version" class="chip">checking the latest version...</span>
+          <span id="notes"></span></p>
+        <esp-web-install-button manifest="firmware/manifest.json">
+          <button slot="activate" class="btn" type="button">Connect and install</button>
+          <span slot="unsupported">This browser does not support Web Serial. Use Chrome or Edge on a desktop.</span>
+          <span slot="not-allowed">This page must be opened over HTTPS to install firmware.</span>
+        </esp-web-install-button>
+        <ol class="steps">
+          <li>Choose <strong>Connect and install</strong>. Your browser shows a list of serial ports.</li>
+          <li>Pick the one for your board (see below if the list is empty), then choose Connect. In download
+            mode the board appears under a different port name from the one the console uses.</li>
+          <li>Choose <strong>Install Omega Stick</strong>. The installer erases the board, then writes the firmware.</li>
+          <li>Wait for it to finish. It takes about a minute. Do not unplug the board.</li>
+          <li>Unplug the board and plug it back in. It starts with no calibration, so the stick stays
+            still: no cursor or gamepad movement until you calibrate it in step 3.</li>
+        </ol>
+      </section>
+
+      <section class="panel" aria-labelledby="h-calibrate">
+        <h2 id="h-calibrate">Step 3: calibrate</h2>
+        <p>A freshly flashed stick holds its output still until it has a calibration. The console says so
+          next to the calibration controls. Calibrate it now:</p>
+        <ol class="steps">
+          <li>Open the <a href="console/">console</a> and connect with Web Serial, which shows the prompts.</li>
+          <li>Choose <strong>Re-run calibration</strong> and follow them: leave the stick untouched while the
+            center is measured, then move it slowly through a complete circle, reaching its limit in every
+            direction.</li>
+        </ol>
+      </section>
+
+      <section class="panel" aria-labelledby="h-help">
+        <h2 id="h-help">If something goes wrong</h2>
+        <ul>
+          <li><strong>The port list is empty.</strong> Repeat step 1 and try a different USB cable or port.
+            Most failures are charge-only cables.</li>
+          <li><strong>Linux:</strong> your user may need permission for the device (usually the
+            <code>dialout</code> group), then log out and in again.</li>
+          <li><strong>Windows:</strong> if the board does not appear after entering download mode,
+            try another USB port. Close other programs that may be holding the port, such as a serial monitor.</li>
+          <li><strong>It stopped partway.</strong> The board is not harmed. Put it in download mode again and repeat.</li>
+          <li>Still stuck? <a href="https://github.com/ATDev-Inc/omega-stick/issues">Open an issue</a>
+            and say which board and operating system you use.</li>
+        </ul>
+      </section>
+
+      <p class="muted">The installer is <a href="https://esphome.github.io/esp-web-tools/">ESP Web Tools</a>,
+        loaded from a fixed version. It writes the same firmware file that is attached to each
+        <a href="https://github.com/ATDev-Inc/omega-stick/releases">release</a>.</p>
+    </main>
+  </div>
+
+  <script>
+    // Browser support: Web Serial is Chromium-only.
+    if (!("serial" in navigator)) document.documentElement.classList.add("no-serial");
+
+    // Show which version will be installed, with a link to its notes.
+    fetch("firmware/latest.json", { cache: "no-cache" })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (f) {
+        document.getElementById("version").textContent = "version " + f.version;
+        if (/^https:\/\//.test(f.notes_url)) {
+          var a = document.createElement("a");
+          a.href = f.notes_url;
+          a.textContent = "Release notes for " + f.tag;
+          var n = document.getElementById("notes");
+          n.appendChild(document.createTextNode(" "));
+          n.appendChild(a);
+        }
+      })
+      .catch(function () {
+        document.getElementById("version").textContent = "version unknown (could not read latest.json)";
+      });
+  </script>
+  <script type="module"
+          src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js"
+          integrity="sha384-9XfyvAabgkISlB/Xb3OpshGKpZx0TOt5Mmu78SeiNU3so/p4o2s9m66vy6Utdnom"
+          crossorigin="anonymous"></script>
+</body>
+</html>

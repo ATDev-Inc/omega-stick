@@ -53,8 +53,8 @@ body:
     attributes:
       label: ESP-IDF version
       options:
-        - v5.5.1
         - v6.0
+        - v5.5.1
         - other
     validations:
       required: true

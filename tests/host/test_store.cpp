@@ -1,5 +1,8 @@
 // OmegaStore: load-on-construct, live setters, change callbacks, save.
 
+#include <fstream>
+#include <iterator>
+#include <string>
 #include <vector>
 
 #include "file_system.hpp"
@@ -45,6 +48,19 @@ TEST(store_loads_existing_files_on_construction) {
   CHECK_NEAR(store.range().min_y, support::sample_range().min_y, 1e-5);
   CHECK(store.settings().input_mode == OmegaStore::InputMode::XAC);
   CHECK_NEAR(store.settings().manual_range_deadzone.value_or(0), 0.04f, 1e-5);
+}
+
+TEST(store_ignores_out_of_range_saved_deadzone_overrides) {
+  TempDir dir("store_bad_dz");
+  const auto cfg = config_for(dir);
+  OmegaCalibration::DeviceSettings s;
+  s.manual_center_deadzone = 2.0f; // above MAX_CENTER_DEADZONE
+  s.manual_range_deadzone = 0.05f; // valid, kept
+  std::error_code ec;
+  CHECK(OmegaCalibration::DeviceSettings::save(s, cfg.settings_path, ec));
+  OmegaStore store(cfg);
+  CHECK(!store.settings().manual_center_deadzone.has_value());
+  CHECK_NEAR(store.settings().manual_range_deadzone.value_or(0), 0.05f, 1e-6);
 }
 
 TEST(store_manual_offset_fires_callback_outside_lock) {
@@ -101,9 +117,8 @@ TEST(store_input_mode_change_fires_mode_callback_with_new_mode) {
   CHECK(store.settings().input_mode == OmegaStore::InputMode::XAC);
 }
 
-XFAIL_TEST(store_input_mode_same_value_is_a_no_op,
-           "set_input_mode fires on_mode_changed even when the mode is unchanged, so "
-           "re-selecting the active mode from the console saves + restarts the device") {
+// Re-selecting the active mode from the console must not save + restart the device.
+TEST(store_input_mode_same_value_is_a_no_op) {
   TempDir dir("store_mode_same");
   auto cfg = config_for(dir);
   int fired = 0;
@@ -114,11 +129,10 @@ XFAIL_TEST(store_input_mode_same_value_is_a_no_op,
   CHECK_EQ(fired, 0);
 }
 
-XFAIL_TEST(store_set_calibration_preserves_live_manual_offset,
-           "set_calibration copies the caller's CenterResult wholesale, so a drift nudge or "
-           "recalibration pushed from the control loop's stale local copy silently reverts a "
-           "manual offset the console set (CenterResult docs say the offset is unaffected by "
-           "recalibration and drift correction)") {
+// A drift nudge or recalibration pushed from the control loop's stale local
+// CenterResult must not revert a manual offset the console set (CenterResult
+// docs say the offset is unaffected by recalibration and drift correction).
+TEST(store_set_measured_calibration_preserves_live_manual_offset) {
   TempDir dir("store_preserve");
   OmegaStore store(config_for(dir));
   store.set_manual_offset(1.0f, 0.5f);
@@ -127,7 +141,7 @@ XFAIL_TEST(store_set_calibration_preserves_live_manual_offset,
   auto stale = support::sample_center();
   stale.manual_offset_x = 0.0f;
   stale.manual_offset_y = 0.0f;
-  store.set_calibration(stale, support::sample_range());
+  store.set_measured_calibration(stale, support::sample_range());
 
   CHECK_NEAR(store.center().center_x, stale.center_x, 1e-6); // measured part updated
   CHECK_NEAR(store.center().manual_offset_x, 1.0f, 1e-6);    // trim kept
@@ -155,6 +169,63 @@ TEST(store_save_to_flash_persists_both_files) {
   CHECK_NEAR(reloaded.center().manual_offset_x, 0.25f, 1e-6);
   CHECK_NEAR(reloaded.settings().manual_range_deadzone.value_or(0), 0.07f, 1e-5);
   CHECK(reloaded.settings().input_mode == OmegaStore::InputMode::XAC);
+}
+
+// A fresh board has no settings file: nudge clicks are off. A file from before
+// the switch (no key, see below) loads as on.
+TEST(device_settings_nudge_defaults_to_off) {
+  CHECK(!OmegaCalibration::DeviceSettings{}.nudge_enabled);
+  TempDir dir("store_nudge_fresh");
+  auto cfg = config_for(dir);
+  OmegaStore store(cfg);
+  CHECK(!store.settings().nudge_enabled);
+}
+
+TEST(store_nudge_enabled_saves_and_loads) {
+  TempDir dir("store_nudge_enabled");
+  auto cfg = config_for(dir);
+  {
+    OmegaStore store(cfg);
+    CHECK(!store.settings().nudge_enabled); // default off
+    store.set_nudge_settings(0.3f, 0.6f, std::chrono::milliseconds(80));
+    store.set_nudge_enabled(false);
+    CHECK(!store.settings().nudge_enabled);
+    std::error_code ec;
+    CHECK(store.save_to_flash(ec));
+    CHECK(!ec);
+  }
+  {
+    std::ifstream in(cfg.settings_path);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(text.find("nudge_enabled=0\n") != std::string::npos);
+  }
+  OmegaStore reloaded(cfg);
+  const auto s = reloaded.settings();
+  CHECK(!s.nudge_enabled);
+  // Switching nudge clicks off keeps the tuning.
+  CHECK_NEAR(s.nudge_distance_threshold, 0.3f, 1e-6);
+  CHECK_NEAR(s.nudge_exit_threshold, 0.6f, 1e-6);
+  CHECK_EQ(s.nudge_hold_time.count(), 80);
+
+  reloaded.set_nudge_enabled(true);
+  std::error_code ec;
+  CHECK(reloaded.save_to_flash(ec));
+  OmegaStore again(cfg);
+  CHECK(again.settings().nudge_enabled);
+}
+
+// A settings file from firmware before the switch has no nudge_enabled key.
+TEST(store_settings_file_without_nudge_enabled_loads_as_enabled) {
+  TempDir dir("store_nudge_missing");
+  auto cfg = config_for(dir);
+  {
+    std::ofstream out(cfg.settings_path);
+    out << "schema=1\nnudge_distance_threshold=0.4\nnudge_exit_threshold=0.7\n"
+           "nudge_hold_time_ms=90\ninput_mode=0\n";
+  }
+  OmegaStore store(cfg);
+  CHECK(store.settings().nudge_enabled);
+  CHECK_NEAR(store.settings().nudge_distance_threshold, 0.4f, 1e-6);
 }
 
 TEST(store_save_to_flash_reports_unwritable_path) {

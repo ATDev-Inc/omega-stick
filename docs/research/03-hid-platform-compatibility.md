@@ -138,6 +138,12 @@ left thumbstick with no licensing. Analog TRRS output to X1/X2 needs a DAC and a
 hardware variant: deferred to v2. Direct PS4/PS5/Switch/Xbox is explicitly out
 of scope.
 
+> **Note, 2026-10-10:** XAC mode in the firmware has NOT been verified on real XAC
+> hardware; the evidence above is third-party. The shipped implementation
+> (`components/xac/include/xac.hpp`) uses 8-bit axes (0 to 255) and 12 buttons rather
+> than the `uint16_t`, 15-button defaults described in section 4. See D3 and D4 in
+> [decisions.md](../decisions.md).
+
 ---
 
 ## 3. ESP32-S3 specifics
