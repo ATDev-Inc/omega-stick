@@ -16,7 +16,7 @@ what each part of the number means and how a release is cut.
   register, so the chip ran 16x averaging with a temperature-compensation mode
   nobody chose. Readings are a little less noisy and update about half as
   often (still four times faster than the firmware reads them). Closes #73.
-  [#105](https://github.com/ATDev-Inc/omega-stick/pull/105).
+  [#110](https://github.com/ATDev-Inc/omega-stick/pull/110).
 - **The console frame log no longer dumps whole firmware chunks.** Two helpers
   named `hex` clashed, so with "Log frames" ticked every firmware update chunk
   was written in full into the log. Frames are shortened again. [#95](https://github.com/ATDev-Inc/omega-stick/pull/95).
