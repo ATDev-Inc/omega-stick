@@ -58,6 +58,9 @@ jobs:
         esp_idf_version: ${{ env.IDF_VERSION }}
         path: '.'
         target: ${{ env.IDF_TARGET }}
+        # Record the esptool version this build used, so the packaged
+        # programmer bundles the same one (IDF 6.x writes esptool 5 flash args).
+        command: 'idf.py build && python -m esptool version | tail -1 > build/esptool_version.txt'
 
     # One flashable file: bootloader, partition table and app joined at
     # offset 0 (idf.py merge-bin reads build/flasher_args.json). The first
@@ -93,6 +96,7 @@ jobs:
           build/partition_table/partition-table.bin
           build/flasher_args.json
           build/flash_args
+          build/esptool_version.txt
         retention-days: 7
 
     - name: Attach files to release
@@ -133,7 +137,7 @@ jobs:
       contents: write
       actions: read
     steps:
-      - uses: esp-cpp/esp-packaged-programmer-action@6d1e028c3daa438d80e7a2f03c30cfccad8147ba # v1.0.6
+      - uses: esp-cpp/esp-packaged-programmer-action@deaf7f2b035e8a1bc6d11ca8d7f7460f62ea13d9 # v1.1.0
         with:
           zipfile-id: ${{ needs.build.outputs.zipfile-id }}
 

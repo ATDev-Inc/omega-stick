@@ -29,6 +29,11 @@ what each part of the number means and how a release is cut.
 - **The console frame log no longer dumps whole firmware chunks.** Two helpers
   named `hex` clashed, so with "Log frames" ticked every firmware update chunk
   was written in full into the log. Frames are shortened again. [#95](https://github.com/ATDev-Inc/omega-stick/pull/95).
+- **The downloadable programmers bundle the esptool the firmware was built
+  with.** They carried esptool 4.7.0, which does not understand the flash
+  arguments ESP-IDF 6 writes, so the Windows, macOS and Linux programmers
+  attached to a release could fail to flash. They now package esptool 5, read
+  from the build.
 
 ## [0.1.1] - 2026-10-26
 
