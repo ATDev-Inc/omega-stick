@@ -10,6 +10,9 @@
 //          firmware; OTA_BEGIN/DATA/FINISH -> OK, then the image's version
 //          becomes the running one after rebooting ("update") + close;
 //          RESTART -> OK, then rebooting + close
+//          SET_POSITION_STREAM -> OK, then CALIBRATION_PROGRESS stage 0 frames
+//          (silent when sim.progress.unsupported, like firmware before protocol v2);
+//          FINISH_CALIBRATION -> ERROR operation_not_permitted (no sweep runs)
 //          GET_DIAGNOSTICS -> DIAGNOSTICS with sensor_fault from sim.diag.sensorFault
 //          (settable); MARK_VALID -> OK and pending becomes false (an upload sets
 //          pending, as a new image boots pending verify)
@@ -62,6 +65,15 @@ function diagPayload(fault) {
   b[0] = fault; b[1] = fault; b.writeUInt32LE(fault ? 1 : 0, 2); b.writeUInt32LE(1, 6);
   return new Uint8Array(b);
 }
+// A stage 0 CALIBRATION_PROGRESS payload (179 bytes) with the dot at (0.01 * i, 0).
+function progressPayload(i) {
+  const b = Buffer.alloc(179);
+  b[0] = 0; b[1] = 0b0011;
+  b.writeFloatLE(0.01 * i, 10);
+  b.writeUInt32LE(0, 46);
+  b[50] = 32;
+  return new Uint8Array(b);
+}
 function errorFrame(code, msg) {
   const m = Buffer.from(msg, "utf8");
   const p = Buffer.alloc(4 + m.length);
@@ -94,7 +106,8 @@ export function startMockSim({ port = 0, host = "127.0.0.1", logFile = "" } = {}
   const state = { x: 0, y: 0, mode: "mouse", timer: null };
   const fw = { project: "omega_stick", version: "0.1.0+sim", sha: "00000000", pending: false };
   const diag = { sensorFault: 0, unsupported: false }; // settable by tests
-  const seen = { markValid: 0, diagnostics: 0 };
+  const seen = { markValid: 0, diagnostics: 0, streams: [], finishes: 0 };
+  const progress = { unsupported: false }; // settable: older firmware never answers SET_POSITION_STREAM
   let ota = null;           // image bytes received so far during an upload
 
   const flush = () => {
@@ -186,6 +199,16 @@ export function startMockSim({ port = 0, host = "127.0.0.1", logFile = "" } = {}
       } else if (f.module === 5 && f.type === P.TYPE.GET_DIAGNOSTICS) {
         seen.diagnostics++;
         sendBin(c, diag.unsupported ? errorFrame(88, "GET_DIAGNOSTICS: Function not implemented") : replyFrame(5, P.TYPE.DIAGNOSTICS, diagPayload(diag.sensorFault)));
+      } else if (f.module === 5 && f.type === P.TYPE.SET_POSITION_STREAM) {
+        const lease = f.payload.length >= 4 ? new DataView(f.payload.buffer, f.payload.byteOffset).getUint32(0, true) : 0;
+        seen.streams.push(lease);
+        if (!progress.unsupported) {
+          sendBin(c, replyFrame(5, 0xDF, new Uint8Array(4)));
+          if (lease > 0) for (let i = 0; i < 3; i++) sendBin(c, replyFrame(5, P.TYPE.CALIBRATION_PROGRESS, progressPayload(i)));
+        }
+      } else if (f.module === 5 && f.type === P.TYPE.FINISH_CALIBRATION) {
+        seen.finishes++;
+        sendBin(c, errorFrame(1, "no range sweep is running"));
       } else if (f.module === 5 && f.type === P.TYPE.RESTART) {
         sendBin(c, replyFrame(5, 0xDF, new Uint8Array(4)));
         setTimeout(() => rebootClient(c, "restart"), 100);
@@ -241,7 +264,7 @@ export function startMockSim({ port = 0, host = "127.0.0.1", logFile = "" } = {}
     server.listen(port, host, () => {
       resolve({
         port: server.address().port,
-        received, binaryIn, fw, diag, seen,
+        received, binaryIn, fw, diag, seen, progress,
         get connections() { return connections; },
         stop() {
           clearInterval(state.timer);

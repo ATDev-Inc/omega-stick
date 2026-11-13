@@ -74,7 +74,8 @@ test("constants match stream_frame.hpp and calibration_service.hpp", () => {
     SET_NUDGE_SETTINGS: 0x53, SET_INPUT_MODE: 0x54, SAVE_TO_FLASH: 0x55,
     START_CALIBRATION: 0x56, RESTART: 0x57, OTA_BEGIN: 0x58, OTA_DATA: 0x59,
     OTA_FINISH: 0x5A, OTA_ABORT: 0x5B, GET_FW_INFO: 0x5C, MARK_VALID: 0x5D,
-    REVERT: 0x5E, GET_DIAGNOSTICS: 0x5F, SET_NUDGE_ENABLED: 0x60, STATE: 0xD0, CALIBRATION_RESULT: 0xD1, FW_INFO: 0xD2, DIAGNOSTICS: 0xD3,
+    REVERT: 0x5E, GET_DIAGNOSTICS: 0x5F, SET_NUDGE_ENABLED: 0x60, FINISH_CALIBRATION: 0x61, SET_POSITION_STREAM: 0x62,
+    STATE: 0xD0, CALIBRATION_RESULT: 0xD1, FW_INFO: 0xD2, DIAGNOSTICS: 0xD3, CALIBRATION_PROGRESS: 0xD4,
     OK: 0xDF, ERROR: 0xFE,
   });
   assert.deepEqual(P.INPUT_MODE, { MOUSE: 0, XAC: 1 });
@@ -537,9 +538,13 @@ test("selectCalibrationModule: v2 without the protocol is missing, even at id 5"
   assert.deepEqual(P.selectCalibrationModule(v2Info()), { id: 5, how: "missing", versionMismatch: false });
 });
 
-test("selectCalibrationModule: protocol version mismatch is flagged", () => {
-  const info = v2Info({ id: 7, protocol: P.PROTOCOL_ID, protocolVersion: 2 });
+test("selectCalibrationModule: a newer device protocol version is flagged, v1 and v2 are not", () => {
+  const info = v2Info({ id: 7, protocol: P.PROTOCOL_ID, protocolVersion: P.PROTOCOL_VERSION + 1 });
   assert.deepEqual(P.selectCalibrationModule(info), { id: 7, how: "protocol", versionMismatch: true });
+  for (const v of [1, 2]) {
+    const ok = v2Info({ id: 7, protocol: P.PROTOCOL_ID, protocolVersion: v });
+    assert.deepEqual(P.selectCalibrationModule(ok), { id: 7, how: "protocol", versionMismatch: false });
+  }
 });
 
 test("usbUpdatesUnavailable hides the update controls only for function_not_supported", () => {
@@ -621,4 +626,81 @@ test("describeCalibrationState names each state", () => {
   assert.match(P.describeCalibrationState(1), /needs calibration/);
   assert.match(P.describeCalibrationState(null), /older firmware/);
   assert.equal(P.describeCalibrationState(5), "code 5");
+});
+
+// ---------------------------------------------------------------- visual calibration (v2)
+
+test("PROTOCOL_VERSION is 2 and the new stage names are in order", () => {
+  assert.equal(P.PROTOCOL_VERSION, 2);
+  assert.deepEqual(P.STAGE_NAME, ["live", "center_settle", "center_measure", "noise_settle",
+    "noise_measure", "range_prepare", "range_sweep", "finishing"]);
+});
+
+test("SET_POSITION_STREAM and FINISH_CALIBRATION frames", () => {
+  assert.deepEqual(P.encodeSetPositionStream(3000), u32le(3000));
+  const f = P.buildSetPositionStream(3000);
+  assert.deepEqual(f.subarray(0, 13), concat(ascii("TO"), bytes(0x10, 5, 0x62), u32le(4), u32le(3000)));
+  assert.equal(zcrc(f.subarray(0, 13)), new DataView(f.buffer).getUint32(13, true));
+  assert.deepEqual(P.buildSetPositionStream(0, 7).subarray(3, 5), bytes(7, 0x62));
+  assert.deepEqual(P.buildFrame(5, P.TYPE.FINISH_CALIBRATION).subarray(0, 9),
+                   concat(ascii("TO"), bytes(0x10, 5, 0x61), u32le(0)));
+});
+
+function progressPayload(o) {
+  const n = o.sectors.length;
+  const b = new Uint8Array(2 + 8 + 36 + 4 + 1 + 4 * n);
+  const v = new DataView(b.buffer);
+  b[0] = o.stage; b[1] = o.flags;
+  v.setUint32(2, o.elapsed, true); v.setUint32(6, o.total, true);
+  [o.rawX, o.rawY, o.cx, o.cy, o.noise, o.minX, o.maxX, o.minY, o.maxY].forEach((x, i) => v.setFloat32(10 + 4 * i, x, true));
+  v.setUint32(46, o.mask >>> 0, true);
+  b[50] = n;
+  o.sectors.forEach((x, i) => v.setFloat32(51 + 4 * i, x, true));
+  return b;
+}
+const sample = {
+  stage: 6, flags: 0b1011, elapsed: 12345, total: 0, rawX: 0.25, rawY: -0.5, cx: 0.0625, cy: -0.125, noise: 0.015625,
+  minX: -0.75, maxX: 0.5, minY: -1, maxY: 0.25, mask: 0x80000005,
+  sectors: Array.from({ length: 32 }, (_, i) => i / 8),
+};
+
+test("parseCalibrationProgress: full 179-byte payload", () => {
+  const pl = progressPayload(sample);
+  assert.equal(pl.length, 179);
+  const r = P.parseCalibrationProgress(pl);
+  assert.equal(r.stage, 6); assert.equal(r.stageName, "range_sweep");
+  assert.equal(r.rawValid, true); assert.equal(r.centerValid, true);
+  assert.equal(r.coverageComplete, false); assert.equal(r.finishAvailable, true);
+  assert.equal(r.stageElapsedMs, 12345); assert.equal(r.stageTotalMs, 0);
+  assert.deepEqual([r.rawX, r.rawY, r.centerX, r.centerY, r.noiseRadius], [0.25, -0.5, 0.0625, -0.125, 0.015625]);
+  assert.deepEqual([r.minX, r.maxX, r.minY, r.maxY], [-0.75, 0.5, -1, 0.25]);
+  assert.equal(r.coveredMask, 0x80000005);
+  assert.equal(r.sectorCount, 32);
+  assert.equal(r.sectors.length, 32);
+  assert.equal(r.sectors[9], 9 / 8);
+});
+
+test("parseCalibrationProgress: flag bits decode independently", () => {
+  const flags = (f) => P.parseCalibrationProgress(Uint8Array.of(0, f));
+  assert.deepEqual([1, 2, 4, 8].map((f) => { const r = flags(f); return [r.rawValid, r.centerValid, r.coverageComplete, r.finishAvailable]; }),
+    [[true, false, false, false], [false, true, false, false], [false, false, true, false], [false, false, false, true]]);
+  assert.equal(flags(0).rawValid, false);
+});
+
+test("parseCalibrationProgress: tolerates short payloads and trailing bytes", () => {
+  const full = progressPayload(sample);
+  const empty = P.parseCalibrationProgress(new Uint8Array(0));
+  assert.equal(empty.stage, 0); assert.deepEqual(empty.sectors, []);
+  const two = P.parseCalibrationProgress(full.subarray(0, 2));
+  assert.equal(two.stage, 6); assert.equal(two.stageElapsedMs, 0);
+  const mid = P.parseCalibrationProgress(full.subarray(0, 16)); // through raw_x only
+  assert.equal(mid.stageElapsedMs, 12345); assert.equal(mid.rawX, 0.25); assert.equal(mid.rawY, 0);
+  // Cut in the middle of the sector array: only whole floats are kept.
+  const cut = P.parseCalibrationProgress(full.subarray(0, 51 + 4 * 5 + 2));
+  assert.equal(cut.sectorCount, 32); assert.equal(cut.sectors.length, 5);
+  // Later firmware appends fields: ignored.
+  const longer = new Uint8Array(full.length + 9); longer.set(full);
+  assert.deepEqual(P.parseCalibrationProgress(longer), P.parseCalibrationProgress(full));
+  // Unknown stage numbers keep working.
+  assert.equal(P.parseCalibrationProgress(Uint8Array.of(42, 0)).stageName, "stage_42");
 });

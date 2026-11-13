@@ -41,6 +41,7 @@ TEST(script_accepts_every_step_kind) {
     {"at_ms":50,"next_image":"crash_loop"},
     {"at_ms":60,"action":"set_mode","value":"xac"},
     {"at_ms":65,"action":"set_nudge_enabled","value":false},
+    {"at_ms":67,"action":"finish_calibration","expect_reply":"error"},
     {"at_ms":70,"action":"flash","version":"1.2.3"},
     {"at_ms":75,"action":"fw_info","expect_reply":"unsupported"},
     {"at_ms":80,"expect":{"calibrated":true,"center_max":0.05,"mouse_moved":"right","mode":"xac"}}
@@ -124,7 +125,11 @@ TEST(patterns_have_the_documented_shapes) {
   CHECK_NEAR(std::hypot(pattern_position("calibrate", 5000, 900).x,
                         pattern_position("calibrate", 5000, 900).y),
              1.0, 1e-9);
-  CHECK_NEAR(std::hypot(pattern_position("calibrate", 5000, 2500).x, 0), 0, 0);
+  CHECK_NEAR(std::hypot(pattern_position("calibrate", 5000, 7900).x,
+                        pattern_position("calibrate", 5000, 7900).y),
+             1.0, 1e-9);
+  CHECK_NEAR(pattern_position("calibrate", 5000, 2000).y, 1.0, 1e-9); // quarter turn at 2 s
+  CHECK_NEAR(std::hypot(pattern_position("calibrate", 5000, 8500).x, 0), 0, 0);
   // nudges: a push past the threshold and back
   CHECK_NEAR(pattern_position("nudge_right", 200, -1).x, 1.0, 0);
   CHECK_NEAR(pattern_position("nudge_left", 200, -1).x, -1.0, 0);
