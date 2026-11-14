@@ -14,7 +14,7 @@
   const MAX_FRAME = HEADER_SIZE + MAX_PAYLOAD + CRC_SIZE;
   const MODULE_CALIBRATION = 5;
   const MODULE_DISCOVERY = 0xFF, T_LIST_MODULES = 0x00;
-  const PROTOCOL_ID = "omega.calibration", PROTOCOL_VERSION = 1; // dispatcher discovery v2
+  const PROTOCOL_ID = "omega.calibration", PROTOCOL_VERSION = 2; // dispatcher discovery v2
   const FLAGS_VERSION = 1;
   const FLAGS_REQUEST = (FLAGS_VERSION << 4) | 0; // 0x10
   const FLAGS_REPLY_BIT = 0x01;
@@ -37,10 +37,13 @@
     REVERT: 0x5E,
     GET_DIAGNOSTICS: 0x5F,
     SET_NUDGE_ENABLED: 0x60,
+    FINISH_CALIBRATION: 0x61,
+    SET_POSITION_STREAM: 0x62,
     STATE: 0xD0,
     CALIBRATION_RESULT: 0xD1,
     FW_INFO: 0xD2,
     DIAGNOSTICS: 0xD3,
+    CALIBRATION_PROGRESS: 0xD4,
     OK: 0xDF,
     ERROR: 0xFE,
   };
@@ -181,7 +184,8 @@
       if (m) {
         return {
           id: m.id, how: "protocol",
-          versionMismatch: !!m.protocolVersion && m.protocolVersion !== PROTOCOL_VERSION,
+          // v2 only added messages, so a device on v1 is still compatible
+          versionMismatch: !!m.protocolVersion && m.protocolVersion > PROTOCOL_VERSION,
         };
       }
     } else if (info.modules.some((x) => x.id === MODULE_CALIBRATION)) {
@@ -317,6 +321,61 @@
   }
   function encodeSetNudgeEnabled(enabled) {
     return new Uint8Array([enabled ? 1 : 0]);
+  }
+
+  // ---------------------------------------------------------------------
+  // Visual calibration (protocol v2, additive). SET_POSITION_STREAM takes a
+  // u32 lease in ms (0 stops); while it is live the device sends unsolicited
+  // CALIBRATION_PROGRESS frames. Firmware without them never replies.
+  // ---------------------------------------------------------------------
+  function encodeSetPositionStream(leaseMs) {
+    const payload = new Uint8Array(4);
+    new DataView(payload.buffer).setUint32(0, Math.max(0, Math.floor(leaseMs)) >>> 0, true);
+    return payload;
+  }
+  function buildSetPositionStream(leaseMs, module) {
+    return buildFrame(module === undefined ? MODULE_CALIBRATION : module, TYPE.SET_POSITION_STREAM,
+                      encodeSetPositionStream(leaseMs));
+  }
+  const STAGE_NAME = [
+    "live", "center_settle", "center_measure", "noise_settle", "noise_measure",
+    "range_prepare", "range_sweep", "finishing",
+  ];
+  // Decodes CALIBRATION_PROGRESS. Stops where the bytes run out: missing
+  // fields keep their zero defaults, and bytes past what is known are ignored.
+  function parseCalibrationProgress(payload) {
+    const r = {
+      stage: 0, stageName: STAGE_NAME[0], flags: 0,
+      rawValid: false, centerValid: false, coverageComplete: false, finishAvailable: false,
+      stageElapsedMs: 0, stageTotalMs: 0, rawX: 0, rawY: 0,
+      centerX: 0, centerY: 0, noiseRadius: 0,
+      minX: 0, maxX: 0, minY: 0, maxY: 0,
+      coveredMask: 0, sectorCount: 0, sectors: [],
+    };
+    const n = payload.length;
+    const v = new DataView(payload.buffer, payload.byteOffset, n);
+    if (n >= 1) { r.stage = payload[0]; r.stageName = STAGE_NAME[r.stage] || ("stage_" + r.stage); }
+    if (n >= 2) {
+      r.flags = payload[1];
+      r.rawValid = (r.flags & 1) !== 0;
+      r.centerValid = (r.flags & 2) !== 0;
+      r.coverageComplete = (r.flags & 4) !== 0;
+      r.finishAvailable = (r.flags & 8) !== 0;
+    }
+    let o = 2;
+    const u32 = (k) => { if (o + 4 > n) return false; r[k] = v.getUint32(o, true); o += 4; return true; };
+    const f32 = (k) => { if (o + 4 > n) return false; r[k] = v.getFloat32(o, true); o += 4; return true; };
+    for (const k of ["stageElapsedMs", "stageTotalMs"]) if (!u32(k)) return r;
+    for (const k of ["rawX", "rawY", "centerX", "centerY", "noiseRadius", "minX", "maxX", "minY", "maxY"]) {
+      if (!f32(k)) return r;
+    }
+    if (!u32("coveredMask")) return r;
+    if (o + 1 > n) return r;
+    r.sectorCount = payload[o++];
+    const sectors = [];
+    for (let i = 0; i < r.sectorCount && o + 4 <= n; i++, o += 4) sectors.push(v.getFloat32(o, true));
+    r.sectors = sectors;
+    return r;
   }
 
   // ---------------------------------------------------------------------
@@ -1198,7 +1257,7 @@
   const SIM_SOURCE_KINDS = ["manual", "pattern", "script"];
   const SIM_REPLIES = ["ok", "busy", "invalid", "unsupported", "error"];
   const SIM_ACTIONS = ["recalibrate", "save", "restart", "set_mode", "set_deadzone", "flash", "revert", "mark_valid", "fw_info",
-    "plant_unusable_calibration", "set_nudge_enabled"];
+    "plant_unusable_calibration", "set_nudge_enabled", "finish_calibration"];
   const SIM_SCRIPT_MAX_BYTES = 262144, SIM_SCRIPT_MAX_STEPS = 5000;
   const SIM_MAX_AT_MS = 86400000; // a day
   const SIM_STEP_KEYS = ["stick", "pattern", "fault", "drift", "noise", "next_image", "action", "expect"];
@@ -1514,6 +1573,7 @@
     parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
     encodeSetManualOffset, encodeSetDeadzoneOverride,
     encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled,
+    encodeSetPositionStream, buildSetPositionStream, parseCalibrationProgress, STAGE_NAME,
     NUDGE_SWITCH_UNSUPPORTED_NOTE, nudgeControls,
   };
   globalThis.OmegaProtocol = OmegaProtocol;

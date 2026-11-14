@@ -13,10 +13,11 @@
 //
 // Determinism: the service emits no timestamps or uptime fields. The one
 // platform-dependent part is the ERROR reply, whose message ends with the C++
-// library's text for std::errc::invalid_argument ("Invalid argument" on glibc,
-// "invalid argument" on MSVC). That suffix is rewritten to a fixed string and
-// the frame is re-encoded, so the file is identical on every platform.
+// library's text for the std::errc code ("Invalid argument" on glibc,
+// "invalid argument" on MSVC). That suffix is rewritten in lower case and the
+// frame is re-encoded, so the file is identical on every platform.
 
+#include <cctype>
 #include <charconv>
 #include <chrono>
 #include <cstdlib>
@@ -180,12 +181,17 @@ std::string state_fields(const std::vector<uint8_t> &p) {
 /// fields object.
 Captured portable_error(const std::string &name, const stream::Frame &reply,
                         std::vector<uint8_t> frame) {
-  const std::string native = std::make_error_code(std::errc::invalid_argument).message();
+  const auto code = static_cast<std::errc>(stream::get_u32(reply.payload));
+  const std::string native = std::make_error_code(code).message();
+  std::string portable = native;
+  for (char &c : portable) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
   std::string message = support::error_message(reply);
   CHECK(message.size() > native.size());
   CHECK_EQ(message.substr(message.size() - native.size()), native);
   message.resize(message.size() - native.size());
-  message += "invalid argument";
+  message += portable;
 
   std::vector<uint8_t> payload;
   stream::put_u32(payload, stream::get_u32(reply.payload));
@@ -195,6 +201,37 @@ Captured portable_error(const std::string &name, const stream::Frame &reply,
   Obj o;
   o.add("code", num(stream::get_u32(reply.payload))).add("message", quote(message));
   return {name, reply.type, reply.module, frame, o.str()};
+}
+
+/// Decoded CALIBRATION_PROGRESS fields, in the shape omega_protocol.js's
+/// parseCalibrationProgress() returns (less its derived stageName).
+std::string progress_fields(const std::vector<uint8_t> &p) {
+  const std::span<const uint8_t> s(p);
+  const auto f32_at = [&](size_t off) { return num(support::get_f32(p, off)); };
+  const uint8_t flags = p[1];
+  Obj o;
+  o.add("stage", num(uint32_t{p[0]}));
+  o.add("flags", num(uint32_t{flags}));
+  o.add("rawValid", (flags & 0x01) ? "true" : "false");
+  o.add("centerValid", (flags & 0x02) ? "true" : "false");
+  o.add("coverageComplete", (flags & 0x04) ? "true" : "false");
+  o.add("finishAvailable", (flags & 0x08) ? "true" : "false");
+  o.add("stageElapsedMs", num(stream::get_u32(s.subspan(2))));
+  o.add("stageTotalMs", num(stream::get_u32(s.subspan(6))));
+  const char *const names[] = {"rawX", "rawY", "centerX", "centerY", "noiseRadius",
+                               "minX", "maxX", "minY",    "maxY"};
+  for (size_t i = 0; i < 9; i++) {
+    o.add(names[i], f32_at(10 + i * 4));
+  }
+  o.add("coveredMask", num(stream::get_u32(s.subspan(46))));
+  const unsigned count = p[50];
+  o.add("sectorCount", num(uint32_t{count}));
+  std::string sectors = "[";
+  for (unsigned i = 0; i < count; i++) {
+    sectors += (i ? "," : "") + f32_at(51 + i * 4);
+  }
+  o.add("sectors", sectors + "]");
+  return o.str();
 }
 
 std::string build_golden_json() {
@@ -212,22 +249,27 @@ std::string build_golden_json() {
     sent.insert(sent.end(), f.begin(), f.end());
     return true;
   };
-  CalibrationService service({.store = store,
-                              .send = transmit,
-                              .start_calibration = [](std::error_code &) { return true; },
-                              .diagnostics =
-                                  [] {
-                                    CalibrationService::DiagnosticsData d;
-                                    d.sensor_fault = 2;
-                                    d.sensor_first_fault = 1;
-                                    d.sensor_fault_count = 3;
-                                    d.boot_count = 42;
-                                    d.resets.push_back({40, 9, true, "brownout"});
-                                    d.resets.push_back({41, 1, false, "power-on"});
-                                    d.resets.push_back({42, 3, false, "software"});
-                                    d.calibration_state = CalibrationService::CALIBRATION_NEEDED;
-                                    return d;
-                                  }});
+  // FINISH_CALIBRATION: accepted the first time (a range sweep is sampling),
+  // refused the second.
+  int finish_requests = 0;
+  CalibrationService service(
+      {.store = store,
+       .send = transmit,
+       .start_calibration = [](std::error_code &) { return true; },
+       .finish_calibration = [&finish_requests] { return ++finish_requests == 1; },
+       .diagnostics =
+           [] {
+             CalibrationService::DiagnosticsData d;
+             d.sensor_fault = 2;
+             d.sensor_first_fault = 1;
+             d.sensor_fault_count = 3;
+             d.boot_count = 42;
+             d.resets.push_back({40, 9, true, "brownout"});
+             d.resets.push_back({41, 1, false, "power-on"});
+             d.resets.push_back({42, 3, false, "software"});
+             d.calibration_state = CalibrationService::CALIBRATION_NEEDED;
+             return d;
+           }});
   espp::Dispatcher dispatcher;
   dispatcher.register_module(service);
   dispatcher.set_device_info("omega-stick", "golden");
@@ -307,6 +349,15 @@ std::string build_golden_json() {
                       type_of(Msg::SetInputMode),
                       {2},
                       Obj().add("mode", "2").str()});
+  requests.push_back({"FINISH_CALIBRATION", module, type_of(Msg::FinishCalibration), {}, "{}"});
+  requests.push_back(
+      {"FINISH_CALIBRATION_REFUSED", module, type_of(Msg::FinishCalibration), {}, "{}"});
+  {
+    std::vector<uint8_t> p;
+    stream::put_u32(p, 1000);
+    requests.push_back({"SET_POSITION_STREAM", module, type_of(Msg::SetPositionStream), p,
+                        Obj().add("leaseMs", num(uint32_t{1000})).str()});
+  }
 
   std::vector<Captured> replies;
   std::string request_json;
@@ -367,6 +418,51 @@ std::string build_golden_json() {
   CHECK_EQ(result->type, type_of(Msg::CalibrationResult));
   replies.push_back({"CALIBRATION_RESULT_OK", result->type, result->module, sent,
                      Obj().add("success", result->payload[0] ? "true" : "false").str()});
+
+  // Unsolicited CALIBRATION_PROGRESS: mid range sweep, with sectors 0..3 and
+  // 30..31 covered and a reading in sector 4 not yet counted.
+  {
+    CalibrationService::Progress p;
+    p.stage = espp::OmegaCalibration::Stage::RANGE_SWEEP;
+    p.raw_valid = true;
+    p.center_valid = true;
+    p.finish_available = true;
+    p.stage_elapsed_ms = 1250;
+    p.raw_x = 31.5f;
+    p.raw_y = 4.25f;
+    p.center_x = 12.5f;
+    p.center_y = -3.25f;
+    p.noise_radius = 0.75f;
+    p.min_x = -1.5f;
+    p.max_x = 19.0f;
+    p.min_y = -6.0f;
+    p.max_y = 7.5f;
+    p.covered_mask = 0xC000000Fu;
+    for (size_t i = 0; i < 5; ++i) {
+      p.sector_max_radius[i] = 19.0f - static_cast<float>(i);
+    }
+    p.sector_max_radius[30] = 6.25f;
+    p.sector_max_radius[31] = 12.0f;
+    sent.clear();
+    service.notify_calibration_progress(p);
+    const auto frame = support::decode_one(sent);
+    CHECK(frame.has_value());
+    CHECK_EQ(frame->type, type_of(Msg::CalibrationProgress));
+    replies.push_back({"CALIBRATION_PROGRESS_SWEEP", frame->type, frame->module, sent,
+                       progress_fields(frame->payload)});
+  }
+  // ... and a live position (stage 0) on the SET_POSITION_STREAM lease above.
+  {
+    const auto center = store.center();
+    const auto live = espp::OmegaCalibration::live_progress(true, 14.0f, -2.5f, &center);
+    sent.clear();
+    CHECK(service.notify_position(live, std::chrono::steady_clock::now()));
+    const auto frame = support::decode_one(sent);
+    CHECK(frame.has_value());
+    CHECK_EQ(frame->type, type_of(Msg::CalibrationProgress));
+    replies.push_back({"CALIBRATION_PROGRESS_LIVE", frame->type, frame->module, sent,
+                       progress_fields(frame->payload)});
+  }
 
   std::string reply_json;
   for (const auto &r : replies) {
