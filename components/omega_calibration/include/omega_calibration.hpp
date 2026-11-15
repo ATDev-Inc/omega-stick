@@ -272,6 +272,12 @@ public:
   /// reflash to switch between the two.
   enum class InputMode : uint8_t { MOUSE = 0, XAC = 1 };
 
+  /// Which Xbox Adaptive Controller joystick the stick is reported as in XAC
+  /// mode: RIGHT drives HID axes 0, 1 (X, Y), LEFT drives axes 2, 3 (Z, RZ).
+  /// The other joystick stays centered. Persisted in DeviceSettings and
+  /// applied live (no restart).
+  enum class XacSide : uint8_t { RIGHT = 0, LEFT = 1 };
+
   /// Live-tunable device settings that sit alongside (but are distinct
   /// from) the CenterResult/RangeResult produced by an interactive
   /// calibration sweep. Unlike center/range, these are meant to be edited
@@ -344,6 +350,10 @@ public:
     // ------------------------------------------------------------------
     InputMode input_mode{InputMode::MOUSE};
 
+    /// XAC joystick the stick drives (XAC mode only). A file without the
+    /// key loads as RIGHT, what every firmware before the switch reported.
+    XacSide xac_side{XacSide::RIGHT};
+
     // ------------------------------------------------------------------
     // Persistence
     // ------------------------------------------------------------------
@@ -385,6 +395,7 @@ public:
       out << "nudge_hold_time_ms=" << static_cast<float>(settings.nudge_hold_time.count()) << "\n";
       out << "nudge_enabled=" << (settings.nudge_enabled ? 1 : 0) << "\n";
       out << "input_mode=" << static_cast<float>(static_cast<uint8_t>(settings.input_mode)) << "\n";
+      out << "xac_side=" << static_cast<int>(settings.xac_side) << "\n";
       out.flush();
 
       if (!out) {
@@ -456,6 +467,8 @@ public:
       settings.input_mode = values.count("input_mode")
                                 ? static_cast<InputMode>(static_cast<uint8_t>(values["input_mode"]))
                                 : InputMode::MOUSE;
+      settings.xac_side =
+          values.count("xac_side") && values["xac_side"] == 1.0f ? XacSide::LEFT : XacSide::RIGHT;
       return true;
     }
   };

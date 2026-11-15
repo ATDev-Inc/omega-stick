@@ -75,10 +75,20 @@ test("constants match stream_frame.hpp and calibration_service.hpp", () => {
     START_CALIBRATION: 0x56, RESTART: 0x57, OTA_BEGIN: 0x58, OTA_DATA: 0x59,
     OTA_FINISH: 0x5A, OTA_ABORT: 0x5B, GET_FW_INFO: 0x5C, MARK_VALID: 0x5D,
     REVERT: 0x5E, GET_DIAGNOSTICS: 0x5F, SET_NUDGE_ENABLED: 0x60, FINISH_CALIBRATION: 0x61, SET_POSITION_STREAM: 0x62,
+    SET_XAC_SIDE: 0x63,
     STATE: 0xD0, CALIBRATION_RESULT: 0xD1, FW_INFO: 0xD2, DIAGNOSTICS: 0xD3, CALIBRATION_PROGRESS: 0xD4,
     OK: 0xDF, ERROR: 0xFE,
   });
   assert.deepEqual(P.INPUT_MODE, { MOUSE: 0, XAC: 1 });
+  assert.deepEqual(P.XAC_SIDE, { RIGHT: 0, LEFT: 1 });
+});
+
+test("encodeSetXacSide: one byte, 0 = right, 1 = left; anything else throws", () => {
+  assert.deepEqual(P.encodeSetXacSide(P.XAC_SIDE.RIGHT), bytes(0));
+  assert.deepEqual(P.encodeSetXacSide(P.XAC_SIDE.LEFT), bytes(1));
+  assert.deepEqual(P.buildFrame(5, P.TYPE.SET_XAC_SIDE, P.encodeSetXacSide(1)).subarray(0, 10),
+                   concat(ascii("TO"), bytes(0x10, 5, 0x63), u32le(1), bytes(1)));
+  assert.throws(() => P.encodeSetXacSide(2), /XAC side/);
 });
 
 // ---------------------------------------------------------------- buildFrame
@@ -367,8 +377,9 @@ test("parseDiscovery: truncated payloads throw", () => {
 });
 
 // ---------------------------------------------------------------- decodeState
-// calibration_service.hpp build_state_payload(): 80 bytes, little-endian
-// (79 from firmware without the nudge on/off switch):
+// calibration_service.hpp build_state_payload(): 81 bytes, little-endian
+// (80 from firmware without the XAC side switch, 79 without the nudge on/off
+// switch either):
 //   off  0..23  f32 center_x, center_y, center_noise_radius, center_deadzone,
 //                   center_manual_offset_x, center_manual_offset_y
 //   off 24..55  f32 range_min_x, range_max_x, range_min_y, range_max_y,
@@ -383,9 +394,11 @@ test("parseDiscovery: truncated payloads throw", () => {
 //   off 74..77  u32 nudge_time_ms
 //   off 78      u8  input_mode (0 mouse, 1 XAC)
 //   off 79      u8  nudge_enabled (0/1; absent in the 79-byte form)
+//   off 80      u8  xac_side (0 right, 1 left; absent in the 79/80-byte forms)
 
-// `nudge` undefined builds the older 79-byte form.
-function statePayload({ hasCenter, hasRange, mode, nudge }) {
+// `nudge` undefined builds the older 79-byte form; `side` undefined the
+// 80-byte form.
+function statePayload({ hasCenter, hasRange, mode, nudge, side }) {
   return concat(
     // center block (all values exactly representable as f32)
     f32le(0.5), f32le(-0.5), f32le(0.015625), f32le(0.03125), f32le(0.25), f32le(-0.25),
@@ -398,7 +411,8 @@ function statePayload({ hasCenter, hasRange, mode, nudge }) {
     // nudge + mode
     f32le(0.2), f32le(0.1), u32le(250),
     bytes(mode),
-    nudge === undefined ? bytes() : bytes(nudge));
+    nudge === undefined ? bytes() : bytes(nudge),
+    side === undefined ? bytes() : bytes(side));
 }
 
 test("decodeState: 79-byte layout, both manual deadzones present, XAC mode", () => {
@@ -442,7 +456,7 @@ test("decodeState: only one override present", () => {
 
 test("decodeState: short payload throws, longer payload is tolerated", () => {
   const ok = statePayload({ hasCenter: true, hasRange: true, mode: 0 });
-  assert.throws(() => P.decodeState(ok.subarray(0, 78)), /malformed STATE reply \(78 B, expected 79 or 80\)/);
+  assert.throws(() => P.decodeState(ok.subarray(0, 78)), /malformed STATE reply \(78 B, expected 79 to 81\)/);
   const longer = P.decodeState(concat(ok, bytes(1, 0xAA)));
   assert.equal(longer.nudgeTimeMs, 250);
   assert.equal(longer.nudgeEnabled, true);
@@ -463,6 +477,44 @@ test("decodeState: 79-byte STATE from older firmware decodes nudgeEnabled as nul
   const s = P.decodeState(statePayload({ hasCenter: true, hasRange: true, mode: 1 }));
   assert.equal(s.nudgeEnabled, null);
   assert.equal(s.inputMode, 1);
+});
+
+test("decodeState: 81-byte layout carries xac_side as the last byte", () => {
+  const left = statePayload({ hasCenter: false, hasRange: false, mode: 1, nudge: 1, side: 1 });
+  assert.equal(left.length, 81);
+  const s = P.decodeState(left);
+  assert.equal(s.xacSide, P.XAC_SIDE.LEFT);
+  assert.equal(s.nudgeEnabled, true);
+  assert.equal(s.inputMode, 1);
+  assert.equal(P.decodeState(statePayload({ hasCenter: false, hasRange: false, mode: 1, nudge: 0, side: 0 })).xacSide,
+               P.XAC_SIDE.RIGHT);
+});
+
+test("decodeState: 80- and 79-byte STATE from older firmware decode xacSide as null", () => {
+  assert.equal(P.decodeState(statePayload({ hasCenter: true, hasRange: true, mode: 1, nudge: 1 })).xacSide, null);
+  assert.equal(P.decodeState(statePayload({ hasCenter: true, hasRange: true, mode: 1 })).xacSide, null);
+});
+
+// ---------------------------------------------------------------- xacSideControls
+test("xacSideControls: highlights the side the device reports", () => {
+  const live = { connected: true, busy: false, haveState: true };
+  assert.deepEqual(P.xacSideControls({ ...live, xacSide: 0 }), { disabled: false, right: true, left: false, note: "" });
+  assert.deepEqual(P.xacSideControls({ ...live, xacSide: 1 }), { disabled: false, right: false, left: true, note: "" });
+});
+
+test("xacSideControls: firmware without the switch shows right, disabled, with a note", () => {
+  const c = P.xacSideControls({ connected: true, busy: false, haveState: true, xacSide: null });
+  assert.deepEqual(c, { disabled: true, right: true, left: false, note: P.XAC_SIDE_UNSUPPORTED_NOTE });
+});
+
+test("xacSideControls: disabled while disconnected, busy or before the first STATE", () => {
+  for (const ctx of [{ connected: false, busy: false, haveState: true },
+                     { connected: true, busy: true, haveState: true },
+                     { connected: true, busy: false, haveState: false }]) {
+    const c = P.xacSideControls({ ...ctx, xacSide: ctx.haveState ? 1 : null });
+    assert.equal(c.disabled, true, JSON.stringify(ctx));
+    assert.equal(c.note, "", JSON.stringify(ctx));
+  }
 });
 
 // ---------------------------------------------------------------- nudgeControls

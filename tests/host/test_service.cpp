@@ -93,14 +93,15 @@ TEST(service_get_state_encodes_snapshot) {
   CHECK_EQ(stream::get_u32(std::span<const uint8_t>(p).subspan(74)), 120u);
   CHECK_EQ(p[78], 1); // XAC
   CHECK_EQ(p[79], 0); // nudge clicks off (the default)
+  CHECK_EQ(p[80], 0); // right XAC joystick (the default)
 }
 
-TEST(service_state_reports_nudge_enabled_as_the_last_byte) {
+TEST(service_state_reports_nudge_enabled_at_offset_79) {
   Fixture fx("svc_state_nudge");
   fx.store.set_nudge_enabled(false);
   auto reply = fx.request(Msg::GetState);
   CHECK(is(reply, Msg::State));
-  CHECK_EQ(reply.payload.size(), size_t{80});
+  CHECK_EQ(reply.payload.size(), size_t{81});
   CHECK_EQ(reply.payload[79], 0);
 
   fx.store.set_nudge_enabled(true);
@@ -135,6 +136,44 @@ TEST(service_set_nudge_enabled_rejects_other_values_and_lengths) {
   }
   // The rejected requests left the default in place.
   CHECK(!fx.store.settings().nudge_enabled);
+}
+
+TEST(service_state_reports_xac_side_as_the_last_byte) {
+  Fixture fx("svc_state_xac_side");
+  auto reply = fx.request(Msg::GetState);
+  CHECK(is(reply, Msg::State));
+  CHECK_EQ(reply.payload.size(), size_t{81});
+  CHECK_EQ(reply.payload[80], 0); // right by default
+
+  fx.store.set_xac_side(OmegaStore::XacSide::LEFT);
+  reply = fx.request(Msg::GetState);
+  CHECK_EQ(reply.payload[80], 1);
+}
+
+TEST(service_set_xac_side_switches_the_joystick_live) {
+  int mode_changes = 0;
+  Fixture fx("svc_xac_side", {.on_mode_changed = [&](OmegaStore::InputMode) { ++mode_changes; }});
+
+  auto reply = fx.request(Msg::SetXacSide, {1});
+  CHECK(is(reply, Msg::Ok));
+  CHECK_EQ(stream::get_u32(reply.payload), 0u);
+  CHECK(fx.store.settings().xac_side == OmegaStore::XacSide::LEFT);
+
+  CHECK(is(fx.request(Msg::SetXacSide, {0}), Msg::Ok));
+  CHECK(fx.store.settings().xac_side == OmegaStore::XacSide::RIGHT);
+  // Applied live: no restart through the mode-change path.
+  CHECK_EQ(mode_changes, 0);
+}
+
+TEST(service_set_xac_side_rejects_other_values_and_lengths) {
+  Fixture fx("svc_xac_side_bad");
+  for (const auto &payload : std::vector<std::vector<uint8_t>>{{}, {2}, {0xFF}, {0, 0}, {1, 1}}) {
+    const auto reply = fx.request(Msg::SetXacSide, payload);
+    CHECK(is(reply, Msg::Error));
+    CHECK_EQ(stream::get_u32(reply.payload), static_cast<uint32_t>(std::errc::invalid_argument));
+    CHECK(support::error_message(reply).find("SET_XAC_SIDE") != std::string::npos);
+  }
+  CHECK(fx.store.settings().xac_side == OmegaStore::XacSide::RIGHT);
 }
 
 TEST(service_set_manual_offset_updates_store_and_replies_ok) {

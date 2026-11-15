@@ -63,6 +63,7 @@ device advertises a different protocol version the page warns in its log.
 | Nudge-click tuning | `0x53 SET_NUDGE_SETTINGS` | enter threshold in (0, 1], exit threshold in [0, 1], time window in ms |
 | Nudge clicks on/off | `0x60 SET_NUDGE_ENABLED` | the "Nudge clicks" checkbox in the nudge-click block. Off means the stick only moves the cursor: no nudge starts, and a held one is released at once. The tuning values are kept, and saved as `nudge_enabled=0/1` in `omega_settings.cfg` (off on a fresh board; a file from before the switch, without the key, loads as on). XAC mode has no nudge clicks, so it is unaffected. Firmware without this message does not answer it, and its 79-byte STATE reply is read as on |
 | Input mode | `0x54 SET_INPUT_MODE` | mouse or XAC gamepad. The device saves all live settings to flash and restarts to apply it. The OK reply is sent before the restart, so the page then loses the connection; reconnect after the stick re-enumerates |
+| XAC joystick side | `0x63 SET_XAC_SIDE` | the "Right stick" / "Left stick" buttons under Input mode. Right drives HID axes 0/1 (X, Y), left drives axes 2/3 (Z, RZ); the other joystick stays centered. Applies live with no restart; Save current state to flash keeps it. Firmware without the switch never answers, and the buttons are disabled with a note |
 | Save current state to flash | `0x55 SAVE_TO_FLASH` | writes `omega_calibration.cfg` and `omega_settings.cfg` to the device's file system |
 | Re-run calibration | `0x56 START_CALIBRATION` | asynchronous. The result arrives later as an unsolicited `0xD1` frame. The device stays busy until the sweep finishes and refuses a second request (`device_or_resource_busy`); the page keeps the button disabled until the result arrives. While it runs the device sends an unsolicited `0xD4 CALIBRATION_PROGRESS` frame at every stage change and then every 50 ms: the stage and its countdown, the raw position, the measured center and noise radius, and the range sweep's axis extremes, per-sector maximum radius and which of the 32 sectors are covered |
 | Finish the range sweep | `0x61 FINISH_CALIBRATION` | the range sweep is open-ended: it ends by itself once every sector is covered and the stick is released (see below), after 90 s, or on this request, which makes it evaluate what it has at once. For a user who cannot reach every direction: half the sectors (16 of 32) still pass. Refused (`operation_not_permitted`) unless the range sweep is sampling, which `CALIBRATION_PROGRESS` shows as stage 6 with `finish_available` set |
@@ -86,7 +87,7 @@ version 1; module 5 is the default routing id only (decision D24 in
 [docs/decisions.md](../../docs/decisions.md)). Change the id only for an
 incompatible wire format.
 
-The wire format (frame layout, every message and payload, the 80-byte STATE
+The wire format (frame layout, every message and payload, the 81-byte STATE
 reply and the 179-byte CALIBRATION_PROGRESS) is documented at the top of
 [calibration_service.hpp](include/calibration_service.hpp). The page's own
 header comment mirrors it.
