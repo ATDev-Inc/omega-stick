@@ -146,8 +146,9 @@ struct EspPorts : espp::omega_control::Ports {
   }
 
   void send_xac(const espp::omega_control::XacReport &r) override {
-    espp::XacGamepadInputReport xac_input_report;
-    xac_input_report.reset();
+    using Side = espp::XacGamepadInputReport::Side;
+    espp::XacGamepadInputReport xac_input_report(
+        r.side == espp::OmegaCalibration::XacSide::LEFT ? Side::LEFT : Side::RIGHT);
     xac_input_report.set_joystick(r.x, r.y);
     auto report = xac_input_report.get_report();
     std::error_code hid_ec;

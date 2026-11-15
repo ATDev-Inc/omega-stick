@@ -156,6 +156,8 @@ struct MouseReport {
 /// Already-normalized gamepad axes, [-1, +1].
 struct XacReport {
   float x{0.0f}, y{0.0f};
+  /// Which XAC joystick x/y drive (DeviceSettings::xac_side).
+  OmegaCalibration::XacSide side{OmegaCalibration::XacSide::RIGHT};
 };
 
 struct StepOutput {
@@ -354,6 +356,7 @@ inline StepOutput xac_step(XacState &s, const StepInput &in) {
   // Gamepad/XAC axes are already normalized [-1, +1].
   out.xac.x = in.stick.x;
   out.xac.y = in.stick.y;
+  out.xac.side = in.settings.xac_side;
 
   detail::drift_step(s.common, in, std::hypot(in.stick.x, in.stick.y), out);
   return out;

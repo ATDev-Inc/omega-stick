@@ -214,6 +214,35 @@ TEST(store_nudge_enabled_saves_and_loads) {
   CHECK(again.settings().nudge_enabled);
 }
 
+TEST(store_xac_side_saves_and_loads) {
+  TempDir dir("store_xac_side");
+  auto cfg = config_for(dir);
+  {
+    OmegaStore store(cfg);
+    CHECK(store.settings().xac_side == OmegaStore::XacSide::RIGHT); // default
+    store.set_xac_side(OmegaStore::XacSide::LEFT);
+    std::error_code ec;
+    CHECK(store.save_to_flash(ec));
+    CHECK(!ec);
+  }
+  {
+    std::ifstream in(cfg.settings_path);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(text.find("xac_side=1\n") != std::string::npos);
+  }
+  OmegaStore reloaded(cfg);
+  CHECK(reloaded.settings().xac_side == OmegaStore::XacSide::LEFT);
+}
+
+// A settings file from firmware before the side switch has no xac_side key.
+TEST(store_settings_file_without_xac_side_loads_as_right) {
+  TempDir dir("store_xac_side_missing");
+  auto cfg = config_for(dir);
+  { std::ofstream(cfg.settings_path) << "schema=1\ninput_mode=1\n"; }
+  OmegaStore store(cfg);
+  CHECK(store.settings().xac_side == OmegaStore::XacSide::RIGHT);
+}
+
 // A settings file from firmware before the switch has no nudge_enabled key.
 TEST(store_settings_file_without_nudge_enabled_loads_as_enabled) {
   TempDir dir("store_nudge_missing");

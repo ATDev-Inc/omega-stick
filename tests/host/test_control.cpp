@@ -489,6 +489,17 @@ TEST(control_xac_report_mirrors_the_mapped_stick) {
   CHECK(out.send_report);
   CHECK_NEAR(out.xac.x, 0.25f, 1e-6);
   CHECK_NEAR(out.xac.y, -0.75f, 1e-6);
+  CHECK(out.xac.side == espp::OmegaCalibration::XacSide::RIGHT);
+}
+
+TEST(control_xac_report_carries_the_selected_side) {
+  oc::XacState s;
+  auto in = input(0.25f, -0.75f, 0);
+  in.settings.xac_side = espp::OmegaCalibration::XacSide::LEFT;
+  const auto out = oc::xac_step(s, in);
+  CHECK(out.xac.side == espp::OmegaCalibration::XacSide::LEFT);
+  CHECK_NEAR(out.xac.x, 0.25f, 1e-6);
+  CHECK_NEAR(out.xac.y, -0.75f, 1e-6);
 }
 
 TEST(control_xac_drift_is_not_applied_while_the_stick_is_moving) {

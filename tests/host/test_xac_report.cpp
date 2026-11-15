@@ -100,3 +100,45 @@ TEST(xac_stick_x_moves_report_x) {
   CHECK_EQ(int(uy[Y]), int(Report::joystick_min));
   CHECK_EQ(int(uy[X]), int(c[X]));
 }
+
+// Side::RIGHT (the default) drives axes 0, 1 and leaves axes 2, 3 centered.
+TEST(xac_right_side_uses_axes_0_1) {
+  Report r(Report::Side::RIGHT);
+  r.set_joystick(1.0f, -1.0f);
+
+  const auto b = r.get_report();
+  const int center = Report::joystick_center;
+  CHECK_EQ(int(b[X]), int(Report::joystick_center + Report::joystick_range));
+  CHECK_EQ(int(b[Y]), int(Report::joystick_min));
+  CHECK_EQ(int(b[Z]), center);
+  CHECK_EQ(int(b[RZ]), center);
+}
+
+// Side::LEFT drives axes 2, 3 and leaves axes 0, 1 centered.
+TEST(xac_left_side_uses_axes_2_3) {
+  Report r(Report::Side::LEFT);
+  r.set_joystick(1.0f, -1.0f);
+
+  const auto b = r.get_report();
+  const int center = Report::joystick_center;
+  CHECK_EQ(int(b[X]), center);
+  CHECK_EQ(int(b[Y]), center);
+  CHECK_EQ(int(b[Z]), int(Report::joystick_center + Report::joystick_range));
+  CHECK_EQ(int(b[RZ]), int(Report::joystick_min));
+}
+
+// Switching sides recenters the old axes instead of leaving them deflected.
+TEST(xac_set_side_recenters_previous_axes) {
+  Report r;
+  r.set_joystick(1.0f, 1.0f);
+  r.set_side(Report::Side::LEFT);
+  r.set_joystick(std::uint8_t{0x10}, std::uint8_t{0x20});
+
+  const auto b = r.get_report();
+  const int center = Report::joystick_center;
+  CHECK(r.side() == Report::Side::LEFT);
+  CHECK_EQ(int(b[X]), center);
+  CHECK_EQ(int(b[Y]), center);
+  CHECK_EQ(int(b[Z]), 0x10);
+  CHECK_EQ(int(b[RZ]), 0x20);
+}

@@ -77,7 +77,7 @@
                                    tuning, and input mode are untouched.
 
     device -> host (calibration module):
-      0xD0 STATE   (reply to GET_STATE) -- fixed 80-byte little-endian
+      0xD0 STATE   (reply to GET_STATE) -- fixed 81-byte little-endian
                     struct, in this exact order:
                       f32 center_x
                       f32 center_y
@@ -107,6 +107,13 @@
                                                             nudge clicks always
                                                             on, the checkbox is
                                                             shown disabled)
+                      u8  xac_side                         (0 = right joystick,
+                                                            1 = left; firmware
+                                                            without the switch
+                                                            sends 80 bytes:
+                                                            always right, the
+                                                            buttons are shown
+                                                            disabled)
       0x57 RESTART                (no payload) -- reply OK is sent first, then
                                    the device reboots ~750 ms later (USB
                                    re-enumerates; reconnect afterwards).
@@ -159,6 +166,12 @@
                                    Firmware before protocol v2 never replies:
                                    the console treats a timeout as "no live
                                    view" and falls back to printed prompts.
+      0x63 SET_XAC_SIDE           u8 side (0 = right joystick, HID axes 0/1;
+                                   1 = left joystick, axes 2/3). Live, no
+                                   restart; SAVE_TO_FLASH persists it.
+                                   Reply: OK, or ERROR for any other value
+                                   or length. Firmware without the switch
+                                   does not answer it (see STATE's last byte).
       The OTA messages reply ERROR (function_not_supported) if the firmware
       was built without an OTA engine wired in.
       0xD2 FW_INFO  (reply to GET_FW_INFO) -- u8 pending_verify (0/1),
@@ -720,6 +733,15 @@
           <button id="modeXacBtn" disabled>XAC gamepad</button>
         </div>
         <p class="muted" style="margin: 8px 0 0;">The device saves its settings and restarts to apply the new mode, so this console will disconnect; reconnect afterwards.</p>
+        <div class="edit-row" style="margin-top: 12px;">
+          <span>XAC joystick</span>
+          <div class="mode-toggle">
+            <button id="xacRightBtn" disabled>Right stick</button>
+            <button id="xacLeftBtn" disabled>Left stick</button>
+          </div>
+        </div>
+        <p class="muted" style="margin: 0;">Which Xbox Adaptive Controller joystick the stick acts as in XAC mode; the other one stays centered. Applies live; use Save current state to flash to keep it after a restart.</p>
+        <p class="muted" id="xacSideNote" style="margin: 8px 0 0;" hidden></p>
       </fieldset>
 
       <fieldset>
@@ -932,6 +954,7 @@
     SET_NUDGE_ENABLED: 0x60,
     FINISH_CALIBRATION: 0x61,
     SET_POSITION_STREAM: 0x62,
+    SET_XAC_SIDE: 0x63,
     STATE: 0xD0,
     CALIBRATION_RESULT: 0xD1,
     FW_INFO: 0xD2,
@@ -941,6 +964,8 @@
     ERROR: 0xFE,
   };
   const INPUT_MODE = { MOUSE: 0, XAC: 1 };
+  // XAC joystick the stick drives: RIGHT = HID axes 0/1, LEFT = axes 2/3.
+  const XAC_SIDE = { RIGHT: 0, LEFT: 1 };
 
   // CRC-32 (zlib / IEEE 802.3). Golden: crc32("123456789") === 0xCBF43926.
   const CRC_TABLE = (() => {
@@ -1087,12 +1112,14 @@
     return { id: MODULE_CALIBRATION, how: "missing", versionMismatch: false };
   }
 
-  // Fixed 80-byte STATE struct; see calibration_service.hpp. The trailing u8
-  // nudge_enabled is newer than the rest: firmware without the nudge on/off
-  // switch sends 79 bytes, which decodes as nudgeEnabled null (nudge clicks
-  // are always on there; see nudgeControls). Bytes after it are ignored.
+  // Fixed 81-byte STATE struct; see calibration_service.hpp. The trailing u8s
+  // are newer than the rest: firmware without the nudge on/off switch sends
+  // 79 bytes, which decodes as nudgeEnabled null (nudge clicks are always on
+  // there; see nudgeControls), and firmware without the XAC side switch sends
+  // 80 (or 79), which decodes as xacSide null (always the right joystick; see
+  // xacSideControls). Bytes after them are ignored.
   function decodeState(payload) {
-    if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79 or 80)");
+    if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79 to 81)");
     const v = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
     let o = 0;
     const f32 = () => { const x = v.getFloat32(o, true); o += 4; return x; };
@@ -1115,7 +1142,24 @@
     s.nudgeTimeMs = u32();
     s.inputMode = u8();
     s.nudgeEnabled = o < payload.length ? u8() !== 0 : null;
+    s.xacSide = o < payload.length ? u8() : null;
     return s;
+  }
+
+  // The XAC joystick (right / left) buttons, for a decoded STATE's xacSide
+  // (0, 1, or null from firmware without the switch, which always reports the
+  // right joystick and would not answer SET_XAC_SIDE).
+  const XAC_SIDE_UNSUPPORTED_NOTE =
+    "This firmware has no joystick side switch, so the stick is always the XAC's right joystick. Update the firmware to choose here.";
+  function xacSideControls({ connected, busy, haveState, xacSide }) {
+    const known = xacSide === XAC_SIDE.RIGHT || xacSide === XAC_SIDE.LEFT;
+    const live = !!connected && !busy && !!haveState;
+    return {
+      disabled: !live || !known,
+      right: xacSide === XAC_SIDE.RIGHT || (!!haveState && !known),
+      left: xacSide === XAC_SIDE.LEFT,
+      note: haveState && !known ? XAC_SIDE_UNSUPPORTED_NOTE : "",
+    };
   }
 
   // The "Nudge clicks" checkbox and the tuning fields under it, for a
@@ -1214,6 +1258,10 @@
   }
   function encodeSetNudgeEnabled(enabled) {
     return new Uint8Array([enabled ? 1 : 0]);
+  }
+  function encodeSetXacSide(side) {
+    if (side !== XAC_SIDE.RIGHT && side !== XAC_SIDE.LEFT) throw new Error("XAC side must be 0 (right) or 1 (left)");
+    return new Uint8Array([side]);
   }
 
   // ---------------------------------------------------------------------
@@ -2461,13 +2509,14 @@
     HEADER_SIZE, CRC_SIZE, MAX_PAYLOAD, MAX_FRAME,
     MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, PROTOCOL_ID, PROTOCOL_VERSION,
     FLAGS_REQUEST, FLAGS_REPLY_BIT, FLAG_CORRELATION,
-    TYPE, INPUT_MODE,
+    TYPE, INPUT_MODE, XAC_SIDE,
     crc32, buildFrame, FrameParser, readU32,
     parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
     encodeSetManualOffset, encodeSetDeadzoneOverride,
-    encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled,
+    encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled, encodeSetXacSide,
     encodeSetPositionStream, buildSetPositionStream, parseCalibrationProgress, STAGE_NAME,
     NUDGE_SWITCH_UNSUPPORTED_NOTE, nudgeControls,
+    XAC_SIDE_UNSUPPORTED_NOTE, xacSideControls,
   };
   globalThis.OmegaProtocol = OmegaProtocol;
   if (typeof module !== "undefined" && module.exports) module.exports = OmegaProtocol;
@@ -2484,11 +2533,11 @@
     const DEFAULT_VID = 0x1209, DEFAULT_PID = 0x0d32; // OMEGA_USB_VID / OMEGA_USB_PID in main/main.cpp
     const VENDOR_CLASS = 0xFF;
     const {
-      MAX_FRAME, MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, PROTOCOL_ID, PROTOCOL_VERSION, TYPE, INPUT_MODE,
+      MAX_FRAME, MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, PROTOCOL_ID, PROTOCOL_VERSION, TYPE, INPUT_MODE, XAC_SIDE,
       buildFrame, FrameParser, readU32, parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
       encodeSetManualOffset, encodeSetDeadzoneOverride, encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled,
-      encodeSetPositionStream, parseCalibrationProgress,
-      nudgeControls,
+      encodeSetXacSide, encodeSetPositionStream, parseCalibrationProgress,
+      nudgeControls, xacSideControls,
       inspectImage, buildFlashPlan, buildRevertPlan, decideOutcome, CONFIRM_CHECKS, runConfirmCheck, confirmFailureNotice, describeSensorState,
       calibrationNotice, describeCalibrationState,
       revertAvailability, describePrevState, reconnectDeadline, reconnectWaitText, resumesOnReconnect,
@@ -2505,7 +2554,7 @@
       0x53: "SET_NUDGE_SETTINGS", 0x54: "SET_INPUT_MODE", 0x55: "SAVE_TO_FLASH",
       0x56: "START_CALIBRATION", 0x57: "RESTART", 0x58: "OTA_BEGIN", 0x59: "OTA_DATA",
       0x5A: "OTA_FINISH", 0x5B: "OTA_ABORT", 0x5C: "GET_FW_INFO", 0x5D: "MARK_VALID", 0x5E: "REVERT",
-      0x5F: "GET_DIAGNOSTICS", 0x60: "SET_NUDGE_ENABLED", 0x61: "FINISH_CALIBRATION", 0x62: "SET_POSITION_STREAM",
+      0x5F: "GET_DIAGNOSTICS", 0x60: "SET_NUDGE_ENABLED", 0x61: "FINISH_CALIBRATION", 0x62: "SET_POSITION_STREAM", 0x63: "SET_XAC_SIDE",
       0xD0: "STATE", 0xD1: "CALIBRATION_RESULT", 0xD2: "FW_INFO", 0xD3: "DIAGNOSTICS", 0xD4: "CALIBRATION_PROGRESS", 0xDF: "OK", 0xFE: "ERROR",
     };
     const CMD_TIMEOUT_MS = 5000;
@@ -2524,7 +2573,7 @@
                       "offsetX", "offsetY", "applyOffsetBtn", "zeroOffsetBtn",
                       "centerDzEnable", "centerDzValue", "rangeDzEnable", "rangeDzValue", "applyDeadzoneBtn",
                       "nudgeEnabled", "nudgeEnabledNote", "nudgeEnter", "nudgeExit", "nudgeTime", "applyNudgeBtn",
-                      "modeMouseBtn", "modeXacBtn",
+                      "modeMouseBtn", "modeXacBtn", "xacRightBtn", "xacLeftBtn", "xacSideNote",
                       "recalibrateBtn", "recalInfo", "calNeededNotice",
                       "calStageLine", "calProgress", "calSectorCount", "calCanvas", "calInstruction", "calDoneBtn", "calDoneMsg",
                       "diagRefreshBtn", "diagInfo", "resetList",
@@ -2958,6 +3007,14 @@
       // A mode switch restarts the device, which would undo a pending update.
       els.modeMouseBtn.disabled = !connected || busy || !haveState || uc.modeLocked;
       els.modeXacBtn.disabled = !connected || busy || !haveState || uc.modeLocked;
+      // XAC joystick side: decided by OmegaProtocol.xacSideControls (unit tested).
+      const xc = xacSideControls({ connected, busy, haveState, xacSide: state ? state.xacSide : null });
+      els.xacRightBtn.disabled = xc.disabled;
+      els.xacLeftBtn.disabled = xc.disabled;
+      els.xacRightBtn.classList.toggle("active", xc.right);
+      els.xacLeftBtn.classList.toggle("active", xc.left);
+      els.xacSideNote.textContent = xc.note;
+      els.xacSideNote.hidden = !xc.note;
       els.recalibrateBtn.disabled = !connected || busy || recalPending;
       els.diagRefreshBtn.disabled = !connected || busy;
       // Update controls: decided by OmegaProtocol.updateControls (unit tested).
@@ -3398,6 +3455,25 @@
     }
     els.modeMouseBtn.addEventListener("click", () => setInputMode(INPUT_MODE.MOUSE));
     els.modeXacBtn.addEventListener("click", () => setInputMode(INPUT_MODE.XAC));
+
+    async function setXacSide(side) {
+      if (!transport || busy) return;
+      const sideName = side === XAC_SIDE.LEFT ? "left" : "right";
+      busy = true; updateUI(); setStatus("busy", "Switching to the " + sideName + " joystick...");
+      try {
+        await transact(TYPE.SET_XAC_SIDE, encodeSetXacSide(side), [TYPE.OK], CMD_TIMEOUT_MS, 1);
+        logLine("sys", "The stick is now the XAC's " + sideName + " joystick (live). " +
+                       "Use Save current state to flash to keep it after a restart.");
+        await refreshAfterApply("SET_XAC_SIDE");
+      } catch (e) {
+        logLine("err", "SET_XAC_SIDE failed: " + e.message);
+      } finally {
+        busy = false; updateUI();
+        if (transport) setStatus("connected", "Connected");
+      }
+    }
+    els.xacRightBtn.addEventListener("click", () => setXacSide(XAC_SIDE.RIGHT));
+    els.xacLeftBtn.addEventListener("click", () => setXacSide(XAC_SIDE.LEFT));
 
     els.saveFlashBtn.addEventListener("click", async () => {
       if (!transport || !haveState || busy) return;

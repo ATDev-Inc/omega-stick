@@ -39,6 +39,7 @@
     SET_NUDGE_ENABLED: 0x60,
     FINISH_CALIBRATION: 0x61,
     SET_POSITION_STREAM: 0x62,
+    SET_XAC_SIDE: 0x63,
     STATE: 0xD0,
     CALIBRATION_RESULT: 0xD1,
     FW_INFO: 0xD2,
@@ -48,6 +49,8 @@
     ERROR: 0xFE,
   };
   const INPUT_MODE = { MOUSE: 0, XAC: 1 };
+  // XAC joystick the stick drives: RIGHT = HID axes 0/1, LEFT = axes 2/3.
+  const XAC_SIDE = { RIGHT: 0, LEFT: 1 };
 
   // CRC-32 (zlib / IEEE 802.3). Golden: crc32("123456789") === 0xCBF43926.
   const CRC_TABLE = (() => {
@@ -194,12 +197,14 @@
     return { id: MODULE_CALIBRATION, how: "missing", versionMismatch: false };
   }
 
-  // Fixed 80-byte STATE struct; see calibration_service.hpp. The trailing u8
-  // nudge_enabled is newer than the rest: firmware without the nudge on/off
-  // switch sends 79 bytes, which decodes as nudgeEnabled null (nudge clicks
-  // are always on there; see nudgeControls). Bytes after it are ignored.
+  // Fixed 81-byte STATE struct; see calibration_service.hpp. The trailing u8s
+  // are newer than the rest: firmware without the nudge on/off switch sends
+  // 79 bytes, which decodes as nudgeEnabled null (nudge clicks are always on
+  // there; see nudgeControls), and firmware without the XAC side switch sends
+  // 80 (or 79), which decodes as xacSide null (always the right joystick; see
+  // xacSideControls). Bytes after them are ignored.
   function decodeState(payload) {
-    if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79 or 80)");
+    if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79 to 81)");
     const v = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
     let o = 0;
     const f32 = () => { const x = v.getFloat32(o, true); o += 4; return x; };
@@ -222,7 +227,24 @@
     s.nudgeTimeMs = u32();
     s.inputMode = u8();
     s.nudgeEnabled = o < payload.length ? u8() !== 0 : null;
+    s.xacSide = o < payload.length ? u8() : null;
     return s;
+  }
+
+  // The XAC joystick (right / left) buttons, for a decoded STATE's xacSide
+  // (0, 1, or null from firmware without the switch, which always reports the
+  // right joystick and would not answer SET_XAC_SIDE).
+  const XAC_SIDE_UNSUPPORTED_NOTE =
+    "This firmware has no joystick side switch, so the stick is always the XAC's right joystick. Update the firmware to choose here.";
+  function xacSideControls({ connected, busy, haveState, xacSide }) {
+    const known = xacSide === XAC_SIDE.RIGHT || xacSide === XAC_SIDE.LEFT;
+    const live = !!connected && !busy && !!haveState;
+    return {
+      disabled: !live || !known,
+      right: xacSide === XAC_SIDE.RIGHT || (!!haveState && !known),
+      left: xacSide === XAC_SIDE.LEFT,
+      note: haveState && !known ? XAC_SIDE_UNSUPPORTED_NOTE : "",
+    };
   }
 
   // The "Nudge clicks" checkbox and the tuning fields under it, for a
@@ -321,6 +343,10 @@
   }
   function encodeSetNudgeEnabled(enabled) {
     return new Uint8Array([enabled ? 1 : 0]);
+  }
+  function encodeSetXacSide(side) {
+    if (side !== XAC_SIDE.RIGHT && side !== XAC_SIDE.LEFT) throw new Error("XAC side must be 0 (right) or 1 (left)");
+    return new Uint8Array([side]);
   }
 
   // ---------------------------------------------------------------------
@@ -1568,13 +1594,14 @@
     HEADER_SIZE, CRC_SIZE, MAX_PAYLOAD, MAX_FRAME,
     MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, PROTOCOL_ID, PROTOCOL_VERSION,
     FLAGS_REQUEST, FLAGS_REPLY_BIT, FLAG_CORRELATION,
-    TYPE, INPUT_MODE,
+    TYPE, INPUT_MODE, XAC_SIDE,
     crc32, buildFrame, FrameParser, readU32,
     parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
     encodeSetManualOffset, encodeSetDeadzoneOverride,
-    encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled,
+    encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled, encodeSetXacSide,
     encodeSetPositionStream, buildSetPositionStream, parseCalibrationProgress, STAGE_NAME,
     NUDGE_SWITCH_UNSUPPORTED_NOTE, nudgeControls,
+    XAC_SIDE_UNSUPPORTED_NOTE, xacSideControls,
   };
   globalThis.OmegaProtocol = OmegaProtocol;
   if (typeof module !== "undefined" && module.exports) module.exports = OmegaProtocol;
