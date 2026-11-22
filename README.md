@@ -65,7 +65,7 @@ For component-level detail and known issues, see [docs/status.md](docs/status.md
 - **Firmware updates over USB**
 - **Tests in CI**
 
-Experimental: **XAC (Xbox Adaptive Controller) gamepad mode** is implemented but not yet verified on real Xbox Adaptive Controller hardware. See [docs/status.md](docs/status.md).
+Experimental: **XAC (Xbox Adaptive Controller) gamepad mode** is implemented and verified with a singular joystick. Two simultaneous joysticks have not been verified on real XAC hardware.
 
 Not implemented yet: response curves, per-axis inversion and gain, tremor
 filtering, profiles, nudge click directional configuration, hover click option, and a status LED.
