@@ -11,6 +11,18 @@ what each part of the number means and how a release is cut.
 
 ### Added
 
+- **The hosted console works offline after the first visit.** Once you have
+  opened <https://atdev-inc.github.io/omega-stick/console/> with internet, the
+  page opens again with no internet, so you can still connect the stick and
+  recalibrate it. While online you always get the current page, and checking
+  for or installing a firmware update still needs internet. It takes effect
+  with the next full release, because the Pages site is only deployed then.
+  ([#121](https://github.com/ATDev-Inc/omega-stick/pull/121))
+- **Editable CAD source for the printed parts.** The Fusion 360 project
+  (`models/omega_stick.f3d`) is now published next to the STL files, and the
+  models and CAD source are licensed under CERN-OHL-P-2.0, so you can change
+  the parts and print your own versions.
+  ([#111](https://github.com/ATDev-Inc/omega-stick/pull/111))
 - **Calibration you can watch.** The console's Recalibration section now shows
   a live picture of the stick while a calibration runs: a dot for the sensor
   reading, the measured center and its noise circle, and a ring of 32
@@ -23,9 +35,32 @@ what each part of the number means and how a release is cut.
   working; the console falls back to the printed prompts when the firmware
   does not stream progress.
   ([#103](https://github.com/ATDev-Inc/omega-stick/pull/103))
+- **Keep your own copy of the console.** The console has a new "Save a copy of
+  this page" button that downloads it as `omega_stick_console.html`, a single
+  file that opens from your computer with no internet and connects to the
+  stick the same way. It is not updated automatically, so the releases page is
+  the place for a newer one. Each GitHub release now also carries the console
+  as an `omega_stick_console.html` download, starting with the next full
+  release, so it no longer depends on the project website or on the browser.
+  ([#123](https://github.com/ATDev-Inc/omega-stick/pull/123))
+
+### Changed
+
+- **The joystick cap now screws on.** The cap could shift and fall off the
+  joystick while in use. The joystick and topper models now have a screw
+  thread; print both new parts together to get it. The holders and sockets
+  were also re-centered and adjusted for fit. Closes #113.
+  ([#116](https://github.com/ATDev-Inc/omega-stick/pull/116),
+  [#111](https://github.com/ATDev-Inc/omega-stick/pull/111))
 
 ### Fixed
 
+- **Chrome's "go to page" prompt now opens this project's console.** When the
+  stick was plugged in, Chrome offered espp's generic board console, whose
+  calibration link went to a page that does not exist on espp's site. The
+  stick now points Chrome straight at
+  https://atdev-inc.github.io/omega-stick/console/.
+  [#119](https://github.com/ATDev-Inc/omega-stick/pull/119).
 - **The cursor no longer moves while you nudge.** With nudge clicks on, the
   cursor used to travel during the push itself, again when a nudge that
   stayed below the exit threshold was dropped after one time window, and

@@ -257,6 +257,7 @@ full-flash image (`idf.py merge-bin`) and publish
 | --- | --- |
 | `/` | Landing page |
 | `/console/` | A copy of the calibration console |
+| `/console/sw.js` | Service worker that keeps the console page available offline |
 | `/flash.html` | First flash and recovery, using ESP Web Tools 10.4.0 |
 | `/firmware/omega_stick-X.Y.Z.bin` | App image, for console updates |
 | `/firmware/omega_stick-X.Y.Z-full.bin` | Merged bootloader, partition table and app, written at offset 0 |
@@ -264,9 +265,21 @@ full-flash image (`idf.py merge-bin`) and publish
 | `/firmware/latest.json` | Feed the console reads |
 | `/firmware/SHA256SUMS` | `sha256sum -c` format |
 
-The same `/firmware/` files are attached to the GitHub release. Browsers fetch
+The same `/firmware/` files are attached to the GitHub release, along with a
+copy of the console named `omega_stick_console.html` (the page at `/console/`,
+under a download-friendly name, outside `/firmware/` so it is not in the feed
+or in `SHA256SUMS`). The console's "Save a copy of this page" button saves the
+same file. Browsers fetch
 from Pages because GitHub release downloads send no CORS headers and Pages
 does. Drafts and prereleases do not update Pages.
+
+After one visit with internet, the hosted console also opens with no internet:
+`/console/sw.js` keeps a copy of the console page. It is network first, so
+while online you always get the current page (it has to match the firmware),
+and the saved copy is used only when the network fails. The firmware feed and
+images are never cached, so checking for and installing an update still need
+internet. The page registers the worker only on the Pages site; opening it from
+disk or a local server does not.
 
 `latest.json` is written by [scripts/release_feed.mjs](../scripts/release_feed.mjs).
 Paths are relative to the file itself:
