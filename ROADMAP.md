@@ -16,7 +16,8 @@ Last reviewed: 2026-10-26.
 ## Where things stand
 
 The firmware has a working mouse mode, an XAC gamepad mode verified with one
-joystick on a real Xbox Adaptive Controller (two at once not yet), calibration persisted to flash, a
+joystick on a real Xbox Adaptive Controller (on the firmware in #114, not merged
+yet; two at once not yet), calibration persisted to flash, a
 browser console, firmware updates over USB with rollback (on in the first
 release, D25 as amended), and a simulator for
 working without a board. All of it is covered by host, web and fuzz tests in

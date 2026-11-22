@@ -65,7 +65,7 @@ For component-level detail and known issues, see [docs/status.md](docs/status.md
 - **Firmware updates over USB**
 - **Tests in CI**
 
-Experimental: **XAC (Xbox Adaptive Controller) gamepad mode** is implemented and verified with a singular joystick. Two simultaneous joysticks have not been verified on real XAC hardware.
+Experimental: **XAC (Xbox Adaptive Controller) gamepad mode** is implemented and verified with a singular joystick. Two simultaneous joysticks have not been verified on real XAC hardware. The written record of that test is [#114](https://github.com/ATDev-Inc/omega-stick/pull/114): it ran on that pull request's firmware, which is not merged yet. See [docs/status.md](docs/status.md).
 
 Not implemented yet: response curves, per-axis inversion and gain, tremor
 filtering, profiles, nudge click directional configuration, hover click option, and a status LED.
