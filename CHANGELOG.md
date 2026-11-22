@@ -18,6 +18,11 @@ what each part of the number means and how a release is cut.
   for or installing a firmware update still needs internet. It takes effect
   with the next full release, because the Pages site is only deployed then.
   ([#121](https://github.com/ATDev-Inc/omega-stick/pull/121))
+- **Editable CAD source for the printed parts.** The Fusion 360 project
+  (`models/omega_stick.f3d`) is now published next to the STL files, and the
+  models and CAD source are licensed under CERN-OHL-P-2.0, so you can change
+  the parts and print your own versions.
+  ([#111](https://github.com/ATDev-Inc/omega-stick/pull/111))
 - **Calibration you can watch.** The console's Recalibration section now shows
   a live picture of the stick while a calibration runs: a dot for the sensor
   reading, the measured center and its noise circle, and a ring of 32
@@ -30,6 +35,15 @@ what each part of the number means and how a release is cut.
   working; the console falls back to the printed prompts when the firmware
   does not stream progress.
   ([#103](https://github.com/ATDev-Inc/omega-stick/pull/103))
+
+### Changed
+
+- **The joystick cap now screws on.** The cap could shift and fall off the
+  joystick while in use. The joystick and topper models now have a screw
+  thread; print both new parts together to get it. The holders and sockets
+  were also re-centered and adjusted for fit. Closes #113.
+  ([#116](https://github.com/ATDev-Inc/omega-stick/pull/116),
+  [#111](https://github.com/ATDev-Inc/omega-stick/pull/111))
 
 ### Fixed
 

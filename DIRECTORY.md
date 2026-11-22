@@ -135,7 +135,7 @@ console and the firmware files; see
 
 | Path | What it is |
 |---|---|
-| [models/](models/) | STL files for the printed parts: joystick, magnet and sensor holders, QT Py holder, sockets, topper |
+| [models/](models/) | STL files for the printed parts: joystick, magnet and sensor holders, QT Py holder, sockets, topper; their Fusion 360 source `omega_stick.f3d`; licensed CERN-OHL-P-2.0 ([LICENSE](models/LICENSE)) |
 | [assets/logo/](assets/logo/) | Logo, wordmark and scene artwork, with the scripts that generate them. See its [README](assets/logo/README.md) |
 
 ## GitHub configuration
