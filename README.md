@@ -28,6 +28,7 @@ This repository holds the required firmware. There are no additional drivers or 
   - [Expected output](#expected-output)
   - [Input modes](#input-modes)
 - [Developer Notes](#developer-notes)
+  - [Building from source](#building-from-source)
   - [Build options](#build-options)
   - [Running the host tests](#running-the-host-tests)
 - [Repository layout](#repository-layout)
@@ -41,11 +42,11 @@ This repository holds the required firmware. There are no additional drivers or 
 The force required to move conventional joysticks is typically well over 100 grams. For someone with limited strength, reduced range of motion, tremor, or fatigue, that resistance results in an unusable design. 
 
 Several sub-10 gram sticks already ship. They are closed, mostly dealer-gated, and often unpriced or out of stock.
-The gap is the combination of low force with an open design, a plain USB HID interface, a transparent, more affordable price, and a published method for measuring the force
+The gap is the combination of low force with an open design, a plain USB HID interface, a published, transparent price, and a published method for measuring the force
 claim. See [docs/PRD.md](docs/PRD.md).
 
 We built Omega Stick to fill this gap. It uses a
-contactless 3-axis Hall-effect sensor (TI TMAG5273A2) that measures the
+contactless 3-axis Hall-effect sensor (TI TMAG5273) that measures the
 position of a small magnet as well as using magnetic centering. This stick is configurable, able to increase actuation force via incorporating additional magnets. See D12 in [docs/decisions.md](docs/decisions.md).
 
 
@@ -56,7 +57,7 @@ The latest is on the
 [releases page](https://github.com/ATDev-Inc/omega-stick/releases/latest).
 For component-level detail and known issues, see [docs/status.md](docs/status.md).
 
-### What works today:
+### What works today
 
 - **Sensor driver and fault handling**
 - **Mouse mode with nudge click option**
@@ -64,7 +65,7 @@ For component-level detail and known issues, see [docs/status.md](docs/status.md
 - **Firmware updates over USB**
 - **Tests in CI**
 
-Experimental: **XAC (Xbox Adaptive Controller) gamepad mode** is implemented and verified with a singular joystick. Two simultaneous joysticks have not been verified on real XAC hardware.
+Experimental: **XAC (Xbox Adaptive Controller) gamepad mode** is implemented but not yet verified on real Xbox Adaptive Controller hardware. See [docs/status.md](docs/status.md).
 
 Not implemented yet: response curves, per-axis inversion and gain, tremor
 filtering, profiles, nudge click directional configuration, hover click option, and a status LED.
@@ -99,7 +100,7 @@ A new board is flashed once, from the browser at the
 
 After that, firmware is updated over USB from the
 calibration console:
-<https://atdev-inc.github.io/omega-stick/console/>. Connect via WebSerial or USB and
+<https://atdev-inc.github.io/omega-stick/console/>. Connect via WebUSB or Web Serial and
 choose or drag in the app image (`build/omega_stick.bin`, or a release's
 `omega_stick-X.Y.Z.bin`) in the "Firmware update" section. The page checks the
 file, shows what is running and what will replace it, and reconnects by itself
@@ -120,7 +121,7 @@ The firmware currently targets:
 | Part | Notes |
 | --- | --- |
 | MCU | ESP32-S3 QtPy|
-| Sensor | TI TMAG5273A2 3-axis Hall-effect sensor|
+| Sensor | TI TMAG5273 3-axis Hall-effect sensor|
 | Bus | Qwiic / STEMMA QT I2C |
 | Host link | USB-C|
 
@@ -139,16 +140,16 @@ and we will point you at what exists.
 
 | Part | Notes | Purchase Links | Typical Cost |
 | --- | --- | --- | --- |
-| MCU | ESP32-S3 QtPy, configured via the ESP++ `qtpy` board support | [This one from Adafruit](https://www.digikey.com/en/products/detail/adafruit-industries-llc/5700/21283799) or [This one](https://www.digikey.com/en/products/detail/adafruit-industries-llc/5426/21283802?s=N4IgjCBcoLQBxVAYygMwIYBsDOBTANCAPZQDa4ArAEwIC6AvvYVWSBQCxUBsIDQA) on Digikey| $12.50 |
-| Sensor | TI TMAG5273 3-axis Hall-effect sensor| [Digikey](https://www.digikey.com/en/products/detail/adafruit-industries-llc/6490/29698502?gclsrc=aw.ds&gad_source=1&gad_campaignid=20243136172&gclid=Cj0KCQiA8OrXBhDEARIsAECtlx75HEZX0Hwv5CG-GQk6Sn1LJtmdVbJmf25XCX-vcoST2kBec74-rpwaAoZYEALw_wcB) or [Adafruit](https://www.adafruit.com/product/6490) | $5.95 |
+| MCU | ESP32-S3 QtPy, configured via the ESP++ `qtpy` board support | [This one from Adafruit](https://www.digikey.com/en/products/detail/adafruit-industries-llc/5700/21283799) or [This one](https://www.digikey.com/en/products/detail/adafruit-industries-llc/5426/21283802) on Digikey| $12.50 |
+| Sensor | TI TMAG5273 3-axis Hall-effect sensor| [Digikey](https://www.digikey.com/en/products/detail/adafruit-industries-llc/6490/29698502) or [Adafruit](https://www.adafruit.com/product/6490) | $5.95 |
 | Bus | Qwiic / STEMMA QT I2C | [Digikey](https://www.digikey.com/en/products/detail/adafruit-industries-llc/4399/10824268) | $0.95 |
 | Host link | USB-C to USB (**Check your cable**! It must allow for data transmission, not just power!) | |
 
 **Total**: ~$20.00 (excluding shipping)
 
-3D printable models are found in [models](/models).
+3D printable models are found in [models](models/).
 
-**Assembly Steps Incoming!!!**
+Assembly steps are not written yet.
 
 ### Firmware: First Flash
 
@@ -156,12 +157,15 @@ Visit https://atdev-inc.github.io/omega-stick/flash.html and follow the site's i
 
 ### Firmware: Updates
 1. Visit https://atdev-inc.github.io/omega-stick/console/
-2. Hold `BOOT` with a stylus/pencil/toothpick/other small, thin device
-(on the QT Py ESP32-S3, the button nearer the USB-C connector) while plugging
-the board in via USB-C.
-3. Connect via WebSerial.
-4. Select "Check for latest firmware" or upload omega_stick.bin.
-5. Select "Flash Firmware" and wait for completion.
+2. Connect via WebUSB or Web Serial. No button press is needed.
+3. In the "Firmware update" section, select "Check for latest firmware" or
+choose `omega_stick.bin`.
+4. Confirm the update and wait for the page to reconnect and report the result.
+
+A blank board, or a stick that will not connect to the console, needs a first
+flash or recovery instead, which does use `BOOT`. See the
+[flash page](https://atdev-inc.github.io/omega-stick/flash.html) and
+[docs/firmware-updates.md](docs/firmware-updates.md#first-flash-and-recovery).
 
 
 
@@ -170,7 +174,7 @@ the board in via USB-C.
 https://atdev-inc.github.io/omega-stick/console/
 
 A browser page for viewing and tuning the stick's calibration and settings
-over USB. Open it from disk in Chrome, Edge, or Firefox (WebUSB does not work with Firefox) and connect with WebUSB or Web
+over USB. Open it from disk in Chrome or Edge (a Chromium-based browser is required) and connect with WebUSB or Web
 Serial. See the [omega_calibration README](components/omega_calibration/README.md)
 for details.
 
@@ -209,10 +213,16 @@ The stick boots as a mouse by default. It also has the option to present as an X
 **Nudge click directions:**
 - Away from user: Left click
 - Towards User: Scroll down
-- Left of user: Right click
-- Right of user: Scroll up
+- Left of user: Scroll up
+- Right of user: Right click
 
 ## Developer Notes
+
+### Building from source
+
+The firmware builds with ESP-IDF v6.0 (the version CI builds with). Setup and
+build steps are in [CONTRIBUTING.md](CONTRIBUTING.md#development-environment).
+A full `idf.py flash` replaces saved calibration; `idf.py app-flash` keeps it.
 
 ### Build options
 
