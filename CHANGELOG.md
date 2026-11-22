@@ -30,6 +30,7 @@ what each part of the number means and how a release is cut.
   the place for a newer one. Each GitHub release now also carries the console
   as an `omega_stick_console.html` download, starting with the next full
   release, so it no longer depends on the project website or on the browser.
+  ([#123](https://github.com/ATDev-Inc/omega-stick/pull/123))
 
 ### Fixed
 
