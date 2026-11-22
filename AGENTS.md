@@ -177,7 +177,10 @@ espp.
   bounded: `SET_DEADZONE_OVERRIDE` rejects a center value above
   `OmegaCalibration::MAX_CENTER_DEADZONE` (0.5) or a range value above
   `MAX_RANGE_DEADZONE` (0.1), `OmegaStore` ignores an out-of-range saved
-  override at load, and the console checks the same limits.
+  override at load, and the console checks the same limits. Likewise
+  `SET_NUDGE_SETTINGS` rejects a nudge time outside `MIN_NUDGE_TIME` to
+  `MAX_NUDGE_TIME` (10 to 1000 ms), and `DeviceSettings::load` takes the default
+  for any saved value outside the range its handler enforces.
 - **Input mode** (mouse or XAC) is read from the persisted settings once at
   boot and picks the USB descriptor. Changing it at runtime saves settings to
   flash and calls `esp_restart()`.

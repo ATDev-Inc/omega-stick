@@ -42,6 +42,9 @@
 //   0x53 SET_NUDGE_SETTINGS     - payload: f32 nudge_enter_threshold (delta),
 //                                 f32 nudge_exit_threshold (absolute),
 //                                 u32 nudge_time_ms (measurement window).
+//                                 The time must be within MIN_NUDGE_TIME..
+//                                 MAX_NUDGE_TIME (10..1000 ms), or the reply is
+//                                 ERROR (invalid_argument) and nothing is stored.
 //                                 Reply: OK / ERROR.
 //   0x54 SET_INPUT_MODE         - payload: u8 mode (0 = mouse, 1 = XAC). The OK's
 //                                 u32 is 1 when the device is switching (it
@@ -1129,12 +1132,22 @@ protected:
       const float enter_threshold = get_f32(payload, 0);
       const float exit_threshold = get_f32(payload, 4);
       const uint32_t time_ms = stream::get_u32(payload.subspan(8));
+      // No enter-versus-exit ordering check: enter is a rise (a delta) and exit
+      // is an absolute position, so the two are not comparable.
       if (!(enter_threshold > 0.0f) || enter_threshold > 1.0f) {
         reply = build_error(std::errc::invalid_argument, "nudge enter threshold must be in (0, 1]");
         return true;
       }
       if (!(exit_threshold >= 0.0f) || exit_threshold > 1.0f) {
         reply = build_error(std::errc::invalid_argument, "nudge exit threshold must be in [0, 1]");
+        return true;
+      }
+      if (time_ms < static_cast<uint32_t>(OmegaCalibration::MIN_NUDGE_TIME.count()) ||
+          time_ms > static_cast<uint32_t>(OmegaCalibration::MAX_NUDGE_TIME.count())) {
+        reply = build_error(std::errc::invalid_argument,
+                            fmt::format("nudge time must be between {} and {} ms",
+                                        OmegaCalibration::MIN_NUDGE_TIME.count(),
+                                        OmegaCalibration::MAX_NUDGE_TIME.count()));
         return true;
       }
       store_.set_nudge_settings(enter_threshold, exit_threshold,

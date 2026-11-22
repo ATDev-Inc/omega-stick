@@ -108,6 +108,15 @@ public:
 
   static constexpr float MAX_RANGE_DEADZONE = 0.10f;
 
+  // Bounds on the nudge time (the window over which the enter threshold's
+  // delta is measured). 10 ms is the console's smallest step and one control
+  // loop poll: with 0 a single noisy sample could fire a nudge click. 1000 ms
+  // is the most the control loop will use; a larger value would silently
+  // disable nudging. Enforced by SET_NUDGE_SETTINGS and by
+  // DeviceSettings::load().
+  static constexpr std::chrono::milliseconds MIN_NUDGE_TIME{10};
+  static constexpr std::chrono::milliseconds MAX_NUDGE_TIME{1000};
+
   // Require coverage of at least half the angular sectors before trusting
   // the range calibration.
   static constexpr int MIN_COVERED_SECTORS = RANGE_SECTORS / 2;
@@ -480,28 +489,57 @@ public:
         return false;
       }
 
-      settings.manual_center_deadzone = values.count("manual_center_deadzone")
-                                            ? std::optional<float>(values["manual_center_deadzone"])
-                                            : std::nullopt;
-      settings.manual_range_deadzone = values.count("manual_range_deadzone")
-                                           ? std::optional<float>(values["manual_range_deadzone"])
-                                           : std::nullopt;
+      // Each value is checked against the range the console protocol enforces
+      // for that setting. A bad value (NaN, infinite, out of range) falls back
+      // to that key's default and leaves the other keys as loaded. Floats are
+      // never cast to an integer type before the range check (that would be
+      // undefined behaviour for NaN, infinity or a huge value).
+      const auto in_range = [](float v, float lo, float hi) {
+        return std::isfinite(v) && v >= lo && v <= hi;
+      };
+      const auto get = [&](const char *key, float lo, float hi) -> std::optional<float> {
+        const auto it = values.find(key);
+        if (it == values.end() || !in_range(it->second, lo, hi)) {
+          return std::nullopt;
+        }
+        return it->second;
+      };
+      const DeviceSettings defaults{};
+
+      // A bad override means "no override", the same as a missing key.
+      settings.manual_center_deadzone = get("manual_center_deadzone", 0.0f, MAX_CENTER_DEADZONE);
+      settings.manual_range_deadzone = get("manual_range_deadzone", 0.0f, MAX_RANGE_DEADZONE);
+
+      // Enter threshold is in (0, 1], exit threshold in [0, 1] (as SET_NUDGE_SETTINGS).
+      const auto enter = get("nudge_distance_threshold", 0.0f, 1.0f);
       settings.nudge_distance_threshold =
-          values.count("nudge_distance_threshold") ? values["nudge_distance_threshold"] : 0.5f;
+          enter && *enter > 0.0f ? *enter : defaults.nudge_distance_threshold;
       settings.nudge_exit_threshold =
-          values.count("nudge_exit_threshold") ? values["nudge_exit_threshold"] : 0.8f;
-      settings.nudge_hold_time = std::chrono::milliseconds(
-          values.count("nudge_hold_time_ms") ? static_cast<long long>(values["nudge_hold_time_ms"])
-                                             : 100);
+          get("nudge_exit_threshold", 0.0f, 1.0f).value_or(defaults.nudge_exit_threshold);
+      const auto hold = get("nudge_hold_time_ms", static_cast<float>(MIN_NUDGE_TIME.count()),
+                            static_cast<float>(MAX_NUDGE_TIME.count()));
+      settings.nudge_hold_time = hold ? std::chrono::milliseconds(static_cast<long long>(*hold))
+                                      : defaults.nudge_hold_time;
+
       // Asymmetric on purpose: a fresh board defaults to off (the member
       // initializer), but a file written by firmware older than the on/off
       // switch has no key and loads as on, because those sticks were already
-      // clicking on nudges and an update must not change that silently.
-      settings.nudge_enabled =
-          values.count("nudge_enabled") ? values["nudge_enabled"] != 0.0f : true;
-      settings.input_mode = values.count("input_mode")
-                                ? static_cast<InputMode>(static_cast<uint8_t>(values["input_mode"]))
-                                : InputMode::MOUSE;
+      // clicking on nudges and an update must not change that silently. A
+      // present but invalid value (the writer only produces 0 or 1) is
+      // corrupt, so it takes the member default (off).
+      if (const auto it = values.find("nudge_enabled"); it == values.end()) {
+        settings.nudge_enabled = true;
+      } else if (it->second == 0.0f || it->second == 1.0f) {
+        settings.nudge_enabled = it->second == 1.0f;
+      } else {
+        settings.nudge_enabled = defaults.nudge_enabled;
+      }
+
+      // Only the defined modes (MOUSE = 0, XAC = 1, as SET_INPUT_MODE).
+      const auto mode = get("input_mode", 0.0f, 1.0f);
+      settings.input_mode = mode && *mode == std::floor(*mode)
+                                ? static_cast<InputMode>(static_cast<uint8_t>(*mode))
+                                : defaults.input_mode;
       return true;
     }
   };
