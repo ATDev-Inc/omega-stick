@@ -39,6 +39,7 @@ what each part of the number means and how a release is cut.
   up, so no movement is lost. Slow pushes are unaffected, and so is
   everything while nudge clicks are off (the default). The three nudge
   settings keep their saved values.
+  ([#124](https://github.com/ATDev-Inc/omega-stick/pull/124))
 - **The sensor now averages the 32 samples it was asked for.** The TMAG5273
   driver wrote the averaging setting to the wrong bits of its configuration
   register, so the chip ran 16x averaging with a temperature-compensation mode
