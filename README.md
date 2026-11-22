@@ -128,7 +128,10 @@ The firmware currently targets:
 board is powered.** Unplug USB to power off.
 
 STL files for the printed parts (joystick, magnet and sensor holders, sockets,
-topper) are in [models/](models/).
+topper) and their editable Fusion 360 source (`omega_stick.f3d`) are in
+[models/](models/). The PCB and wiring are not part of this repository. If you want to build one, open a
+[discussion](https://github.com/ATDev-Inc/omega-stick/discussions) or an issue
+and we will point you at what exists.
 
 ## Getting started
 
@@ -270,8 +273,8 @@ tests/fuzz/               libFuzzer harness and seed corpus for the frame parser
 tests/e2e/                end-to-end check of the console against the simulator (CI)
 sim/                      omega_sim, a desktop simulator of the firmware for testing without hardware
 cmake/                    shared CMake setup for the host tests and the simulator
-models/                   STL files for the printed parts (joystick, magnet and sensor holders,
-                          QT Py holder, sockets, topper)
+models/                   STL files and Fusion 360 source for the printed parts (joystick, magnet
+                          and sensor holders, QT Py holder, sockets, topper), CERN-OHL-P-2.0
 docs/                     product, requirements, decisions, and research documents
 assets/logo/              brand assets
 .github/workflows/        build, packaging and Pages publishing, size delta, static analysis, security scans, host, web, end-to-end and fuzz test CI
@@ -304,7 +307,10 @@ and security reports privately as described in [SECURITY.md](SECURITY.md). See
 
 ## License
 
-Released under the [MIT License](./LICENSE). The firmware image also contains
+Released under the [MIT License](./LICENSE). The 3D models and CAD source in
+[models/](models/) are released under the
+[CERN Open Hardware Licence Version 2, Permissive](models/LICENSE)
+(CERN-OHL-P-2.0). The firmware image also contains
 third-party code under its own licenses (MIT, Apache-2.0, BSD-3-Clause,
 MPL-2.0 and BSL-1.0), plus the libraries ESP-IDF itself bundles; see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

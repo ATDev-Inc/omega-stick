@@ -133,7 +133,7 @@ sim/                          omega_sim, the desktop simulator: src/, OTA stubs,
 cmake/omega_host.cmake        shared desktop build of espp and the local components, used by tests/host and sim
 docs/                         PRD, requirements, decisions, compliance, status, and research snapshots
 files/                        source directory for the littlefs image flashed with the app
-models/                       STL files for the printed parts
+models/                       STL files and Fusion 360 source for the printed parts (CERN-OHL-P-2.0, models/LICENSE)
 partitions.csv                two OTA app slots of 1920 KB, littlefs 2 MB (calibration and settings files), coredump 64 KB
 version.txt                   firmware MAJOR.MINOR.PATCH, see "Versioning" below
 sdkconfig.defaults            project-wide config; sdkconfig itself is gitignored
