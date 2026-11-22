@@ -40,7 +40,9 @@ node --test "tests/web/*.test.js"
 - `save_copy.test.js`: the console's "Save a copy of this page" button
   (`canSaveCopy`, `saveCopyUrl`, and `looksLikeConsole`, which the real
   `calibration_console.html` must pass and error or captive-portal pages must
-  fail).
+  fail; `fetchBytesWithDeadline`, which must abort a response whose body
+  stalls; and the wording for a started download, which must not claim the
+  file was saved).
 - `release_feed.test.js`: `scripts/release_feed.mjs`, which builds
   `latest.json`, `manifest.json` and `SHA256SUMS` for the Pages site.
 - `sim.test.js`: the simulator helpers in `omega_protocol.js`

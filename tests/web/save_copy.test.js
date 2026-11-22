@@ -38,12 +38,74 @@ test("looksLikeConsole: the real page passes, other pages fail", () => {
 });
 
 test("describeSaveCopy: plain wording, points to the releases page on failure", () => {
-  assert.match(P.describeSaveCopy("saved"), new RegExp(P.SAVE_COPY_NAME));
-  for (const kind of ["notconsole", "http", "offline", "unreachable"]) {
+  for (const kind of ["notconsole", "http", "offline", "timeout", "unreachable"]) {
     const t = P.describeSaveCopy(kind, 404);
     assert.match(t, /nothing was saved/);
     assert.match(t, /releases page on GitHub/);
     assert.ok(!t.includes("\u2014"));
   }
   assert.match(P.describeSaveCopy("http", 404), /404/);
+});
+
+test("describeSaveCopy: a started download is not reported as a saved file", () => {
+  // The page hands the file to the browser and cannot see what happens next: a
+  // blocked or cancelled download reports nothing back. So the wording must ask
+  // the person to check, and must say what to do when the file is not there.
+  const t = P.describeSaveCopy("started");
+  assert.match(t, new RegExp(P.SAVE_COPY_NAME));
+  assert.match(t, /has started/);
+  assert.match(t, /Check that the file is in your Downloads folder/);
+  assert.match(t, /may have blocked it/);
+  assert.match(t, /releases page on GitHub/);
+  assert.ok(!/\bSaved\b/.test(t), "must not claim the file was saved");
+  assert.ok(!t.includes("\u2014"));
+});
+
+// A response whose body never finishes: arrayBuffer() only settles when the
+// request is aborted, like a connection that stalls after the headers.
+function stalledBody(signal) {
+  return new Promise((_, reject) => {
+    signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })));
+  });
+}
+const realDeps = (fetchImpl) => ({ fetch: fetchImpl, AbortController, setTimeout, clearTimeout });
+
+test("fetchBytesWithDeadline: a body that stalls is aborted and reported as a timeout", async () => {
+  let calls = 0;
+  const fetchImpl = async (url, opts) => { calls++; return { ok: true, status: 200, arrayBuffer: () => stalledBody(opts.signal) }; };
+  let error;
+  try { await P.fetchBytesWithDeadline("https://example.test/console/", 20, realDeps(fetchImpl)); }
+  catch (e) { error = e; }
+  assert.equal(calls, 1);
+  assert.ok(error, "the stalled read must reject, not hang");
+  assert.equal(P.classifyFetchError(error, true), "timeout");
+  assert.match(P.describeSaveCopy("timeout"), /took too long/);
+});
+
+test("fetchBytesWithDeadline: a request that never answers is aborted too", async () => {
+  const fetchImpl = (url, opts) => stalledBody(opts.signal);
+  await assert.rejects(P.fetchBytesWithDeadline("https://example.test/console/", 20, realDeps(fetchImpl)), { name: "AbortError" });
+});
+
+test("fetchBytesWithDeadline: returns the bytes unchanged and clears its timer", async () => {
+  const bytes = new TextEncoder().encode("\uFEFF<title>espp Omega Calibration Console</title>").buffer;
+  let cleared = 0, armed = 0, seen;
+  const deps = {
+    fetch: async (url, opts) => { seen = { url, opts }; return { ok: true, status: 200, arrayBuffer: async () => bytes }; },
+    AbortController,
+    setTimeout: (f, ms) => { armed++; return setTimeout(f, ms); },
+    clearTimeout: (t) => { cleared++; clearTimeout(t); },
+  };
+  const res = await P.fetchBytesWithDeadline("https://example.test/console/", 1000, deps);
+  assert.equal(res.ok, true);
+  assert.equal(res.bytes, bytes); // the same buffer, byte order mark included
+  assert.equal(seen.opts.cache, "no-store");
+  assert.ok(seen.opts.signal);
+  assert.deepEqual([armed, cleared], [1, 1]);
+});
+
+test("fetchBytesWithDeadline: an error status has no bytes", async () => {
+  const res = await P.fetchBytesWithDeadline("https://example.test/console/", 1000,
+    realDeps(async () => ({ ok: false, status: 503, arrayBuffer: async () => { throw new Error("must not be read"); } })));
+  assert.deepEqual(res, { ok: false, status: 503 });
 });
