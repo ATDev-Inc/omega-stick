@@ -25,6 +25,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "calibration_service.hpp"
@@ -173,6 +174,13 @@ std::string state_fields(const std::vector<uint8_t> &p) {
   o.add("inputMode", std::to_string(p[78]));
   // Trailing u8 added after the first release; null for a 79-byte payload.
   o.add("nudgeEnabled", p.size() > 79 ? std::string(p[79] ? "true" : "false") : "null");
+<<<<<<< Updated upstream
+=======
+  // Trailing u8 added after nudge_enabled; null for an 80-byte payload.
+  o.add("xacSide", p.size() > 80 ? std::to_string(p[80]) : "null");
+  // Trailing u8 added after xac_side; null for an 81-byte payload.
+  o.add("nudgeCalibrated", p.size() > 81 ? std::string(p[81] ? "true" : "false") : "null");
+>>>>>>> Stashed changes
   return o.str();
 }
 
@@ -234,6 +242,26 @@ std::string progress_fields(const std::vector<uint8_t> &p) {
   return o.str();
 }
 
+/// Decoded NUDGE_CALIBRATION fields, in the shape omega_protocol.js's
+/// decodeNudgeCalibration() returns.
+std::string nudge_calibration_fields(const std::vector<uint8_t> &p) {
+  const std::span<const uint8_t> s(p);
+  Obj o;
+  o.add("status", num(uint32_t{p[0]}));
+  o.add("accepted", num(uint32_t{p[1]}));
+  o.add("total", num(uint32_t{p[2]}));
+  o.add("expectedDirection", num(uint32_t{p[3]}));
+  o.add("lastAttempt", num(uint32_t{p[4]}));
+  o.add("lastDirection", num(uint32_t{p[5]}));
+  o.add("ready", (p[6] & 0x01) ? "true" : "false");
+  o.add("magnitude", num(support::get_f32(p, 7)));
+  o.add("enterThreshold", num(support::get_f32(p, 11)));
+  o.add("exitThreshold", num(support::get_f32(p, 15)));
+  o.add("timeMs", num(stream::get_u32(s.subspan(19))));
+  o.add("message", quote(std::string(p.begin() + 23, p.end())));
+  return o.str();
+}
+
 std::string build_golden_json() {
   support::TempDir dir("golden");
   OmegaStore store({.calibration_path = dir.file("omega_calibration.cfg"),
@@ -257,6 +285,8 @@ std::string build_golden_json() {
        .send = transmit,
        .start_calibration = [](std::error_code &) { return true; },
        .finish_calibration = [&finish_requests] { return ++finish_requests == 1; },
+       .start_nudge_calibration = [](std::error_code &) { return true; },
+       .cancel_nudge_calibration = [] { return true; },
        .diagnostics =
            [] {
              CalibrationService::DiagnosticsData d;
@@ -358,6 +388,11 @@ std::string build_golden_json() {
     requests.push_back({"SET_POSITION_STREAM", module, type_of(Msg::SetPositionStream), p,
                         Obj().add("leaseMs", num(uint32_t{1000})).str()});
   }
+  // Accepted: SET_INPUT_MODE_MOUSE above left the store in mouse mode.
+  requests.push_back(
+      {"START_NUDGE_CALIBRATION", module, type_of(Msg::StartNudgeCalibration), {}, "{}"});
+  requests.push_back(
+      {"CANCEL_NUDGE_CALIBRATION", module, type_of(Msg::CancelNudgeCalibration), {}, "{}"});
 
   std::vector<Captured> replies;
   std::string request_json;
@@ -462,6 +497,52 @@ std::string build_golden_json() {
     CHECK_EQ(frame->type, type_of(Msg::CalibrationProgress));
     replies.push_back({"CALIBRATION_PROGRESS_LIVE", frame->type, frame->module, sent,
                        progress_fields(frame->payload)});
+  }
+
+  // Unsolicited NUDGE_CALIBRATION: one running, one success, one failure.
+  {
+    using Report = CalibrationService::NudgeCalibrationReport;
+    Report running;
+    running.accepted = 4;
+    running.total = 12;
+    running.expected_direction = 2; // right
+    running.last_attempt = Report::Attempt::ACCEPTED;
+    running.last_direction = 3; // forward
+    running.ready = true;
+    running.magnitude = 0.0625f;
+
+    Report succeeded;
+    succeeded.status = Report::Status::SUCCEEDED;
+    succeeded.accepted = 12;
+    succeeded.total = 12;
+    succeeded.last_attempt = Report::Attempt::ACCEPTED;
+    succeeded.last_direction = 1; // left
+    succeeded.enter_threshold = 0.3125f;
+    succeeded.exit_threshold = 0.375f;
+    succeeded.hold_time_ms = 90;
+
+    Report failed;
+    failed.status = Report::Status::FAILED;
+    failed.accepted = 7;
+    failed.total = 12;
+    failed.last_attempt = Report::Attempt::TOO_SMALL;
+    failed.last_direction = 4; // back
+    failed.magnitude = 0.5f;
+    failed.message = "No nudge was measured for 30 seconds";
+
+    const std::pair<const char *, const Report *> reports[] = {
+        {"NUDGE_CALIBRATION_RUNNING", &running},
+        {"NUDGE_CALIBRATION_SUCCEEDED", &succeeded},
+        {"NUDGE_CALIBRATION_FAILED", &failed}};
+    for (const auto &[name, report] : reports) {
+      sent.clear();
+      service.notify_nudge_calibration(*report);
+      const auto frame = support::decode_one(sent);
+      CHECK(frame.has_value());
+      CHECK_EQ(frame->type, type_of(Msg::NudgeCalibration));
+      replies.push_back(
+          {name, frame->type, frame->module, sent, nudge_calibration_fields(frame->payload)});
+    }
   }
 
   std::string reply_json;

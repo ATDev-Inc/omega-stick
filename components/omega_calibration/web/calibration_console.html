@@ -107,6 +107,25 @@
                                                             nudge clicks always
                                                             on, the checkbox is
                                                             shown disabled)
+<<<<<<< Updated upstream
+=======
+                      u8  xac_side                         (0 = right joystick,
+                                                            1 = left; firmware
+                                                            without the switch
+                                                            sends 80 bytes:
+                                                            always right, the
+                                                            buttons are shown
+                                                            disabled)
+                      u8  nudge_calibrated                 (0/1: the nudge
+                                                            settings came from
+                                                            a nudge
+                                                            calibration;
+                                                            firmware without it
+                                                            sends 81 bytes and
+                                                            has no
+                                                            START_NUDGE_
+                                                            CALIBRATION)
+>>>>>>> Stashed changes
       0x57 RESTART                (no payload) -- reply OK is sent first, then
                                    the device reboots ~750 ms later (USB
                                    re-enumerates; reconnect afterwards).
@@ -159,6 +178,33 @@
                                    Firmware before protocol v2 never replies:
                                    the console treats a timeout as "no live
                                    view" and falls back to printed prompts.
+<<<<<<< Updated upstream
+=======
+      0x63 SET_XAC_SIDE           u8 side (0 = right joystick, HID axes 0/1;
+                                   1 = left joystick, axes 2/3). Live, no
+                                   restart; SAVE_TO_FLASH persists it.
+                                   Reply: OK, or ERROR for any other value
+                                   or length. Firmware without the switch
+                                   does not answer it (see STATE's last byte).
+      0x64 START_NUDGE_CALIBRATION (no payload) -- ASYNC: the device asks for
+                                   3 nudges in each direction (forward,
+                                   right, back, left), measures them, and
+                                   works the three nudge settings out of
+                                   them; output is neutral meanwhile.
+                                   Progress and the outcome arrive as
+                                   NUDGE_CALIBRATION frames, exactly one of
+                                   them final per accepted start. On
+                                   success the device applies and saves the
+                                   settings, sets nudge_calibrated and turns
+                                   nudge clicks on. Reply OK, or ERROR (busy
+                                   while one runs, operation_not_permitted
+                                   in XAC mode). Firmware without it does
+                                   not answer it (see STATE's last byte).
+      0x65 CANCEL_NUDGE_CALIBRATION (no payload) -- stops it, changing
+                                   nothing. Reply OK with u32 1 when one was
+                                   running (its CANCELLED report follows),
+                                   0 when none was.
+>>>>>>> Stashed changes
       The OTA messages reply ERROR (function_not_supported) if the firmware
       was built without an OTA engine wired in.
       0xD2 FW_INFO  (reply to GET_FW_INFO) -- u8 pending_verify (0/1),
@@ -223,6 +269,24 @@
                       sector_count x f32 sector_max_radius (raw units, 0 = none)
                     Stop parsing when the payload runs out; later firmware may
                     append fields. Never satisfies a pending request.
+
+      0xD5 NUDGE_CALIBRATION  UNSOLICITED -- a nudge calibration's progress
+                    (every 50 ms and on every change) and its outcome.
+                    Little-endian:
+                      u8  status              0 running, 1 succeeded, 2 failed,
+                                              3 cancelled (1-3 are final)
+                      u8  accepted, u8 total  nudges counted / needed (12)
+                      u8  expected_direction  0 none, 1 left, 2 right,
+                                              3 forward, 4 back
+                      u8  last_attempt        0 none, 1 counted, 2 wrong
+                                              direction, 3 too small
+                      u8  last_direction      same codes as expected_direction
+                      u8  flags               bit0 ready (the next push counts)
+                      f32 magnitude           the stick now, 0..~1
+                      f32 nudge_enter_threshold, f32 nudge_exit_threshold,
+                      u32 nudge_time_ms       (the result; 0 unless succeeded)
+                      utf8 message            the rest: why it failed or stopped
+                    Never satisfies a pending request.
 
     Everything below is a plain client for that contract -- connect,
     GET_STATE to populate the form, edit fields, SET_* to apply live, and
@@ -335,6 +399,11 @@
     .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin: 0 0 10px; }
     .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .muted { color: var(--text-muted); font-size: 12.5px; }
+    .nudgecal { margin: 8px 0 0; padding: 10px; border: 1px solid var(--panel-border); border-radius: 6px; }
+    .nudgecal .nudge-prompt { font-weight: 600; margin: 0 0 6px; }
+    .nudgecal progress, .nudgecal meter { width: 100%; max-width: 360px; height: 12px; display: block; margin: 0 0 6px; }
+    .nudgecal progress { accent-color: var(--accent); }
+    .nudgecal p { margin: 0 0 6px; }
     .calviz { margin: 0 0 10px; }
     .calviz .cal-stage { font-weight: 600; margin: 0 0 6px; }
     .calviz progress { width: 100%; max-width: 360px; height: 10px; accent-color: var(--accent); display: block; margin: 0 0 6px; }
@@ -696,20 +765,36 @@
         <div class="edit-row">
           <label for="nudgeEnter">Nudge enter threshold</label>
           <input type="number" id="nudgeEnter" step="0.01" min="0.05" max="1" value="0.5">
-          <span class="muted">magnitude CHANGE (delta), measured once per time window, that starts a nudge</span>
+          <span class="muted">how much the stick must rise within the time window to start a nudge</span>
         </div>
         <div class="edit-row">
           <label for="nudgeExit">Nudge exit threshold</label>
           <input type="number" id="nudgeExit" step="0.01" min="0" max="1" value="0.8">
-          <span class="muted">absolute magnitude the stick must fall back to before a held nudge releases</span>
+          <span class="muted">absolute magnitude the stick must fall back to before a held nudge releases (a held left click drags until then)</span>
         </div>
         <div class="edit-row">
           <label for="nudgeTime">Nudge time window (ms)</label>
           <input type="number" id="nudgeTime" step="10" min="0" max="2000" value="100">
-          <span class="muted">how often the enter-threshold delta is measured</span>
+          <span class="muted">a rise slower than this is cursor movement; also the shortest hold, and how long a left click waits before it drags</span>
         </div>
         <div class="edit-row">
           <button id="applyNudgeBtn" class="primary" disabled>Apply live</button>
+        </div>
+        <div class="edit-row">
+          <button id="nudgeCalBtn" disabled>Calibrate nudge clicks</button>
+          <span class="muted">nudge 3 times in each direction; the device sets the three values above from how you push</span>
+        </div>
+        <p class="muted" id="nudgeCalNote" style="margin: 0 0 8px;" hidden></p>
+        <div class="nudgecal" id="nudgeCalPanel" hidden>
+          <p class="nudge-prompt" id="nudgeCalPrompt" role="status" aria-live="polite"></p>
+          <progress id="nudgeCalProgress" max="12" value="0" aria-label="Nudges counted"></progress>
+          <label class="muted" for="nudgeCalMeter">How far the stick is pushed</label>
+          <meter id="nudgeCalMeter" min="0" max="1" low="0.25" optimum="1" value="0"></meter>
+          <p class="muted" id="nudgeCalFeedback" aria-live="polite"></p>
+          <div class="edit-row">
+            <button id="nudgeCalCancelBtn" class="danger" hidden>Cancel</button>
+            <button id="nudgeCalSkipBtn" hidden>Turn on with the current values</button>
+          </div>
         </div>
       </fieldset>
 
@@ -932,11 +1017,18 @@
     SET_NUDGE_ENABLED: 0x60,
     FINISH_CALIBRATION: 0x61,
     SET_POSITION_STREAM: 0x62,
+<<<<<<< Updated upstream
+=======
+    SET_XAC_SIDE: 0x63,
+    START_NUDGE_CALIBRATION: 0x64,
+    CANCEL_NUDGE_CALIBRATION: 0x65,
+>>>>>>> Stashed changes
     STATE: 0xD0,
     CALIBRATION_RESULT: 0xD1,
     FW_INFO: 0xD2,
     DIAGNOSTICS: 0xD3,
     CALIBRATION_PROGRESS: 0xD4,
+    NUDGE_CALIBRATION: 0xD5,
     OK: 0xDF,
     ERROR: 0xFE,
   };
@@ -1087,12 +1179,25 @@
     return { id: MODULE_CALIBRATION, how: "missing", versionMismatch: false };
   }
 
+<<<<<<< Updated upstream
   // Fixed 80-byte STATE struct; see calibration_service.hpp. The trailing u8
   // nudge_enabled is newer than the rest: firmware without the nudge on/off
   // switch sends 79 bytes, which decodes as nudgeEnabled null (nudge clicks
   // are always on there; see nudgeControls). Bytes after it are ignored.
   function decodeState(payload) {
     if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79 or 80)");
+=======
+  // Fixed 82-byte STATE struct; see calibration_service.hpp. The trailing u8s
+  // are newer than the rest: firmware without the nudge on/off switch sends
+  // 79 bytes, which decodes as nudgeEnabled null (nudge clicks are always on
+  // there; see nudgeControls), firmware without the XAC side switch sends
+  // 80 (or 79), which decodes as xacSide null (always the right joystick; see
+  // xacSideControls), and firmware without nudge calibration sends 81 (or
+  // fewer), which decodes as nudgeCalibrated null (see nudgeEnableAction).
+  // Bytes after them are ignored.
+  function decodeState(payload) {
+    if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79 to 82)");
+>>>>>>> Stashed changes
     const v = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
     let o = 0;
     const f32 = () => { const x = v.getFloat32(o, true); o += 4; return x; };
@@ -1115,6 +1220,11 @@
     s.nudgeTimeMs = u32();
     s.inputMode = u8();
     s.nudgeEnabled = o < payload.length ? u8() !== 0 : null;
+<<<<<<< Updated upstream
+=======
+    s.xacSide = o < payload.length ? u8() : null;
+    s.nudgeCalibrated = o < payload.length ? u8() !== 0 : null;
+>>>>>>> Stashed changes
     return s;
   }
 
@@ -1135,6 +1245,96 @@
       tuningDisabled: off,
       applyDisabled: !live || off,
       note: haveState && !known ? NUDGE_SWITCH_UNSUPPORTED_NOTE : "",
+    };
+  }
+
+  // ---------------------------------------------------------------------
+  // Nudge calibration (START_NUDGE_CALIBRATION / NUDGE_CALIBRATION). The
+  // device measures the nudges and works the settings out; the page only
+  // starts it, shows what each report says, and cancels it.
+  // ---------------------------------------------------------------------
+  const NUDGE_CAL_STATUS = { RUNNING: 0, SUCCEEDED: 1, FAILED: 2, CANCELLED: 3 };
+  const NUDGE_ATTEMPT = { NONE: 0, ACCEPTED: 1, WRONG_DIRECTION: 2, TOO_SMALL: 3 };
+  const NUDGE_DIRECTION = { NONE: 0, LEFT: 1, RIGHT: 2, FORWARD: 3, BACK: 4 };
+  // What each direction does once nudge clicks are on (omega_control.hpp).
+  const NUDGE_DIRECTION_TEXT = {
+    1: { name: "left", action: "scrolls up" },
+    2: { name: "right", action: "right-clicks" },
+    3: { name: "forward (away from you)", action: "left-clicks" },
+    4: { name: "back (toward you)", action: "scrolls down" },
+  };
+  // Decodes NUDGE_CALIBRATION: 23 fixed bytes, then the UTF-8 message.
+  function decodeNudgeCalibration(payload) {
+    if (payload.length < 23) throw new Error("malformed NUDGE_CALIBRATION (" + payload.length + " B, expected at least 23)");
+    const v = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    return {
+      status: payload[0], accepted: payload[1], total: payload[2],
+      expectedDirection: payload[3], lastAttempt: payload[4], lastDirection: payload[5],
+      ready: (payload[6] & 0x01) !== 0,
+      magnitude: v.getFloat32(7, true),
+      enterThreshold: v.getFloat32(11, true),
+      exitThreshold: v.getFloat32(15, true),
+      timeMs: v.getUint32(19, true),
+      message: new TextDecoder().decode(payload.subarray(23)),
+    };
+  }
+  function nudgeDirectionName(code) {
+    return NUDGE_DIRECTION_TEXT[code] ? NUDGE_DIRECTION_TEXT[code].name : "direction " + code;
+  }
+  // What the page says for a decoded report: `prompt` (the instruction now),
+  // `feedback` (how the last push went, "" for none), `done` (a final report)
+  // and `ok` (it succeeded).
+  function nudgeCalibrationView(r) {
+    const done = r.status !== NUDGE_CAL_STATUS.RUNNING;
+    let feedback = "";
+    if (r.lastAttempt === NUDGE_ATTEMPT.ACCEPTED) {
+      feedback = "Got it.";
+    } else if (r.lastAttempt === NUDGE_ATTEMPT.WRONG_DIRECTION) {
+      feedback = "That push went " + nudgeDirectionName(r.lastDirection) + ", so it did not count. Try again.";
+    } else if (r.lastAttempt === NUDGE_ATTEMPT.TOO_SMALL) {
+      feedback = "That push was too small to count. Push a little further.";
+    }
+    let prompt;
+    if (r.status === NUDGE_CAL_STATUS.SUCCEEDED) {
+      prompt = "Nudge clicks are calibrated and on: enter " + r.enterThreshold.toFixed(2) +
+               ", exit " + r.exitThreshold.toFixed(2) + ", window " + r.timeMs + " ms. They are saved on the device.";
+      feedback = "";
+    } else if (done) {
+      prompt = r.message || (r.status === NUDGE_CAL_STATUS.CANCELLED ? "Nudge calibration was cancelled." : "Nudge calibration failed.");
+      feedback = "";
+    } else {
+      const text = NUDGE_DIRECTION_TEXT[r.expectedDirection];
+      const perDirection = r.total >= 4 ? r.total / 4 : 1;
+      const ofThis = (r.accepted % perDirection) + 1;
+      const where = text ? text.name : nudgeDirectionName(r.expectedDirection);
+      prompt = r.ready
+        ? "Nudge " + where + " and let go (" + ofThis + " of " + perDirection + "). Once on, this " + (text ? text.action : "acts") + "."
+        : "Let go of the stick and wait a moment...";
+    }
+    return { prompt, feedback, done, ok: r.status === NUDGE_CAL_STATUS.SUCCEEDED };
+  }
+  // What ticking the "Nudge clicks" box does: "calibrate" the first time on
+  // firmware that reports nudgeCalibrated false in mouse mode, else "set"
+  // (SET_NUDGE_ENABLED as before). Older firmware (null) and XAC mode, where
+  // nudge clicks are not used, keep the plain switch.
+  function nudgeEnableAction({ enabling, nudgeCalibrated, inputMode }) {
+    return enabling && nudgeCalibrated === false && inputMode === INPUT_MODE.MOUSE ? "calibrate" : "set";
+  }
+  const NUDGE_CAL_UNSUPPORTED_NOTE = "This firmware cannot calibrate nudge clicks. Update the firmware to use it.";
+  const NUDGE_CAL_XAC_NOTE = "Nudge clicks are only used in mouse mode, so they are calibrated there.";
+  // The "Calibrate nudge clicks" button, for a decoded STATE and whether a
+  // calibration this page started is still running.
+  function nudgeCalibrationControls({ connected, busy, haveState, nudgeCalibrated, inputMode, calibrating }) {
+    const known = nudgeCalibrated === true || nudgeCalibrated === false;
+    const live = !!connected && !busy && !!haveState;
+    const xac = inputMode === INPUT_MODE.XAC;
+    let note = "";
+    if (haveState && !known) note = NUDGE_CAL_UNSUPPORTED_NOTE;
+    else if (haveState && xac) note = NUDGE_CAL_XAC_NOTE;
+    return {
+      disabled: !live || !known || xac || !!calibrating,
+      label: nudgeCalibrated === true ? "Recalibrate nudge clicks" : "Calibrate nudge clicks",
+      note,
     };
   }
 
@@ -2468,6 +2668,13 @@
     encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled,
     encodeSetPositionStream, buildSetPositionStream, parseCalibrationProgress, STAGE_NAME,
     NUDGE_SWITCH_UNSUPPORTED_NOTE, nudgeControls,
+<<<<<<< Updated upstream
+=======
+    XAC_SIDE_UNSUPPORTED_NOTE, xacSideControls,
+    NUDGE_CAL_STATUS, NUDGE_ATTEMPT, NUDGE_DIRECTION, NUDGE_DIRECTION_TEXT, decodeNudgeCalibration,
+    nudgeDirectionName, nudgeCalibrationView, nudgeEnableAction, nudgeCalibrationControls,
+    NUDGE_CAL_UNSUPPORTED_NOTE, NUDGE_CAL_XAC_NOTE,
+>>>>>>> Stashed changes
   };
   globalThis.OmegaProtocol = OmegaProtocol;
   if (typeof module !== "undefined" && module.exports) module.exports = OmegaProtocol;
@@ -2487,8 +2694,14 @@
       MAX_FRAME, MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, PROTOCOL_ID, PROTOCOL_VERSION, TYPE, INPUT_MODE,
       buildFrame, FrameParser, readU32, parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
       encodeSetManualOffset, encodeSetDeadzoneOverride, encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled,
+<<<<<<< Updated upstream
       encodeSetPositionStream, parseCalibrationProgress,
       nudgeControls,
+=======
+      encodeSetXacSide, encodeSetPositionStream, parseCalibrationProgress,
+      nudgeControls, xacSideControls,
+      NUDGE_CAL_STATUS, decodeNudgeCalibration, nudgeCalibrationView, nudgeEnableAction, nudgeCalibrationControls,
+>>>>>>> Stashed changes
       inspectImage, buildFlashPlan, buildRevertPlan, decideOutcome, CONFIRM_CHECKS, runConfirmCheck, confirmFailureNotice, describeSensorState,
       calibrationNotice, describeCalibrationState,
       revertAvailability, describePrevState, reconnectDeadline, reconnectWaitText, resumesOnReconnect,
@@ -2505,8 +2718,15 @@
       0x53: "SET_NUDGE_SETTINGS", 0x54: "SET_INPUT_MODE", 0x55: "SAVE_TO_FLASH",
       0x56: "START_CALIBRATION", 0x57: "RESTART", 0x58: "OTA_BEGIN", 0x59: "OTA_DATA",
       0x5A: "OTA_FINISH", 0x5B: "OTA_ABORT", 0x5C: "GET_FW_INFO", 0x5D: "MARK_VALID", 0x5E: "REVERT",
+<<<<<<< Updated upstream
       0x5F: "GET_DIAGNOSTICS", 0x60: "SET_NUDGE_ENABLED", 0x61: "FINISH_CALIBRATION", 0x62: "SET_POSITION_STREAM",
       0xD0: "STATE", 0xD1: "CALIBRATION_RESULT", 0xD2: "FW_INFO", 0xD3: "DIAGNOSTICS", 0xD4: "CALIBRATION_PROGRESS", 0xDF: "OK", 0xFE: "ERROR",
+=======
+      0x5F: "GET_DIAGNOSTICS", 0x60: "SET_NUDGE_ENABLED", 0x61: "FINISH_CALIBRATION", 0x62: "SET_POSITION_STREAM", 0x63: "SET_XAC_SIDE",
+      0x64: "START_NUDGE_CALIBRATION", 0x65: "CANCEL_NUDGE_CALIBRATION",
+      0xD0: "STATE", 0xD1: "CALIBRATION_RESULT", 0xD2: "FW_INFO", 0xD3: "DIAGNOSTICS", 0xD4: "CALIBRATION_PROGRESS",
+      0xD5: "NUDGE_CALIBRATION", 0xDF: "OK", 0xFE: "ERROR",
+>>>>>>> Stashed changes
     };
     const CMD_TIMEOUT_MS = 5000;
     const SAVE_TIMEOUT_MS = 8000; // flash write may take longer than a live-apply
@@ -2524,7 +2744,13 @@
                       "offsetX", "offsetY", "applyOffsetBtn", "zeroOffsetBtn",
                       "centerDzEnable", "centerDzValue", "rangeDzEnable", "rangeDzValue", "applyDeadzoneBtn",
                       "nudgeEnabled", "nudgeEnabledNote", "nudgeEnter", "nudgeExit", "nudgeTime", "applyNudgeBtn",
+<<<<<<< Updated upstream
                       "modeMouseBtn", "modeXacBtn",
+=======
+                      "nudgeCalBtn", "nudgeCalNote", "nudgeCalPanel", "nudgeCalPrompt", "nudgeCalProgress", "nudgeCalMeter",
+                      "nudgeCalFeedback", "nudgeCalCancelBtn", "nudgeCalSkipBtn",
+                      "modeMouseBtn", "modeXacBtn", "xacRightBtn", "xacLeftBtn", "xacSideNote",
+>>>>>>> Stashed changes
                       "recalibrateBtn", "recalInfo", "calNeededNotice",
                       "calStageLine", "calProgress", "calSectorCount", "calCanvas", "calInstruction", "calDoneBtn", "calDoneMsg",
                       "diagRefreshBtn", "diagInfo", "resetList",
@@ -2788,6 +3014,11 @@
         failPending(new Error("upload cancelled by disconnect"));
         try { await transact(TYPE.OTA_ABORT, null, [TYPE.OK], 2000, 0); } catch (_) { }
       }
+      if (nudgeCalRunning) {
+        // Give the stick back now rather than at the device's idle timeout.
+        try { await transact(TYPE.CANCEL_NUDGE_CALIBRATION, null, [TYPE.OK], 2000, 0); } catch (_) { }
+        endNudgeCalibrationView("Disconnected; nudge calibration was cancelled.");
+      }
       stopPositionStream(t);
       if (transport === t) transport = null;
       linkDroppedAt = Date.now();
@@ -2808,6 +3039,7 @@
       linkDroppedAt = Date.now();
       calibrationModule = MODULE_CALIBRATION;
       state = null; haveState = false; recalPending = false;
+      if (nudgeCalRunning) endNudgeCalibrationView("The link was lost. The device stops nudge calibration by itself after 30 seconds without a nudge.");
       stopPositionStream(null);
       showCalibrationNotice(null);
       failPending(new Error("transport lost"));
@@ -2955,6 +3187,20 @@
       els.applyNudgeBtn.disabled = nc.applyDisabled;
       els.nudgeEnabledNote.textContent = nc.note;
       els.nudgeEnabledNote.hidden = !nc.note;
+      // Nudge calibration button: decided by OmegaProtocol.nudgeCalibrationControls (unit tested).
+      const ncc = nudgeCalibrationControls({
+        connected, busy, haveState, calibrating: nudgeCalRunning,
+        nudgeCalibrated: state ? state.nudgeCalibrated : null, inputMode: state ? state.inputMode : null,
+      });
+      els.nudgeCalBtn.disabled = ncc.disabled;
+      els.nudgeCalBtn.textContent = ncc.label;
+      els.nudgeCalNote.textContent = ncc.note;
+      els.nudgeCalNote.hidden = !ncc.note;
+      // While the device measures nudges, hand tuning and the switch wait.
+      if (nudgeCalRunning) {
+        els.nudgeEnabled.disabled = true;
+        els.applyNudgeBtn.disabled = true;
+      }
       // A mode switch restarts the device, which would undo a pending update.
       els.modeMouseBtn.disabled = !connected || busy || !haveState || uc.modeLocked;
       els.modeXacBtn.disabled = !connected || busy || !haveState || uc.modeLocked;
@@ -2990,6 +3236,11 @@
     // device refuses a second request while the sweep runs, so keep the
     // button off until CALIBRATION_RESULT arrives (or the link drops).
     let recalPending = false;
+    // A nudge calibration this page started and has not seen the final
+    // NUDGE_CALIBRATION for, and whether it was started by ticking "Nudge
+    // clicks" (so a failure offers turning them on with the current values).
+    let nudgeCalRunning = false;
+    let nudgeCalFromSwitch = false;
     let uploading = false; // an OTA session is open on the device (set after OTA_BEGIN OK)
 
     function failPending(err) {
@@ -3021,6 +3272,13 @@
                   frame.payload.length + " B (50 ms frames, logged once a second)");
         }
         onProgress(pr);
+        return;
+      }
+      if (frame.module === calibrationModule && frame.reply && frame.type === TYPE.NUDGE_CALIBRATION) {
+        // Unsolicited at 20 Hz while it runs; only the final one is logged.
+        let report;
+        try { report = decodeNudgeCalibration(frame.payload); } catch (e) { logLine("err", e.message); return; }
+        onNudgeCalibration(report);
         return;
       }
       if (els.logFrames.checked)
@@ -3355,6 +3613,18 @@
     els.nudgeEnabled.addEventListener("change", async () => {
       const enabled = els.nudgeEnabled.checked;
       if (!transport || busy) { els.nudgeEnabled.checked = !enabled; return; }
+      if (nudgeEnableAction({ enabling: enabled, nudgeCalibrated: state ? state.nudgeCalibrated : null,
+                              inputMode: state ? state.inputMode : null }) === "calibrate") {
+        // First time on: calibrate first. The box stays clear until the
+        // device reports success, which also turns nudge clicks on.
+        els.nudgeEnabled.checked = false;
+        await startNudgeCalibration(true);
+        return;
+      }
+      await setNudgeEnabled(enabled);
+    });
+
+    async function setNudgeEnabled(enabled) {
       busy = true; updateUI(); setStatus("busy", enabled ? "Turning nudge clicks on..." : "Turning nudge clicks off...");
       try {
         await transact(TYPE.SET_NUDGE_ENABLED, encodeSetNudgeEnabled(enabled), [TYPE.OK], CMD_TIMEOUT_MS, 1);
@@ -3369,6 +3639,99 @@
         busy = false; updateUI();
         if (transport) setStatus("connected", "Connected");
       }
+    }
+
+    // ===================================================================
+    // Nudge calibration (START_NUDGE_CALIBRATION / NUDGE_CALIBRATION). The
+    // device measures the nudges and works the values out; this shows its
+    // reports (OmegaProtocol.nudgeCalibrationView) and can cancel.
+    // ===================================================================
+    async function startNudgeCalibration(fromSwitch) {
+      if (!transport || busy || nudgeCalRunning) return;
+      // Marked running before the request: the device's first report (even a
+      // final one, for a start it cannot run) can arrive before the OK's
+      // continuation, and must find the panel already open.
+      nudgeCalRunning = true;
+      nudgeCalFromSwitch = fromSwitch;
+      els.nudgeCalPanel.hidden = false;
+      els.nudgeCalCancelBtn.hidden = false;
+      els.nudgeCalSkipBtn.hidden = true;
+      els.nudgeCalPrompt.textContent = "Let go of the stick and wait a moment...";
+      els.nudgeCalFeedback.textContent = "";
+      busy = true; updateUI(); setStatus("busy", "Starting nudge calibration...");
+      try {
+        await transact(TYPE.START_NUDGE_CALIBRATION, null, [TYPE.OK], CMD_TIMEOUT_MS, 0);
+        logLine("sys", "Nudge calibration started. The stick does not move the cursor or click until it ends.");
+      } catch (e) {
+        logLine("err", "START_NUDGE_CALIBRATION failed: " + e.message);
+        if (nudgeCalRunning) endNudgeCalibrationView("Nudge calibration could not start: " + e.message);
+      } finally {
+        busy = false; updateUI();
+        if (transport) setStatus("connected", "Connected");
+      }
+    }
+
+    function onNudgeCalibration(r) {
+      if (!nudgeCalRunning && r.status === NUDGE_CAL_STATUS.RUNNING) {
+        // One another page (or this page before a reload) started: show it too.
+        nudgeCalRunning = true;
+        nudgeCalFromSwitch = false;
+        els.nudgeCalPanel.hidden = false;
+        els.nudgeCalCancelBtn.hidden = false;
+        els.nudgeCalSkipBtn.hidden = true;
+        updateUI();
+      }
+      const view = nudgeCalibrationView(r);
+      els.nudgeCalPrompt.textContent = view.prompt;
+      els.nudgeCalFeedback.textContent = view.feedback;
+      els.nudgeCalProgress.max = r.total || 12;
+      els.nudgeCalProgress.value = r.accepted;
+      els.nudgeCalMeter.value = Math.min(1, Math.max(0, r.magnitude));
+      if (!view.done) return;
+      const fromSwitch = nudgeCalFromSwitch;
+      endNudgeCalibrationView(null);
+      if (view.ok) {
+        logLine("sys", "Nudge calibration finished: enter " + r.enterThreshold.toFixed(3) + ", exit " +
+                       r.exitThreshold.toFixed(3) + ", window " + r.timeMs + " ms. Nudge clicks are on and saved.");
+        refreshState();
+      } else {
+        logLine(r.status === NUDGE_CAL_STATUS.CANCELLED ? "sys" : "err", "Nudge calibration ended: " + view.prompt);
+        // Turned on for the first time and it did not work out: nudge clicks
+        // stay off, unless the person wants them with the values as they are.
+        els.nudgeCalSkipBtn.hidden = !(fromSwitch && state && state.nudgeEnabled === false);
+      }
+    }
+
+    // Leaves the panel showing its last prompt (or `message`), without the Cancel button.
+    function endNudgeCalibrationView(message) {
+      nudgeCalRunning = false;
+      nudgeCalFromSwitch = false;
+      els.nudgeCalCancelBtn.hidden = true;
+      if (message) {
+        els.nudgeCalPrompt.textContent = message;
+        els.nudgeCalFeedback.textContent = "";
+      }
+      els.nudgeCalMeter.value = 0;
+      updateUI();
+    }
+
+    els.nudgeCalBtn.addEventListener("click", () => startNudgeCalibration(false));
+    els.nudgeCalCancelBtn.addEventListener("click", async () => {
+      if (!transport || !nudgeCalRunning) return;
+      try {
+        // The CANCELLED report that follows ends the view (onNudgeCalibration).
+        const reply = await transact(TYPE.CANCEL_NUDGE_CALIBRATION, null, [TYPE.OK], CMD_TIMEOUT_MS, 0);
+        if (reply.payload.length >= 4 && readU32(reply.payload, 0) === 0) {
+          endNudgeCalibrationView("Nudge calibration had already ended.");
+        }
+      } catch (e) {
+        logLine("err", "CANCEL_NUDGE_CALIBRATION failed: " + e.message);
+      }
+    });
+    els.nudgeCalSkipBtn.addEventListener("click", async () => {
+      els.nudgeCalSkipBtn.hidden = true;
+      els.nudgeCalPanel.hidden = true;
+      await setNudgeEnabled(true);
     });
 
     async function setInputMode(mode) {

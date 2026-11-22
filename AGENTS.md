@@ -178,6 +178,13 @@ espp.
   `OmegaCalibration::MAX_CENTER_DEADZONE` (0.5) or a range value above
   `MAX_RANGE_DEADZONE` (0.1), `OmegaStore` ignores an out-of-range saved
   override at load, and the console checks the same limits.
+- **Nudge calibration** (`START_NUDGE_CALIBRATION`) runs inside `mouse_tick`
+  through a `NudgeCalibrationGate`, like recalibration: the `NudgeCalibrator`
+  in `omega_control.hpp` records three nudges each way while the output is
+  neutral, replays them through the real nudge detector to pick the three
+  nudge settings, and every accepted start ends in exactly one final
+  `NUDGE_CALIBRATION` report. The console runs it the first time nudge
+  clicks are turned on (STATE's `nudge_calibrated` byte is 0).
 - **Input mode** (mouse or XAC) is read from the persisted settings once at
   boot and picks the USB descriptor. Changing it at runtime saves settings to
   flash and calls `esp_restart()`.

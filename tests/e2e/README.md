@@ -8,7 +8,8 @@ and can be run by hand.
 It exercises: connecting and the hello, the notice for a stick with no usable
 calibration, calibrating it from the console with the `calibrate` pattern (the
 notice then clears), the virtual stick (keyboard and pointer, right and up), a
-nudge click, re-running calibration from the console, a deadzone override
+nudge calibration the first time nudge clicks are turned on (three nudges each
+way with the `nudge_*` patterns) and then a nudge click, re-running calibration from the console, a deadzone override
 (accepted in range, refused out of range), the switch to XAC mode with the
 automatic reconnect, a `no_response` sensor fault and recovery, a firmware
 update that the console checks and confirms, a revert, and an image whose

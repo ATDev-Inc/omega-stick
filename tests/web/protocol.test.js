@@ -75,8 +75,12 @@ test("constants match stream_frame.hpp and calibration_service.hpp", () => {
     START_CALIBRATION: 0x56, RESTART: 0x57, OTA_BEGIN: 0x58, OTA_DATA: 0x59,
     OTA_FINISH: 0x5A, OTA_ABORT: 0x5B, GET_FW_INFO: 0x5C, MARK_VALID: 0x5D,
     REVERT: 0x5E, GET_DIAGNOSTICS: 0x5F, SET_NUDGE_ENABLED: 0x60, FINISH_CALIBRATION: 0x61, SET_POSITION_STREAM: 0x62,
+<<<<<<< Updated upstream
+=======
+    SET_XAC_SIDE: 0x63, START_NUDGE_CALIBRATION: 0x64, CANCEL_NUDGE_CALIBRATION: 0x65,
+>>>>>>> Stashed changes
     STATE: 0xD0, CALIBRATION_RESULT: 0xD1, FW_INFO: 0xD2, DIAGNOSTICS: 0xD3, CALIBRATION_PROGRESS: 0xD4,
-    OK: 0xDF, ERROR: 0xFE,
+    NUDGE_CALIBRATION: 0xD5, OK: 0xDF, ERROR: 0xFE,
   });
   assert.deepEqual(P.INPUT_MODE, { MOUSE: 0, XAC: 1 });
 });
@@ -367,8 +371,14 @@ test("parseDiscovery: truncated payloads throw", () => {
 });
 
 // ---------------------------------------------------------------- decodeState
+<<<<<<< Updated upstream
 // calibration_service.hpp build_state_payload(): 80 bytes, little-endian
 // (79 from firmware without the nudge on/off switch):
+=======
+// calibration_service.hpp build_state_payload(): 82 bytes, little-endian
+// (81 from firmware without nudge calibration, 80 without the XAC side switch
+// either, 79 without the nudge on/off switch either):
+>>>>>>> Stashed changes
 //   off  0..23  f32 center_x, center_y, center_noise_radius, center_deadzone,
 //                   center_manual_offset_x, center_manual_offset_y
 //   off 24..55  f32 range_min_x, range_max_x, range_min_y, range_max_y,
@@ -383,9 +393,18 @@ test("parseDiscovery: truncated payloads throw", () => {
 //   off 74..77  u32 nudge_time_ms
 //   off 78      u8  input_mode (0 mouse, 1 XAC)
 //   off 79      u8  nudge_enabled (0/1; absent in the 79-byte form)
+<<<<<<< Updated upstream
 
 // `nudge` undefined builds the older 79-byte form.
 function statePayload({ hasCenter, hasRange, mode, nudge }) {
+=======
+//   off 80      u8  xac_side (0 right, 1 left; absent in the 79/80-byte forms)
+//   off 81      u8  nudge_calibrated (0/1; absent in the 79/80/81-byte forms)
+
+// `nudge` undefined builds the older 79-byte form, `side` undefined the
+// 80-byte form, `calibrated` undefined the 81-byte form.
+function statePayload({ hasCenter, hasRange, mode, nudge, side, calibrated }) {
+>>>>>>> Stashed changes
   return concat(
     // center block (all values exactly representable as f32)
     f32le(0.5), f32le(-0.5), f32le(0.015625), f32le(0.03125), f32le(0.25), f32le(-0.25),
@@ -398,7 +417,13 @@ function statePayload({ hasCenter, hasRange, mode, nudge }) {
     // nudge + mode
     f32le(0.2), f32le(0.1), u32le(250),
     bytes(mode),
+<<<<<<< Updated upstream
     nudge === undefined ? bytes() : bytes(nudge));
+=======
+    nudge === undefined ? bytes() : bytes(nudge),
+    side === undefined ? bytes() : bytes(side),
+    calibrated === undefined ? bytes() : bytes(calibrated));
+>>>>>>> Stashed changes
 }
 
 test("decodeState: 79-byte layout, both manual deadzones present, XAC mode", () => {
@@ -442,7 +467,11 @@ test("decodeState: only one override present", () => {
 
 test("decodeState: short payload throws, longer payload is tolerated", () => {
   const ok = statePayload({ hasCenter: true, hasRange: true, mode: 0 });
+<<<<<<< Updated upstream
   assert.throws(() => P.decodeState(ok.subarray(0, 78)), /malformed STATE reply \(78 B, expected 79 or 80\)/);
+=======
+  assert.throws(() => P.decodeState(ok.subarray(0, 78)), /malformed STATE reply \(78 B, expected 79 to 82\)/);
+>>>>>>> Stashed changes
   const longer = P.decodeState(concat(ok, bytes(1, 0xAA)));
   assert.equal(longer.nudgeTimeMs, 250);
   assert.equal(longer.nudgeEnabled, true);
@@ -465,6 +494,62 @@ test("decodeState: 79-byte STATE from older firmware decodes nudgeEnabled as nul
   assert.equal(s.inputMode, 1);
 });
 
+<<<<<<< Updated upstream
+=======
+test("decodeState: 81-byte layout carries xac_side as the last byte", () => {
+  const left = statePayload({ hasCenter: false, hasRange: false, mode: 1, nudge: 1, side: 1 });
+  assert.equal(left.length, 81);
+  const s = P.decodeState(left);
+  assert.equal(s.xacSide, P.XAC_SIDE.LEFT);
+  assert.equal(s.nudgeEnabled, true);
+  assert.equal(s.inputMode, 1);
+  assert.equal(P.decodeState(statePayload({ hasCenter: false, hasRange: false, mode: 1, nudge: 0, side: 0 })).xacSide,
+               P.XAC_SIDE.RIGHT);
+});
+
+test("decodeState: 82-byte layout carries nudge_calibrated as the last byte", () => {
+  const yes = statePayload({ hasCenter: false, hasRange: false, mode: 0, nudge: 1, side: 0, calibrated: 1 });
+  assert.equal(yes.length, 82);
+  assert.equal(P.decodeState(yes).nudgeCalibrated, true);
+  assert.equal(P.decodeState(yes).xacSide, P.XAC_SIDE.RIGHT);
+  const no = statePayload({ hasCenter: false, hasRange: false, mode: 0, nudge: 0, side: 1, calibrated: 0 });
+  assert.equal(P.decodeState(no).nudgeCalibrated, false);
+  assert.equal(P.decodeState(no).xacSide, P.XAC_SIDE.LEFT);
+});
+
+test("decodeState: 81-byte and shorter STATE from older firmware decode nudgeCalibrated as null", () => {
+  assert.equal(P.decodeState(statePayload({ hasCenter: true, hasRange: true, mode: 0, nudge: 1, side: 0 })).nudgeCalibrated, null);
+  assert.equal(P.decodeState(statePayload({ hasCenter: true, hasRange: true, mode: 0 })).nudgeCalibrated, null);
+});
+
+test("decodeState: 80- and 79-byte STATE from older firmware decode xacSide as null", () => {
+  assert.equal(P.decodeState(statePayload({ hasCenter: true, hasRange: true, mode: 1, nudge: 1 })).xacSide, null);
+  assert.equal(P.decodeState(statePayload({ hasCenter: true, hasRange: true, mode: 1 })).xacSide, null);
+});
+
+// ---------------------------------------------------------------- xacSideControls
+test("xacSideControls: highlights the side the device reports", () => {
+  const live = { connected: true, busy: false, haveState: true };
+  assert.deepEqual(P.xacSideControls({ ...live, xacSide: 0 }), { disabled: false, right: true, left: false, note: "" });
+  assert.deepEqual(P.xacSideControls({ ...live, xacSide: 1 }), { disabled: false, right: false, left: true, note: "" });
+});
+
+test("xacSideControls: firmware without the switch shows right, disabled, with a note", () => {
+  const c = P.xacSideControls({ connected: true, busy: false, haveState: true, xacSide: null });
+  assert.deepEqual(c, { disabled: true, right: true, left: false, note: P.XAC_SIDE_UNSUPPORTED_NOTE });
+});
+
+test("xacSideControls: disabled while disconnected, busy or before the first STATE", () => {
+  for (const ctx of [{ connected: false, busy: false, haveState: true },
+                     { connected: true, busy: true, haveState: true },
+                     { connected: true, busy: false, haveState: false }]) {
+    const c = P.xacSideControls({ ...ctx, xacSide: ctx.haveState ? 1 : null });
+    assert.equal(c.disabled, true, JSON.stringify(ctx));
+    assert.equal(c.note, "", JSON.stringify(ctx));
+  }
+});
+
+>>>>>>> Stashed changes
 // ---------------------------------------------------------------- nudgeControls
 test("nudgeControls: checkbox follows the device; off greys out the tuning but keeps it", () => {
   const live = { connected: true, busy: false, haveState: true };
@@ -703,4 +788,82 @@ test("parseCalibrationProgress: tolerates short payloads and trailing bytes", ()
   assert.deepEqual(P.parseCalibrationProgress(longer), P.parseCalibrationProgress(full));
   // Unknown stage numbers keep working.
   assert.equal(P.parseCalibrationProgress(Uint8Array.of(42, 0)).stageName, "stage_42");
+});
+
+
+// ---------------------------------------------------------------- nudge calibration
+// calibration_service.hpp build_nudge_calibration_payload(): u8 status,
+// accepted, total, expected_direction, last_attempt, last_direction, flags,
+// f32 magnitude, enter, exit, u32 time_ms, then the UTF-8 message.
+function nudgeReport({ status = 0, accepted = 0, total = 12, expected = 3, attempt = 0, lastDir = 0,
+                       ready = false, magnitude = 0, enter = 0, exit = 0, timeMs = 0, message = "" } = {}) {
+  return concat(bytes(status, accepted, total, expected, attempt, lastDir, ready ? 1 : 0),
+                f32le(magnitude), f32le(enter), f32le(exit), u32le(timeMs), Uint8Array.from(Buffer.from(message, "utf8")));
+}
+
+test("decodeNudgeCalibration: fixed fields then the message", () => {
+  const r = P.decodeNudgeCalibration(nudgeReport({
+    status: 1, accepted: 12, expected: 0, attempt: 1, lastDir: 1, ready: true,
+    magnitude: 0.25, enter: 0.3125, exit: 0.375, timeMs: 90, message: "finé",
+  }));
+  assert.deepEqual(r, {
+    status: 1, accepted: 12, total: 12, expectedDirection: 0, lastAttempt: 1, lastDirection: 1, ready: true,
+    magnitude: 0.25, enterThreshold: 0.3125, exitThreshold: 0.375, timeMs: 90, message: "finé",
+  });
+  assert.throws(() => P.decodeNudgeCalibration(new Uint8Array(22)), /malformed NUDGE_CALIBRATION/);
+});
+
+test("nudgeCalibrationView: asks for the next direction only once the stick has settled", () => {
+  const waiting = P.nudgeCalibrationView(P.decodeNudgeCalibration(nudgeReport({ expected: 3, ready: false })));
+  assert.match(waiting.prompt, /Let go of the stick/);
+  assert.equal(waiting.done, false);
+  const ready = P.nudgeCalibrationView(P.decodeNudgeCalibration(nudgeReport({ accepted: 4, expected: 2, ready: true })));
+  assert.match(ready.prompt, /Nudge right and let go \(2 of 3\)/);
+  assert.match(ready.prompt, /right-clicks/);
+});
+
+test("nudgeCalibrationView: says why a push did not count", () => {
+  const wrong = P.nudgeCalibrationView(P.decodeNudgeCalibration(nudgeReport({ attempt: 2, lastDir: 1, ready: true })));
+  assert.match(wrong.feedback, /went left/);
+  const small = P.nudgeCalibrationView(P.decodeNudgeCalibration(nudgeReport({ attempt: 3, ready: true })));
+  assert.match(small.feedback, /too small/);
+  const good = P.nudgeCalibrationView(P.decodeNudgeCalibration(nudgeReport({ attempt: 1, accepted: 1, ready: true })));
+  assert.equal(good.feedback, "Got it.");
+});
+
+test("nudgeCalibrationView: final reports show the result or the device's reason", () => {
+  const ok = P.nudgeCalibrationView(P.decodeNudgeCalibration(nudgeReport({ status: 1, accepted: 12, enter: 0.3125, exit: 0.375, timeMs: 90 })));
+  assert.equal(ok.done, true);
+  assert.equal(ok.ok, true);
+  assert.match(ok.prompt, /enter 0\.31, exit 0\.38, window 90 ms/);
+  const failed = P.nudgeCalibrationView(P.decodeNudgeCalibration(nudgeReport({ status: 2, attempt: 3, message: "too slow" })));
+  assert.deepEqual(failed, { prompt: "too slow", feedback: "", done: true, ok: false });
+  const cancelled = P.nudgeCalibrationView(P.decodeNudgeCalibration(nudgeReport({ status: 3 })));
+  assert.equal(cancelled.prompt, "Nudge calibration was cancelled.");
+});
+
+test("nudgeEnableAction: calibrates on the first enable in mouse mode only", () => {
+  const MOUSE = P.INPUT_MODE.MOUSE, XAC = P.INPUT_MODE.XAC;
+  assert.equal(P.nudgeEnableAction({ enabling: true, nudgeCalibrated: false, inputMode: MOUSE }), "calibrate");
+  assert.equal(P.nudgeEnableAction({ enabling: true, nudgeCalibrated: true, inputMode: MOUSE }), "set");
+  assert.equal(P.nudgeEnableAction({ enabling: false, nudgeCalibrated: false, inputMode: MOUSE }), "set");
+  assert.equal(P.nudgeEnableAction({ enabling: true, nudgeCalibrated: null, inputMode: MOUSE }), "set"); // older firmware
+  assert.equal(P.nudgeEnableAction({ enabling: true, nudgeCalibrated: false, inputMode: XAC }), "set");
+});
+
+test("nudgeCalibrationControls: label, availability and notes", () => {
+  const live = { connected: true, busy: false, haveState: true, inputMode: P.INPUT_MODE.MOUSE };
+  assert.deepEqual(P.nudgeCalibrationControls({ ...live, nudgeCalibrated: false }),
+                   { disabled: false, label: "Calibrate nudge clicks", note: "" });
+  assert.deepEqual(P.nudgeCalibrationControls({ ...live, nudgeCalibrated: true }),
+                   { disabled: false, label: "Recalibrate nudge clicks", note: "" });
+  assert.equal(P.nudgeCalibrationControls({ ...live, nudgeCalibrated: true, calibrating: true }).disabled, true);
+  assert.equal(P.nudgeCalibrationControls({ ...live, nudgeCalibrated: true, busy: true }).disabled, true);
+  const old = P.nudgeCalibrationControls({ ...live, nudgeCalibrated: null });
+  assert.equal(old.disabled, true);
+  assert.equal(old.note, P.NUDGE_CAL_UNSUPPORTED_NOTE);
+  const xac = P.nudgeCalibrationControls({ ...live, nudgeCalibrated: false, inputMode: P.INPUT_MODE.XAC });
+  assert.equal(xac.disabled, true);
+  assert.equal(xac.note, P.NUDGE_CAL_XAC_NOTE);
+  assert.equal(P.nudgeCalibrationControls({ connected: false, busy: false, haveState: false, nudgeCalibrated: null }).note, "");
 });

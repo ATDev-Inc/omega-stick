@@ -267,6 +267,31 @@ public:
     return p;
   }
 
+  /// One report from a nudge calibration (omega_control's NudgeCalibrator),
+  /// the fields of a NUDGE_CALIBRATION frame (calibration_service.hpp). The
+  /// enum values are wire bytes, so never renumber them.
+  struct NudgeCalibrationReport {
+    enum class Status : uint8_t { RUNNING = 0, SUCCEEDED = 1, FAILED = 2, CANCELLED = 3 };
+    /// How the last finished attempt (a push out of rest and back) was judged.
+    enum class Attempt : uint8_t { NONE = 0, ACCEPTED = 1, WRONG_DIRECTION = 2, TOO_SMALL = 3 };
+    Status status{Status::RUNNING};
+    uint8_t accepted{0}; ///< nudges counted so far
+    uint8_t total{0};    ///< nudges needed in all
+    /// Direction asked for next, as omega_control::NudgeDirection (0 none,
+    /// 1 left, 2 right, 3 forward, 4 back); 0 once nothing more is asked.
+    uint8_t expected_direction{0};
+    Attempt last_attempt{Attempt::NONE};
+    uint8_t last_direction{0}; ///< the last attempt's direction, same codes
+    /// The stick has rested long enough that the next push is measured.
+    bool ready{false};
+    float magnitude{0.0f}; ///< current mapped stick magnitude, 0..~1
+    /// The settings worked out (SUCCEEDED only; 0 otherwise).
+    float enter_threshold{0.0f};
+    float exit_threshold{0.0f};
+    uint32_t hold_time_ms{0};
+    std::string message; ///< FAILED / CANCELLED: why, for the person
+  };
+
   /// Which USB HID device the stick currently drives. Persisted and
   /// live-adjustable via DeviceSettings, so the firmware doesn't need a
   /// reflash to switch between the two.
@@ -310,25 +335,26 @@ public:
     // main.cpp) -- there is no physical switch, this is purely how far/how
     // long the stick has been pushed.
 
-    /// How much the stick's magnitude must CHANGE, measured once per
-    /// nudge_hold_time window, before a nudge is recognized ("nudge enter
+    /// How much the stick's magnitude must RISE within the trailing
+    /// nudge_hold_time window before a nudge is recognized ("nudge enter
     /// threshold" / distance threshold). This is a DELTA (current magnitude
-    /// minus the magnitude at the start of the window), not an absolute
-    /// position.
+    /// minus the lowest magnitude in the last nudge_hold_time, checked every
+    /// poll), not an absolute position.
     float nudge_distance_threshold{0.5f};
 
     /// Absolute normalized magnitude the stick must fall back to (or below)
-    /// before a held nudge is released ("nudge exit threshold"). Unlike
+    /// before a held nudge is released ("nudge exit threshold"), once it has
+    /// been held for at least nudge_hold_time. Unlike
     /// nudge_distance_threshold this IS an absolute position, not a delta --
     /// tune it against real-hardware testing rather than assuming it should
     /// be small; a held nudge is meant to persist for as long as the stick
     /// stays meaningfully deflected.
     float nudge_exit_threshold{0.8f};
 
-    /// The polling window over which nudge_distance_threshold's magnitude
-    /// delta is measured ("nudge time") -- a coarser cadence than the
-    /// per-report polling loop, so a single noisy sample can't register as
-    /// a nudge.
+    /// The trailing window over which nudge_distance_threshold's rise is
+    /// measured ("nudge time"): a rise spread over longer than this is cursor
+    /// movement, not a nudge. Also the shortest time a nudge is held, and how
+    /// long a held left click settles before it starts to drag.
     std::chrono::milliseconds nudge_hold_time{100};
 
     /// Master switch for nudge clicks. When false the control loop never
@@ -338,6 +364,14 @@ public:
     /// nudge until the user turns it on. A saved file from before the switch
     /// existed has no key and loads as on (see load()).
     bool nudge_enabled{false};
+
+    /// Whether the three tuning values above came from a successful nudge
+    /// calibration (START_NUDGE_CALIBRATION, see omega_control's
+    /// NudgeCalibrator). The console runs that calibration the first time
+    /// nudge clicks are turned on while this is false. A file without the key
+    /// loads as false: no firmware before the calibration existed could
+    /// have set it.
+    bool nudge_calibrated{false};
 
     // ------------------------------------------------------------------
     // Input mode
@@ -384,6 +418,7 @@ public:
       out << "nudge_exit_threshold=" << settings.nudge_exit_threshold << "\n";
       out << "nudge_hold_time_ms=" << static_cast<float>(settings.nudge_hold_time.count()) << "\n";
       out << "nudge_enabled=" << (settings.nudge_enabled ? 1 : 0) << "\n";
+      out << "nudge_calibrated=" << (settings.nudge_calibrated ? 1 : 0) << "\n";
       out << "input_mode=" << static_cast<float>(static_cast<uint8_t>(settings.input_mode)) << "\n";
       out.flush();
 
@@ -453,6 +488,8 @@ public:
       // clicking on nudges and an update must not change that silently.
       settings.nudge_enabled =
           values.count("nudge_enabled") ? values["nudge_enabled"] != 0.0f : true;
+      settings.nudge_calibrated =
+          values.count("nudge_calibrated") && values["nudge_calibrated"] != 0.0f;
       settings.input_mode = values.count("input_mode")
                                 ? static_cast<InputMode>(static_cast<uint8_t>(values["input_mode"]))
                                 : InputMode::MOUSE;

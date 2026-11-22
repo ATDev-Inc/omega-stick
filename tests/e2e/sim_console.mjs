@@ -212,11 +212,37 @@ async function main() {
   await key("Home");
   await sleep(300);
   // Nudge clicks are off on a fresh board (#102), so the console switch must be
-  // unchecked here. Turn them on through the console before nudging.
+  // unchecked here. Turning them on the first time calibrates them: the device
+  // asks for three nudges each way (forward, right, back, left; the pad's up is
+  // forward) and turns them on itself when it has them.
   const nudgeOffByDefault = !(await ev($("nudgeEnabled") + ".checked"));
   await setChecked("nudgeEnabled", true);
-  await waitLog("nudge clicks on", /Nudge clicks turned on live/, 8000);
-  await waitEnabled("nudgeEnabled");
+  const order = ["nudge_up", "nudge_right", "nudge_down", "nudge_left"];
+  const prompts = [];
+  let nudgeCalError = "";
+  try {
+    await waitFor("the nudge calibration panel", async () => !(await ev($("nudgeCalPanel") + ".hidden")), 8000);
+    for (let i = 0; i < 12; i++) {
+      await waitFor("ready for nudge " + (i + 1), async () => /^Nudge /.test(await text("nudgeCalPrompt")), 10000);
+      prompts.push(await text("nudgeCalPrompt"));
+      await pattern(order[Math.floor(i / 3)]);
+      await waitFor("nudge " + (i + 1) + " counted", async () =>
+        Number(await ev($("nudgeCalProgress") + ".value")) > i || /calibrated and on/.test(await text("nudgeCalPrompt")), 10000);
+    }
+    await waitLog("nudge calibration finished", /Nudge calibration finished/, 10000);
+    await waitFor("the switch on", async () => await ev($("nudgeEnabled") + ".checked"), 8000);
+    await waitEnabled("nudgeEnabled");
+  } catch (e) {
+    nudgeCalError = e.message;
+  }
+  const calPrompt = await text("nudgeCalPrompt");
+  const recalLabel = await text("nudgeCalBtn");
+  check("b2", "the first time nudge clicks are turned on the console calibrates them (forward, right, back, left), then they are on and the button offers a recalibration",
+    !nudgeCalError && /forward/.test(prompts[0] || "") && /right/.test(prompts[3] || "") && /back/.test(prompts[6] || "") &&
+    /left/.test(prompts[9] || "") && /calibrated and on/.test(calPrompt) && recalLabel === "Recalibrate nudge clicks",
+    (nudgeCalError || "ok") + " | first prompts: " + [0, 3, 6, 9].map((i) => JSON.stringify((prompts[i] || "").slice(0, 32))).join(", ") +
+    " | final: " + JSON.stringify(calPrompt.slice(0, 80)) + " | button: " + recalLabel);
+  await sleep(500);
   await pattern("nudge_right");
   await waitFor("a click indicator", async () => /Last click: (left|right)/.test(await text("simLastClick")), 8000).catch(() => { });
   const click1 = await text("simLastClick");

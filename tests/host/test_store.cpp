@@ -228,6 +228,45 @@ TEST(store_settings_file_without_nudge_enabled_loads_as_enabled) {
   CHECK_NEAR(store.settings().nudge_distance_threshold, 0.4f, 1e-6);
 }
 
+TEST(store_nudge_calibration_applies_marks_enables_and_persists) {
+  TempDir dir("store_nudge_calibrated");
+  auto cfg = config_for(dir);
+  {
+    OmegaStore store(cfg);
+    CHECK(!store.settings().nudge_calibrated); // default
+    store.set_nudge_calibration(0.32f, 0.41f, std::chrono::milliseconds(70));
+    const auto s = store.settings();
+    CHECK(s.nudge_calibrated);
+    CHECK(s.nudge_enabled);
+    CHECK_NEAR(s.nudge_distance_threshold, 0.32f, 1e-6);
+    CHECK_NEAR(s.nudge_exit_threshold, 0.41f, 1e-6);
+    CHECK_EQ(s.nudge_hold_time.count(), 70);
+    std::error_code ec;
+    CHECK(store.save_to_flash(ec));
+    CHECK(!ec);
+  }
+  {
+    std::ifstream in(cfg.settings_path);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(text.find("nudge_calibrated=1\n") != std::string::npos);
+  }
+  OmegaStore reloaded(cfg);
+  CHECK(reloaded.settings().nudge_calibrated);
+  // Hand tuning afterwards keeps the flag: the console only asks on first enable.
+  reloaded.set_nudge_settings(0.5f, 0.8f, std::chrono::milliseconds(100));
+  CHECK(reloaded.settings().nudge_calibrated);
+}
+
+// A settings file from firmware before nudge calibration has no nudge_calibrated key.
+TEST(store_settings_file_without_nudge_calibrated_loads_as_not_calibrated) {
+  TempDir dir("store_nudge_calibrated_missing");
+  auto cfg = config_for(dir);
+  { std::ofstream(cfg.settings_path) << "schema=1\nnudge_enabled=1\ninput_mode=0\n"; }
+  OmegaStore store(cfg);
+  CHECK(!store.settings().nudge_calibrated);
+  CHECK(store.settings().nudge_enabled);
+}
+
 TEST(store_save_to_flash_reports_unwritable_path) {
   TempDir dir("store_badpath");
   auto cfg = config_for(dir);

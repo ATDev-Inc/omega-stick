@@ -56,6 +56,7 @@ function decodeReply(frame) {
     case P.TYPE.ERROR: return P.parseErrorReply(frame.payload);
     case P.TYPE.CALIBRATION_RESULT: return { success: frame.payload[0] === 1 };
     case P.TYPE.CALIBRATION_PROGRESS: return P.parseCalibrationProgress(frame.payload);
+    case P.TYPE.NUDGE_CALIBRATION: return P.decodeNudgeCalibration(frame.payload);
     case P.T_LIST_MODULES: return P.parseDiscovery(frame.payload);
     default: throw new Error("no decoder for type " + frame.type);
   }
