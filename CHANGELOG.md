@@ -9,8 +9,72 @@ what each part of the number means and how a release is cut.
 
 ## [Unreleased]
 
+### Added
+
+- **The hosted console works offline after the first visit.** Once you have
+  opened <https://atdev-inc.github.io/omega-stick/console/> with internet, the
+  page opens again with no internet, so you can still connect the stick and
+  recalibrate it. While online you always get the current page, and checking
+  for or installing a firmware update still needs internet. It takes effect
+  with the next full release, because the Pages site is only deployed then.
+  ([#121](https://github.com/ATDev-Inc/omega-stick/pull/121))
+- **Editable CAD source for the printed parts.** The Fusion 360 project
+  (`models/omega_stick.f3d`) is now published next to the STL files, and the
+  models and CAD source are licensed under CERN-OHL-P-2.0, so you can change
+  the parts and print your own versions.
+  ([#111](https://github.com/ATDev-Inc/omega-stick/pull/111))
+- **Calibration you can watch.** The console's Recalibration section now shows
+  a live picture of the stick while a calibration runs: a dot for the sensor
+  reading, the measured center and its noise circle, and a ring of 32
+  directions that fills in as the stick reaches each one. The range stage no
+  longer stops after a fixed 2 seconds; it ends by itself once every direction
+  is covered and the stick has come back to rest, or when you press the new
+  Done button, so you can move as slowly as you need. The same dot is shown
+  whenever the console is connected, so a stick that never reached one side
+  is visible before you start. Saved calibrations and older firmware keep
+  working; the console falls back to the printed prompts when the firmware
+  does not stream progress.
+  ([#103](https://github.com/ATDev-Inc/omega-stick/pull/103))
+- **Keep your own copy of the console.** The console has a new "Save a copy of
+  this page" button that downloads it as `omega_stick_console.html`, a single
+  file that opens from your computer with no internet and connects to the
+  stick the same way. It is not updated automatically, so the releases page is
+  the place for a newer one. Each GitHub release now also carries the console
+  as an `omega_stick_console.html` download, starting with the next full
+  release, so it no longer depends on the project website or on the browser.
+  ([#123](https://github.com/ATDev-Inc/omega-stick/pull/123))
+
+### Changed
+
+- **The joystick cap now screws on.** The cap could shift and fall off the
+  joystick while in use. The joystick and topper models now have a screw
+  thread; print both new parts together to get it. The holders and sockets
+  were also re-centered and adjusted for fit. Closes #113.
+  ([#116](https://github.com/ATDev-Inc/omega-stick/pull/116),
+  [#111](https://github.com/ATDev-Inc/omega-stick/pull/111))
+
 ### Fixed
 
+- **Chrome's "go to page" prompt now opens this project's console.** When the
+  stick was plugged in, Chrome offered espp's generic board console, whose
+  calibration link went to a page that does not exist on espp's site. The
+  stick now points Chrome straight at
+  https://atdev-inc.github.io/omega-stick/console/.
+  [#119](https://github.com/ATDev-Inc/omega-stick/pull/119).
+- **The sensor now averages the 32 samples it was asked for.** The TMAG5273
+  driver wrote the averaging setting to the wrong bits of its configuration
+  register, so the chip ran 16x averaging with a temperature-compensation mode
+  nobody chose. Readings are a little less noisy and update about half as
+  often (still four times faster than the firmware reads them). Closes #73.
+  [#110](https://github.com/ATDev-Inc/omega-stick/pull/110).
+- **The console frame log no longer dumps whole firmware chunks.** Two helpers
+  named `hex` clashed, so with "Log frames" ticked every firmware update chunk
+  was written in full into the log. Frames are shortened again. [#95](https://github.com/ATDev-Inc/omega-stick/pull/95).
+- **The downloadable programmers bundle the esptool the firmware was built
+  with.** They carried esptool 4.7.0, which does not understand the flash
+  arguments ESP-IDF 6 writes, so the Windows, macOS and Linux programmers
+  attached to a release could fail to flash. They now package esptool 5, read
+  from the build.
 - **Idle drift correction no longer undoes a manual center trim.** The stick
   rests at the measured center plus the trim, but drift correction blended the
   measured center toward the raw reading, so a stick left idle slowly absorbed

@@ -14,7 +14,7 @@
   const MAX_FRAME = HEADER_SIZE + MAX_PAYLOAD + CRC_SIZE;
   const MODULE_CALIBRATION = 5;
   const MODULE_DISCOVERY = 0xFF, T_LIST_MODULES = 0x00;
-  const PROTOCOL_ID = "omega.calibration", PROTOCOL_VERSION = 1; // dispatcher discovery v2
+  const PROTOCOL_ID = "omega.calibration", PROTOCOL_VERSION = 2; // dispatcher discovery v2
   const FLAGS_VERSION = 1;
   const FLAGS_REQUEST = (FLAGS_VERSION << 4) | 0; // 0x10
   const FLAGS_REPLY_BIT = 0x01;
@@ -37,10 +37,13 @@
     REVERT: 0x5E,
     GET_DIAGNOSTICS: 0x5F,
     SET_NUDGE_ENABLED: 0x60,
+    FINISH_CALIBRATION: 0x61,
+    SET_POSITION_STREAM: 0x62,
     STATE: 0xD0,
     CALIBRATION_RESULT: 0xD1,
     FW_INFO: 0xD2,
     DIAGNOSTICS: 0xD3,
+    CALIBRATION_PROGRESS: 0xD4,
     OK: 0xDF,
     ERROR: 0xFE,
   };
@@ -181,7 +184,8 @@
       if (m) {
         return {
           id: m.id, how: "protocol",
-          versionMismatch: !!m.protocolVersion && m.protocolVersion !== PROTOCOL_VERSION,
+          // v2 only added messages, so a device on v1 is still compatible
+          versionMismatch: !!m.protocolVersion && m.protocolVersion > PROTOCOL_VERSION,
         };
       }
     } else if (info.modules.some((x) => x.id === MODULE_CALIBRATION)) {
@@ -317,6 +321,61 @@
   }
   function encodeSetNudgeEnabled(enabled) {
     return new Uint8Array([enabled ? 1 : 0]);
+  }
+
+  // ---------------------------------------------------------------------
+  // Visual calibration (protocol v2, additive). SET_POSITION_STREAM takes a
+  // u32 lease in ms (0 stops); while it is live the device sends unsolicited
+  // CALIBRATION_PROGRESS frames. Firmware without them never replies.
+  // ---------------------------------------------------------------------
+  function encodeSetPositionStream(leaseMs) {
+    const payload = new Uint8Array(4);
+    new DataView(payload.buffer).setUint32(0, Math.max(0, Math.floor(leaseMs)) >>> 0, true);
+    return payload;
+  }
+  function buildSetPositionStream(leaseMs, module) {
+    return buildFrame(module === undefined ? MODULE_CALIBRATION : module, TYPE.SET_POSITION_STREAM,
+                      encodeSetPositionStream(leaseMs));
+  }
+  const STAGE_NAME = [
+    "live", "center_settle", "center_measure", "noise_settle", "noise_measure",
+    "range_prepare", "range_sweep", "finishing",
+  ];
+  // Decodes CALIBRATION_PROGRESS. Stops where the bytes run out: missing
+  // fields keep their zero defaults, and bytes past what is known are ignored.
+  function parseCalibrationProgress(payload) {
+    const r = {
+      stage: 0, stageName: STAGE_NAME[0], flags: 0,
+      rawValid: false, centerValid: false, coverageComplete: false, finishAvailable: false,
+      stageElapsedMs: 0, stageTotalMs: 0, rawX: 0, rawY: 0,
+      centerX: 0, centerY: 0, noiseRadius: 0,
+      minX: 0, maxX: 0, minY: 0, maxY: 0,
+      coveredMask: 0, sectorCount: 0, sectors: [],
+    };
+    const n = payload.length;
+    const v = new DataView(payload.buffer, payload.byteOffset, n);
+    if (n >= 1) { r.stage = payload[0]; r.stageName = STAGE_NAME[r.stage] || ("stage_" + r.stage); }
+    if (n >= 2) {
+      r.flags = payload[1];
+      r.rawValid = (r.flags & 1) !== 0;
+      r.centerValid = (r.flags & 2) !== 0;
+      r.coverageComplete = (r.flags & 4) !== 0;
+      r.finishAvailable = (r.flags & 8) !== 0;
+    }
+    let o = 2;
+    const u32 = (k) => { if (o + 4 > n) return false; r[k] = v.getUint32(o, true); o += 4; return true; };
+    const f32 = (k) => { if (o + 4 > n) return false; r[k] = v.getFloat32(o, true); o += 4; return true; };
+    for (const k of ["stageElapsedMs", "stageTotalMs"]) if (!u32(k)) return r;
+    for (const k of ["rawX", "rawY", "centerX", "centerY", "noiseRadius", "minX", "maxX", "minY", "maxY"]) {
+      if (!f32(k)) return r;
+    }
+    if (!u32("coveredMask")) return r;
+    if (o + 1 > n) return r;
+    r.sectorCount = payload[o++];
+    const sectors = [];
+    for (let i = 0; i < r.sectorCount && o + 4 <= n; i++, o += 4) sectors.push(v.getFloat32(o, true));
+    r.sectors = sectors;
+    return r;
   }
 
   // ---------------------------------------------------------------------
@@ -1098,6 +1157,84 @@
     return FEED_URL;
   }
 
+  // Whether the console page should register its offline service worker
+  // (site/console-sw.js, published as /omega-stick/console/sw.js). Only on the
+  // project's own Pages site over https at the console path: never from
+  // file://, a local server (the simulator end-to-end tests), or a fork.
+  // hasServiceWorker: whether the browser supports service workers.
+  const CONSOLE_PATH = PAGES_BASE + "console/";
+  function shouldRegisterConsoleSw(locationHref, hasServiceWorker) {
+    if (!hasServiceWorker) return false;
+    try {
+      const u = new URL(String(locationHref));
+      return u.protocol === "https:" && u.origin === PAGES_ORIGIN &&
+        (u.pathname === CONSOLE_PATH || u.pathname === CONSOLE_PATH + "index.html");
+    } catch (_) { return false; }
+  }
+
+  // "Save a copy of this page". Offered only when the page was served over
+  // http(s): from file:// the person already holds a copy and there is
+  // nothing to fetch.
+  const SAVE_COPY_NAME = "omega_stick_console.html";
+  function canSaveCopy(locationHref) {
+    try {
+      const p = new URL(String(locationHref)).protocol;
+      return p === "https:" || p === "http:";
+    } catch (_) { return false; }
+  }
+  // The address to fetch the pristine page source from: this page without its
+  // query string or hash. Null when the page was not served over http(s).
+  function saveCopyUrl(locationHref) {
+    if (!canSaveCopy(locationHref)) return null;
+    const u = new URL(String(locationHref));
+    u.search = "";
+    u.hash = "";
+    return u.href;
+  }
+  // True only when the text is really this console, so a captive portal or an
+  // error page is never saved under the console's name.
+  function looksLikeConsole(text) {
+    return typeof text === "string" &&
+      text.indexOf("<title>espp Omega Calibration Console") >= 0 &&
+      text.indexOf("OmegaProtocol") >= 0;
+  }
+  // How long "Save a copy" waits for the whole page, headers and body.
+  const SAVE_COPY_TIMEOUT_MS = 30000;
+  // Fetches a page and reads its whole body under one deadline. The timer
+  // stays armed until the body is complete, so a response that starts and
+  // then stalls is aborted too (the abort also cancels the body read) and the
+  // caller gets an AbortError instead of waiting for ever. Resolves to
+  // { ok, status, bytes }; bytes (an ArrayBuffer) only when ok.
+  // deps: { fetch, AbortController, setTimeout, clearTimeout }, injected so a
+  // test can stall a body.
+  async function fetchBytesWithDeadline(url, ms, deps) {
+    const ctl = new deps.AbortController();
+    const timer = deps.setTimeout(() => ctl.abort(), ms);
+    try {
+      const res = await deps.fetch(url, { cache: "no-store", signal: ctl.signal });
+      if (!res.ok) return { ok: false, status: res.status };
+      return { ok: true, status: res.status, bytes: await res.arrayBuffer() };
+    } finally { deps.clearTimeout(timer); }
+  }
+  // Plain wording for the outcome. kind: started | notconsole | http |
+  // offline | timeout | unreachable. "started" means the file was handed to
+  // the browser. The page cannot see whether the browser then saved it (a
+  // blocked or cancelled download reports nothing back), so the wording asks
+  // the person to check instead of claiming a saved file.
+  function describeSaveCopy(kind, status) {
+    switch (kind) {
+      case "started": return "The download of " + SAVE_COPY_NAME + " has started. Check that the file is in your Downloads folder. " +
+        "If it is not there, your browser may have blocked it: download the console from the releases page on GitHub instead.";
+      case "notconsole": return "The page that came back was not the console (a sign-in page or an error page, perhaps), so nothing was saved. " +
+        "Download the console from the releases page on GitHub instead.";
+      case "http": return "The server could not provide the page (error " + status + "), so nothing was saved. " +
+        "Download the console from the releases page on GitHub instead.";
+      case "offline": return "This computer is offline, so nothing was saved. Try again when you are connected, or use the releases page on GitHub.";
+      case "timeout": return "The page took too long to arrive, so nothing was saved. Try again, or download the console from the releases page on GitHub.";
+      default: return "The page could not be fetched, so nothing was saved. Try again, or download the console from the releases page on GitHub.";
+    }
+  }
+
   // Validates the parsed latest.json. Returns { ok, error, release } where
   // release is { version, tag, publishedAt, notesUrl, appUrl, size, sha256 }.
   function parseReleaseFeed(json, feedUrl) {
@@ -1198,7 +1335,7 @@
   const SIM_SOURCE_KINDS = ["manual", "pattern", "script"];
   const SIM_REPLIES = ["ok", "busy", "invalid", "unsupported", "error"];
   const SIM_ACTIONS = ["recalibrate", "save", "restart", "set_mode", "set_deadzone", "flash", "revert", "mark_valid", "fw_info",
-    "plant_unusable_calibration", "set_nudge_enabled"];
+    "plant_unusable_calibration", "set_nudge_enabled", "finish_calibration"];
   const SIM_SCRIPT_MAX_BYTES = 262144, SIM_SCRIPT_MAX_STEPS = 5000;
   const SIM_MAX_AT_MS = 86400000; // a day
   const SIM_STEP_KEYS = ["stick", "pattern", "fault", "drift", "noise", "next_image", "action", "expect"];
@@ -1494,7 +1631,8 @@
     SIM_PATTERNS, SIM_FAULTS, SIM_NEXT_IMAGE,
     encodeSimMessage, parseSimMessage, validateSimScript, createHidAccumulator,
     pickReconnectCandidate, autoReconnectStep,
-    FEED_URL, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
+    FEED_URL, RELEASES_URL, feedUrlFor, shouldRegisterConsoleSw, parseReleaseFeed, summarizeAvailability,
+    SAVE_COPY_NAME, SAVE_COPY_TIMEOUT_MS, canSaveCopy, saveCopyUrl, looksLikeConsole, fetchBytesWithDeadline, describeSaveCopy,
     OTA_SLOT_SIZE, CHIP_ID_ESP32S3, DEFAULT_PROJECT, KIND_LABEL,
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
     decideOutcome, CONFIRM_CHECKS, judgeConfirmCheck, awaitSensorHealthy, runConfirmCheck, confirmFailureNotice,
@@ -1514,6 +1652,7 @@
     parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
     encodeSetManualOffset, encodeSetDeadzoneOverride,
     encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled,
+    encodeSetPositionStream, buildSetPositionStream, parseCalibrationProgress, STAGE_NAME,
     NUDGE_SWITCH_UNSUPPORTED_NOTE, nudgeControls,
   };
   globalThis.OmegaProtocol = OmegaProtocol;

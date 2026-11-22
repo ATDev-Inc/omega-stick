@@ -10,7 +10,7 @@
     { "at_ms": 4500, "expect": { "neutral": true, "clicked": "none", "sensor_observed": true } },
     { "at_ms": 5000, "pattern": "calibrate" },
     { "at_ms": 5500, "action": "recalibrate" },
-    { "at_ms": 45000, "expect": { "calibrated": true, "needs_calibration": false, "center_max": 0.05, "mode": "mouse" } },
+    { "at_ms": 36000, "expect": { "calibrated": true, "needs_calibration": false, "center_max": 0.05, "mode": "mouse" } },
     { "at_ms": 46000, "stick": [0, 0] },
     { "at_ms": 46500, "stick": [0.6, 0] },
     { "at_ms": 47500, "stick": [0.6, 0] },
