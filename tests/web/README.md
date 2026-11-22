@@ -38,7 +38,10 @@ node --test "tests/web/*.test.js"
   (`feedUrlFor`, `parseReleaseFeed`, `summarizeAvailability`), including a
   round trip through the feed that `scripts/release_feed.mjs` writes.
 - `offline.test.js`: when the console registers its service worker
-  (`shouldRegisterConsoleSw`) and which requests `site/console-sw.js` handles.
+  (`shouldRegisterConsoleSw`), which requests `site/console-sw.js` handles,
+  and the worker's install, activate and fetch handlers run against a fake
+  service worker environment (other sites' caches survive activation; a failed
+  cache write still returns the fresh page).
 - `release_feed.test.js`: `scripts/release_feed.mjs`, which builds
   `latest.json`, `manifest.json` and `SHA256SUMS` for the Pages site.
 - `sim.test.js`: the simulator helpers in `omega_protocol.js`
