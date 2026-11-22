@@ -31,6 +31,7 @@ what each part of the number means and how a release is cut.
   calibration link went to a page that does not exist on espp's site. The
   stick now points Chrome straight at
   https://atdev-inc.github.io/omega-stick/console/.
+  [#119](https://github.com/ATDev-Inc/omega-stick/pull/119).
 - **The sensor now averages the 32 samples it was asked for.** The TMAG5273
   driver wrote the averaging setting to the wrong bits of its configuration
   register, so the chip ran 16x averaging with a temperature-compensation mode
