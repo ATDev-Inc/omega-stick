@@ -11,6 +11,13 @@ what each part of the number means and how a release is cut.
 
 ### Added
 
+- **The hosted console works offline after the first visit.** Once you have
+  opened <https://atdev-inc.github.io/omega-stick/console/> with internet, the
+  page opens again with no internet, so you can still connect the stick and
+  recalibrate it. While online you always get the current page, and checking
+  for or installing a firmware update still needs internet. It takes effect
+  with the next full release, because the Pages site is only deployed then.
+  ([#121](https://github.com/ATDev-Inc/omega-stick/pull/121))
 - **Editable CAD source for the printed parts.** The Fusion 360 project
   (`models/omega_stick.f3d`) is now published next to the STL files, and the
   models and CAD source are licensed under CERN-OHL-P-2.0, so you can change
