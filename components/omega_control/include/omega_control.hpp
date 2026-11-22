@@ -96,7 +96,14 @@ inline constexpr bool INVERT_NUDGE_Y = false;
 //   SETTLING  the nudge has ended but the stick is still on its way back.
 //             The cursor stays still until the stick is at rest, or is pushed
 //             out again by NUDGE_SETTLE_BREAKOUT (the way out if it never
-//             comes to rest).
+//             comes to rest). A fast rise that begins while settling is
+//             followed from where it started, so a second nudge made before
+//             the stick is back at rest is measured in full.
+//
+// The loop only sees the stick once per poll, so a rise that crosses the enter
+// threshold between two consecutive polls counts as within the nudge time even
+// when the nudge time is shorter than that interval (the console's smallest
+// step, 10 ms, is a little shorter than a real poll interval).
 
 // A rise slower than this fraction of the slowest possible nudge (enter
 // threshold / nudge time) is ordinary cursor movement: it neither starts a
@@ -242,13 +249,22 @@ struct MouseState {
   float pending_base{0.0f};
   Clock::time_point pending_start{};
   bool pending_reached{false};
-  // Cursor movement withheld while PENDING, and what is left to send of it
-  // once the gesture turned out not to be a nudge.
+  // PENDING: cursor movement withheld for the current gesture. It is dropped
+  // if the gesture becomes a nudge (it was the nudge itself), and moved into
+  // owed_dx/owed_dy if it does not.
+  std::int32_t pending_dx{0}, pending_dy{0};
+  // Ordinary movement still to be sent: what a gesture that was not a nudge
+  // withheld, less what has gone out since. Kept apart from pending_dx/dy so
+  // a nudge that starts before it has drained cannot discard it; it waits
+  // through that nudge and goes out when the cursor is given back.
   std::int32_t owed_dx{0}, owed_dy{0};
   // HELD: when the nudge started.
   Clock::time_point nudge_start{};
-  // SETTLING: the lowest magnitude seen since the nudge ended.
+  // SETTLING: the lowest magnitude seen since the nudge ended, and whether a
+  // fast rise is being followed (pending_base/pending_start then hold where
+  // it started, ready to be carried into PENDING).
   float settle_min{0.0f};
+  bool settle_rise{false};
   bool initialised{false};
 };
 
@@ -310,11 +326,23 @@ inline void reset_gesture(MouseState &s, float x, float y, Clock::time_point now
   s.phase = NudgePhase::IDLE;
   s.scroll_poll_count = 0;
   s.pending_reached = false;
+  s.settle_rise = false;
+  s.pending_dx = 0;
+  s.pending_dy = 0;
   s.owed_dx = 0;
   s.owed_dy = 0;
   s.last_mag = std::hypot(x, y);
   s.last_time = now;
   s.initialised = true;
+}
+
+// The current gesture is not a nudge: what it withheld is ordinary movement
+// after all, and joins the movement still to be sent.
+inline void release_withheld(MouseState &s) {
+  s.owed_dx += s.pending_dx;
+  s.owed_dy += s.pending_dy;
+  s.pending_dx = 0;
+  s.pending_dy = 0;
 }
 
 // Advances the nudge gesture by one poll. `at_rest` is true when the stick
@@ -335,24 +363,46 @@ inline void nudge_update(MouseState &s, const StepInput &in, float cur_mag, bool
       s.nudge = NudgeDirection::NONE;
       s.phase = at_rest ? NudgePhase::IDLE : NudgePhase::SETTLING;
       s.settle_min = cur_mag;
+      s.settle_rise = false;
     }
     return;
   }
 
+  // Whether this poll rose at nudge pace or faster since the previous one.
+  const float step = cur_mag - s.last_mag;
+  const float dt_ms = FloatMs(in.now - s.last_time).count();
+  const bool fast_step = step > 0.0f && dt_ms > 0.0f && step >= pace * dt_ms;
+
   if (s.phase == NudgePhase::SETTLING) {
     s.settle_min = std::min(s.settle_min, cur_mag);
+    // Follow a fast rise while settling, by the rules PENDING uses, without
+    // acting on it yet. A second nudge that takes several polls to cross the
+    // breakout is then measured from where it started, not from the poll
+    // before the breakout, which would hide the first part of its rise.
+    if (s.settle_rise) {
+      const float followed_ms = FloatMs(in.now - s.pending_start).count();
+      if (!(followed_ms < nudge_time_ms && cur_mag - s.pending_base >= pace * followed_ms)) {
+        s.settle_rise = false;
+      }
+    }
+    if (!s.settle_rise && fast_step) {
+      s.settle_rise = true;
+      s.pending_base = s.last_mag;
+      s.pending_start = s.last_time;
+    }
     if (!at_rest && cur_mag - s.settle_min < NUDGE_SETTLE_BREAKOUT) {
       return;
     }
-    // At rest, or pushed out again: this poll is handled as IDLE, so a second
-    // quick nudge goes straight to PENDING without moving the cursor first.
-    s.phase = NudgePhase::IDLE;
+    // At rest, or pushed out again. A rise that was being followed carries on
+    // as PENDING from its own start, so a second quick nudge never moves the
+    // cursor first; otherwise this poll is handled as IDLE.
+    s.phase = (!at_rest && s.settle_rise) ? NudgePhase::PENDING : NudgePhase::IDLE;
+    s.settle_rise = false;
+    s.pending_reached = false;
   }
 
   if (s.phase == NudgePhase::IDLE) {
-    const float step = cur_mag - s.last_mag;
-    const float dt_ms = FloatMs(in.now - s.last_time).count();
-    if (!(step > 0.0f) || !(dt_ms > 0.0f) || step < pace * dt_ms) {
+    if (!fast_step) {
       return;
     }
     s.phase = NudgePhase::PENDING;
@@ -364,6 +414,14 @@ inline void nudge_update(MouseState &s, const StepInput &in, float cur_mag, bool
   // PENDING.
   const float rise = cur_mag - s.pending_base;
   const float elapsed_ms = FloatMs(in.now - s.pending_start).count();
+  // The whole rise so far fits between the previous poll and this one. The
+  // loop cannot see anything shorter than one poll interval, and a real
+  // interval is a little longer than its nominal 10 ms, so a nudge time at or
+  // below it (10 ms is the console's smallest step) must not reject a jump
+  // that crossed the threshold in a single interval. The pace check that
+  // started the gesture still applies, so a long gap between polls does not
+  // turn a slow push into a nudge.
+  const bool one_interval = s.pending_start == s.last_time;
   if (rise >= threshold) {
     if (s.pending_reached) {
       s.nudge = classify_nudge(in.stick.x, in.stick.y);
@@ -371,12 +429,13 @@ inline void nudge_update(MouseState &s, const StepInput &in, float cur_mag, bool
       s.scroll_poll_count = 0;
       s.nudge_start = in.now;
       s.pending_reached = false;
-      // The withheld movement was the nudge itself: it is never sent.
-      s.owed_dx = 0;
-      s.owed_dy = 0;
+      // What this gesture withheld was the nudge itself: it is never sent.
+      // Movement owed from before it is not touched.
+      s.pending_dx = 0;
+      s.pending_dy = 0;
       return;
     }
-    if (elapsed_ms <= nudge_time_ms) {
+    if (elapsed_ms <= nudge_time_ms || one_interval) {
       s.pending_reached = true;
       return;
     }
@@ -387,9 +446,10 @@ inline void nudge_update(MouseState &s, const StepInput &in, float cur_mag, bool
     }
   }
   // Too slow, too late, or it stopped short: ordinary movement after all. The
-  // withheld movement stays in owed_dx/owed_dy and goes out from this poll on.
+  // withheld movement joins owed_dx/owed_dy and goes out from this poll on.
   s.phase = NudgePhase::IDLE;
   s.pending_reached = false;
+  release_withheld(s);
 }
 
 } // namespace detail
@@ -436,6 +496,8 @@ inline StepOutput mouse_step(MouseState &s, const StepInput &in) {
     s.phase = NudgePhase::IDLE;
     s.scroll_poll_count = 0;
     s.pending_reached = false;
+    s.settle_rise = false;
+    detail::release_withheld(s);
     s.last_mag = cur_mag;
     s.last_time = in.now;
   }
@@ -458,8 +520,8 @@ inline StepOutput mouse_step(MouseState &s, const StepInput &in) {
     break;
   }
   case NudgePhase::PENDING:
-    s.owed_dx += stick_dx;
-    s.owed_dy += stick_dy;
+    s.pending_dx += stick_dx;
+    s.pending_dy += stick_dy;
     break;
   case NudgePhase::HELD:
     mouse.buttons = static_cast<std::uint8_t>((s.nudge == NudgeDirection::FORWARD ? 0x01 : 0) |

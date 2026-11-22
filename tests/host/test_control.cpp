@@ -338,6 +338,32 @@ TEST(control_withheld_movement_larger_than_one_report_follows_in_the_next) {
   CHECK_EQ(p.s.owed_dx, 0);
 }
 
+TEST(control_a_nudge_does_not_discard_movement_owed_from_before_it) {
+  // 300 ms at 0.45 is rejected as a nudge at t=300 and is owed 180 counts: one
+  // report takes 127 and 53 are left. A real nudge starts on the very next
+  // polls. It drops its own withheld movement, not those 53 counts: they wait
+  // through the nudge and go out when the cursor is given back.
+  Poller p;
+  p.settings.nudge_hold_time = milliseconds(300);
+  p.hold(0.45f, 0.0f, 30);
+  const int owed_total = 30 * expected_delta(0.45f);
+  CHECK_EQ(p.sum_dx, 127);
+  CHECK_EQ(p.s.owed_dx, owed_total - 127);
+  p.poll(1.0f, 0.0f);
+  p.poll(1.0f, 0.0f);
+  CHECK(p.s.nudge == NudgeDirection::RIGHT);
+  CHECK_EQ(p.s.pending_dx, 0);
+  CHECK_EQ(p.s.owed_dx, owed_total - 127); // untouched by the nudge
+  CHECK_EQ(p.sum_dx, 127);                 // and not sent while the button is down
+  while (p.ms < 1000) {
+    p.poll(0.0f, 0.0f);
+  }
+  CHECK(p.s.phase == oc::NudgePhase::IDLE);
+  CHECK_EQ(p.sum_dx, owed_total);
+  CHECK_EQ(p.s.owed_dx, 0);
+  CHECK_EQ(p.sum_dy, 0);
+}
+
 // ---- cursor stays still around a nudge --------------------------------------
 
 TEST(control_a_quick_nudge_and_release_never_moves_the_cursor) {
@@ -463,6 +489,111 @@ TEST(control_a_second_nudge_before_the_stick_is_back_at_rest_still_clicks) {
   CHECK(p.s.nudge == NudgeDirection::RIGHT);
   CHECK_EQ(p.button_polls, first_click_polls + 1);
   CHECK_EQ(p.moved_polls, 0);
+}
+
+TEST(control_a_second_nudge_that_crosses_the_breakout_over_several_polls_still_clicks) {
+  // The second rise goes 0.2 to 0.77 in 60 ms, more than the enter threshold
+  // within the nudge time, but it takes three polls to get NUDGE_SETTLE_BREAKOUT
+  // above the low point. It must be measured from where it started (0.2), not
+  // from the poll before the breakout (0.39), or it never reaches the threshold.
+  Poller p;
+  int presses = 0;
+  bool down = false;
+  const auto poll = [&](float x) {
+    p.poll(x, 0.0f);
+    const bool now_down = p.last.mouse.buttons != 0;
+    presses += (now_down && !down) ? 1 : 0;
+    down = now_down;
+  };
+  for (int k = 0; k < 10; ++k) {
+    poll(0.95f); // t = 10 .. 100: the first nudge
+  }
+  poll(0.8f);
+  poll(0.6f);
+  for (int k = 0; k < 8; ++k) {
+    poll(0.2f); // t = 130 .. 200: most of the way back, not at rest
+  }
+  CHECK(p.s.phase == oc::NudgePhase::SETTLING);
+  CHECK_EQ(presses, 1);
+  for (float x : {0.30f, 0.39f, 0.48f, 0.57f, 0.67f, 0.77f}) {
+    poll(x); // t = 210 .. 260
+  }
+  for (int k = 0; k < 7; ++k) {
+    poll(0.77f); // t = 270 .. 330
+  }
+  CHECK_EQ(presses, 2);
+  CHECK(p.s.nudge == NudgeDirection::RIGHT);
+  CHECK_EQ(p.moved_polls, 0);
+}
+
+TEST(control_a_slow_push_out_while_settling_still_gives_the_cursor_back) {
+  // Following a rise while settling must not turn a slow push into a gesture:
+  // 0.02 a poll is under the nudge pace, so the breakout hands over to IDLE.
+  Poller p;
+  p.flick_right(0.95f);
+  p.hold(0.95f, 0.0f, 20);
+  p.poll(0.5f, 0.0f);
+  p.hold(0.2f, 0.0f, 3);
+  CHECK(p.s.phase == oc::NudgePhase::SETTLING);
+  const int clicks = p.button_polls;
+  for (int k = 1; k <= 20; ++k) {
+    p.poll(0.2f + 0.02f * static_cast<float>(k), 0.0f);
+  }
+  CHECK(p.s.phase == oc::NudgePhase::IDLE);
+  CHECK(p.moved_polls > 0);
+  CHECK_EQ(p.button_polls, clicks);
+}
+
+TEST(control_a_10_ms_nudge_time_works_with_real_poll_intervals) {
+  // The loop sleeps 10 ms after its sensor and HID work, so real intervals are
+  // a little over 10 ms. With the nudge time at the console's smallest step
+  // (10 ms), a jump over the threshold in one interval is still a nudge.
+  const auto step = [](oc::MouseState &s, float x, int ms) {
+    oc::StepInput in = input(x, 0.0f, ms);
+    in.settings.nudge_hold_time = milliseconds(10);
+    return oc::mouse_step(s, in);
+  };
+  {
+    oc::MouseState s = fresh_mouse();
+    const auto first = step(s, 0.9f, 11);
+    CHECK_EQ(first.mouse.buttons, 0);
+    CHECK_EQ(first.mouse.dx, 0);
+    const auto second = step(s, 0.9f, 22);
+    CHECK_EQ(second.mouse.buttons, 0x02);
+    CHECK_EQ(second.mouse.dx, 0);
+    CHECK(s.nudge == NudgeDirection::RIGHT);
+  }
+  {
+    // Exactly 10 ms apart, as before.
+    oc::MouseState s = fresh_mouse();
+    step(s, 0.9f, 10);
+    CHECK_EQ(step(s, 0.9f, 20).mouse.buttons, 0x02);
+  }
+  {
+    // A rise that needs two intervals does not fit in 10 ms: no click, and the
+    // movement is all sent.
+    oc::MouseState s = fresh_mouse();
+    int sum_dx = 0;
+    std::uint8_t buttons = 0;
+    const float xs[] = {0.45f, 0.9f, 0.9f, 0.9f};
+    int expected = 0;
+    for (int k = 0; k < 4; ++k) {
+      const auto out = step(s, xs[k], 11 * (k + 1));
+      sum_dx += out.mouse.dx;
+      buttons |= out.mouse.buttons;
+      expected += expected_delta(xs[k]);
+    }
+    CHECK_EQ(buttons, 0);
+    CHECK_EQ(sum_dx, expected);
+  }
+  {
+    // One long gap is not a short nudge: after 200 ms without a poll, a push
+    // to 0.9 is slower than the nudge pace and moves the cursor at once.
+    oc::MouseState s = fresh_mouse();
+    const auto out = step(s, 0.9f, 200);
+    CHECK_EQ(out.mouse.dx, expected_delta(0.9f));
+    CHECK_EQ(step(s, 0.9f, 211).mouse.buttons, 0);
+  }
 }
 
 TEST(control_nudge_time_is_clamped_inside_the_control_loop) {
