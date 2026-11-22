@@ -28,6 +28,61 @@ namespace espp {
 /// espp::Joystick.
 class OmegaCalibration {
 public:
+  /// Writes a file atomically: `write` fills a temporary sibling (path + ".tmp"),
+  /// which is flushed, checked and renamed over `path`. A reset or power loss
+  /// mid-save leaves the previous complete file in place instead of a
+  /// truncated or empty one (opening `path` itself with trunc would empty it
+  /// at once; LittleFS syncs the truncation immediately). Same approach as
+  /// ResetLog::save(): LittleFS replaces an existing destination atomically,
+  /// and if the filesystem refuses, the old file is removed and the rename
+  /// retried. On failure the temporary file is removed and ec is set.
+  static bool write_file_atomically(const std::filesystem::path &path, std::error_code &ec,
+                                    const std::function<void(std::ostream &)> &write) {
+    ec.clear();
+    std::filesystem::path temp = path;
+    temp += ".tmp";
+    bool written = false;
+    {
+      std::ofstream out(temp, std::ios::out | std::ios::trunc);
+      if (!out.is_open()) {
+        ec = make_error_code(Error::file_open_failed);
+        return false;
+      }
+      write(out);
+      out.flush();
+      if (out) {
+        out.close();
+        written = !out.fail();
+      }
+    }
+    if (!written) {
+      // Removed after the stream is closed; some filesystems refuse to delete
+      // an open file.
+      ec = make_error_code(Error::file_write_failed);
+      std::error_code remove_ec;
+      std::filesystem::remove(temp, remove_ec);
+      return false;
+    }
+
+    std::error_code rename_ec;
+    std::filesystem::rename(temp, path, rename_ec);
+    std::error_code exists_ec;
+    if (rename_ec && std::filesystem::exists(temp, exists_ec)) {
+      // Only when the complete temp file is still there: if it is gone, the
+      // destination may be another writer's good copy and must not be removed.
+      std::error_code remove_ec;
+      std::filesystem::remove(path, remove_ec);
+      std::filesystem::rename(temp, path, rename_ec);
+    }
+    if (rename_ec) {
+      ec = rename_ec;
+      std::error_code remove_ec;
+      std::filesystem::remove(temp, remove_ec);
+      return false;
+    }
+    return true;
+  }
+
   // --------------------------------------------------------------------------
   // Tunables
   // --------------------------------------------------------------------------
@@ -364,38 +419,29 @@ public:
     }
 
     /// Saves settings to a simple "key=value" text file (same format as
-    /// OmegaCalibration::save()) at the given path. Overwrites any existing
-    /// file at that path. An unset manual_*_deadzone override is simply
+    /// OmegaCalibration::save()) at the given path. Atomically replaces any
+    /// existing file at that path. An unset manual_*_deadzone override is simply
     /// omitted from the file, so load() correctly restores it as nullopt.
     static bool save(const DeviceSettings &settings, const std::filesystem::path &path,
                      std::error_code &ec) {
       ec.clear();
 
-      std::ofstream out(path, std::ios::out | std::ios::trunc);
-      if (!out.is_open()) {
-        ec = make_error_code(Error::file_open_failed);
-        return false;
-      }
-
-      out << "schema=" << SCHEMA_VERSION << "\n";
-      if (settings.manual_center_deadzone) {
-        out << "manual_center_deadzone=" << *settings.manual_center_deadzone << "\n";
-      }
-      if (settings.manual_range_deadzone) {
-        out << "manual_range_deadzone=" << *settings.manual_range_deadzone << "\n";
-      }
-      out << "nudge_distance_threshold=" << settings.nudge_distance_threshold << "\n";
-      out << "nudge_exit_threshold=" << settings.nudge_exit_threshold << "\n";
-      out << "nudge_hold_time_ms=" << static_cast<float>(settings.nudge_hold_time.count()) << "\n";
-      out << "nudge_enabled=" << (settings.nudge_enabled ? 1 : 0) << "\n";
-      out << "input_mode=" << static_cast<float>(static_cast<uint8_t>(settings.input_mode)) << "\n";
-      out.flush();
-
-      if (!out) {
-        ec = make_error_code(Error::file_write_failed);
-        return false;
-      }
-      return true;
+      return write_file_atomically(path, ec, [&](std::ostream &out) {
+        out << "schema=" << SCHEMA_VERSION << "\n";
+        if (settings.manual_center_deadzone) {
+          out << "manual_center_deadzone=" << *settings.manual_center_deadzone << "\n";
+        }
+        if (settings.manual_range_deadzone) {
+          out << "manual_range_deadzone=" << *settings.manual_range_deadzone << "\n";
+        }
+        out << "nudge_distance_threshold=" << settings.nudge_distance_threshold << "\n";
+        out << "nudge_exit_threshold=" << settings.nudge_exit_threshold << "\n";
+        out << "nudge_hold_time_ms=" << static_cast<float>(settings.nudge_hold_time.count())
+            << "\n";
+        out << "nudge_enabled=" << (settings.nudge_enabled ? 1 : 0) << "\n";
+        out << "input_mode=" << static_cast<float>(static_cast<uint8_t>(settings.input_mode))
+            << "\n";
+      });
     }
 
     /// Loads settings previously written by save(). Every field is
@@ -952,8 +998,8 @@ public:
   /// magnitude (e.g. std::hypot(js.x(), js.y())). When the mapped output
   /// stays near zero for a sustained period, that's taken as "the stick is
   /// genuinely at rest," and the stored center is nudged a small amount
-  /// toward the raw reading -- slowly and rate-limited, so it can never be
-  /// mistaken for responding to real input.
+  /// toward the raw reading (less the manual offset, which is kept) -- slowly and rate-limited, so
+  /// it can never be mistaken for responding to real input.
   ///
   /// On a nudge, update() returns true; the caller should then push the
   /// updated CenterResult into the live Joystick via apply_calibration(),
@@ -998,8 +1044,11 @@ public:
         return false;
       }
 
-      center.center_x += (raw_x - center.center_x) * config_.blend_rate;
-      center.center_y += (raw_y - center.center_y) * config_.blend_rate;
+      // Rest maps to effective_center = center + manual_offset, so blend the
+      // measured center toward (raw - offset). The effective center then
+      // converges on the rest reading and the manual trim is left intact.
+      center.center_x += (raw_x - center.manual_offset_x - center.center_x) * config_.blend_rate;
+      center.center_y += (raw_y - center.manual_offset_y - center.center_y) * config_.blend_rate;
       last_nudge_ = now;
       return true;
     }
@@ -1303,39 +1352,28 @@ public:
 
   /// Saves completed calibration results to a simple "key=value" text file
   /// at the given path (e.g. under espp::FileSystem::get().get_root_path()).
-  /// Overwrites any existing file at that path.
+  /// Atomically replaces any existing file at that path.
   static bool save(const CenterResult &center, const RangeResult &range,
                    const std::filesystem::path &path, std::error_code &ec) {
     ec.clear();
 
-    std::ofstream out(path, std::ios::out | std::ios::trunc);
-    if (!out.is_open()) {
-      ec = make_error_code(Error::file_open_failed);
-      return false;
-    }
-
-    out << "schema=" << SCHEMA_VERSION << "\n";
-    out << "center_x=" << center.center_x << "\n";
-    out << "center_y=" << center.center_y << "\n";
-    out << "center_noise_radius=" << center.noise_radius << "\n";
-    out << "center_deadzone=" << center.deadzone << "\n";
-    out << "center_manual_offset_x=" << center.manual_offset_x << "\n";
-    out << "center_manual_offset_y=" << center.manual_offset_y << "\n";
-    out << "range_min_x=" << range.min_x << "\n";
-    out << "range_max_x=" << range.max_x << "\n";
-    out << "range_min_y=" << range.min_y << "\n";
-    out << "range_max_y=" << range.max_y << "\n";
-    out << "range_usable_radius=" << range.usable_radius << "\n";
-    out << "range_reliable_max_radius=" << range.reliable_max_radius << "\n";
-    out << "range_normalized_max_radius=" << range.normalized_max_radius << "\n";
-    out << "range_deadzone=" << range.deadzone << "\n";
-    out.flush();
-
-    if (!out) {
-      ec = make_error_code(Error::file_write_failed);
-      return false;
-    }
-    return true;
+    return write_file_atomically(path, ec, [&](std::ostream &out) {
+      out << "schema=" << SCHEMA_VERSION << "\n";
+      out << "center_x=" << center.center_x << "\n";
+      out << "center_y=" << center.center_y << "\n";
+      out << "center_noise_radius=" << center.noise_radius << "\n";
+      out << "center_deadzone=" << center.deadzone << "\n";
+      out << "center_manual_offset_x=" << center.manual_offset_x << "\n";
+      out << "center_manual_offset_y=" << center.manual_offset_y << "\n";
+      out << "range_min_x=" << range.min_x << "\n";
+      out << "range_max_x=" << range.max_x << "\n";
+      out << "range_min_y=" << range.min_y << "\n";
+      out << "range_max_y=" << range.max_y << "\n";
+      out << "range_usable_radius=" << range.usable_radius << "\n";
+      out << "range_reliable_max_radius=" << range.reliable_max_radius << "\n";
+      out << "range_normalized_max_radius=" << range.normalized_max_radius << "\n";
+      out << "range_deadzone=" << range.deadzone << "\n";
+    });
   }
 
   /// Loads calibration results previously written by save(). Only the
