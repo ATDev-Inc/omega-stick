@@ -1172,6 +1172,69 @@
     } catch (_) { return false; }
   }
 
+  // "Save a copy of this page". Offered only when the page was served over
+  // http(s): from file:// the person already holds a copy and there is
+  // nothing to fetch.
+  const SAVE_COPY_NAME = "omega_stick_console.html";
+  function canSaveCopy(locationHref) {
+    try {
+      const p = new URL(String(locationHref)).protocol;
+      return p === "https:" || p === "http:";
+    } catch (_) { return false; }
+  }
+  // The address to fetch the pristine page source from: this page without its
+  // query string or hash. Null when the page was not served over http(s).
+  function saveCopyUrl(locationHref) {
+    if (!canSaveCopy(locationHref)) return null;
+    const u = new URL(String(locationHref));
+    u.search = "";
+    u.hash = "";
+    return u.href;
+  }
+  // True only when the text is really this console, so a captive portal or an
+  // error page is never saved under the console's name.
+  function looksLikeConsole(text) {
+    return typeof text === "string" &&
+      text.indexOf("<title>espp Omega Calibration Console") >= 0 &&
+      text.indexOf("OmegaProtocol") >= 0;
+  }
+  // How long "Save a copy" waits for the whole page, headers and body.
+  const SAVE_COPY_TIMEOUT_MS = 30000;
+  // Fetches a page and reads its whole body under one deadline. The timer
+  // stays armed until the body is complete, so a response that starts and
+  // then stalls is aborted too (the abort also cancels the body read) and the
+  // caller gets an AbortError instead of waiting for ever. Resolves to
+  // { ok, status, bytes }; bytes (an ArrayBuffer) only when ok.
+  // deps: { fetch, AbortController, setTimeout, clearTimeout }, injected so a
+  // test can stall a body.
+  async function fetchBytesWithDeadline(url, ms, deps) {
+    const ctl = new deps.AbortController();
+    const timer = deps.setTimeout(() => ctl.abort(), ms);
+    try {
+      const res = await deps.fetch(url, { cache: "no-store", signal: ctl.signal });
+      if (!res.ok) return { ok: false, status: res.status };
+      return { ok: true, status: res.status, bytes: await res.arrayBuffer() };
+    } finally { deps.clearTimeout(timer); }
+  }
+  // Plain wording for the outcome. kind: started | notconsole | http |
+  // offline | timeout | unreachable. "started" means the file was handed to
+  // the browser. The page cannot see whether the browser then saved it (a
+  // blocked or cancelled download reports nothing back), so the wording asks
+  // the person to check instead of claiming a saved file.
+  function describeSaveCopy(kind, status) {
+    switch (kind) {
+      case "started": return "The download of " + SAVE_COPY_NAME + " has started. Check that the file is in your Downloads folder. " +
+        "If it is not there, your browser may have blocked it: download the console from the releases page on GitHub instead.";
+      case "notconsole": return "The page that came back was not the console (a sign-in page or an error page, perhaps), so nothing was saved. " +
+        "Download the console from the releases page on GitHub instead.";
+      case "http": return "The server could not provide the page (error " + status + "), so nothing was saved. " +
+        "Download the console from the releases page on GitHub instead.";
+      case "offline": return "This computer is offline, so nothing was saved. Try again when you are connected, or use the releases page on GitHub.";
+      case "timeout": return "The page took too long to arrive, so nothing was saved. Try again, or download the console from the releases page on GitHub.";
+      default: return "The page could not be fetched, so nothing was saved. Try again, or download the console from the releases page on GitHub.";
+    }
+  }
+
   // Validates the parsed latest.json. Returns { ok, error, release } where
   // release is { version, tag, publishedAt, notesUrl, appUrl, size, sha256 }.
   function parseReleaseFeed(json, feedUrl) {
@@ -1569,6 +1632,7 @@
     encodeSimMessage, parseSimMessage, validateSimScript, createHidAccumulator,
     pickReconnectCandidate, autoReconnectStep,
     FEED_URL, RELEASES_URL, feedUrlFor, shouldRegisterConsoleSw, parseReleaseFeed, summarizeAvailability,
+    SAVE_COPY_NAME, SAVE_COPY_TIMEOUT_MS, canSaveCopy, saveCopyUrl, looksLikeConsole, fetchBytesWithDeadline, describeSaveCopy,
     OTA_SLOT_SIZE, CHIP_ID_ESP32S3, DEFAULT_PROJECT, KIND_LABEL,
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
     decideOutcome, CONFIRM_CHECKS, judgeConfirmCheck, awaitSensorHealthy, runConfirmCheck, confirmFailureNotice,

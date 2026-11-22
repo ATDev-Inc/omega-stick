@@ -265,7 +265,11 @@ full-flash image (`idf.py merge-bin`) and publish
 | `/firmware/latest.json` | Feed the console reads |
 | `/firmware/SHA256SUMS` | `sha256sum -c` format |
 
-The same `/firmware/` files are attached to the GitHub release. Browsers fetch
+The same `/firmware/` files are attached to the GitHub release, along with a
+copy of the console named `omega_stick_console.html` (the page at `/console/`,
+under a download-friendly name, outside `/firmware/` so it is not in the feed
+or in `SHA256SUMS`). The console's "Save a copy of this page" button saves the
+same file. Browsers fetch
 from Pages because GitHub release downloads send no CORS headers and Pages
 does. Drafts and prereleases do not update Pages.
 
