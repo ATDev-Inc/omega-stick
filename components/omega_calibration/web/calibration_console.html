@@ -878,6 +878,21 @@
       <div id="log" class="log" aria-live="polite"></div>
     </div>
 
+    <div class="panel">
+      <h2>Keep a copy of this console</h2>
+      <p class="muted" style="margin: 0 0 6px;">
+        A saved copy opens from your computer with no internet and connects to the stick the same way.
+        It is not updated automatically.
+      </p>
+      <div class="edit-row">
+        <button id="saveCopyBtn">Save a copy of this page</button>
+      </div>
+      <p id="saveCopyNote" class="muted" aria-live="polite" style="margin: 6px 0 0;"></p>
+      <p class="muted" style="margin: 4px 0 0;">
+        <a id="saveCopyReleases" href="https://github.com/ATDev-Inc/omega-stick/releases" target="_blank" rel="noopener">Console and firmware releases on GitHub</a>
+      </p>
+    </div>
+
     <footer>
       Speaks a module-5 extension of the espp OT framing shared with the coredump and OTA
       consoles (magic "OT" + flags + module + type + len + payload + CRC-32; see this page's
@@ -2050,6 +2065,46 @@
     return FEED_URL;
   }
 
+  // "Save a copy of this page". Offered only when the page was served over
+  // http(s): from file:// the person already holds a copy and there is
+  // nothing to fetch.
+  const SAVE_COPY_NAME = "omega_stick_console.html";
+  function canSaveCopy(locationHref) {
+    try {
+      const p = new URL(String(locationHref)).protocol;
+      return p === "https:" || p === "http:";
+    } catch (_) { return false; }
+  }
+  // The address to fetch the pristine page source from: this page without its
+  // query string or hash. Null when the page was not served over http(s).
+  function saveCopyUrl(locationHref) {
+    if (!canSaveCopy(locationHref)) return null;
+    const u = new URL(String(locationHref));
+    u.search = "";
+    u.hash = "";
+    return u.href;
+  }
+  // True only when the text is really this console, so a captive portal or an
+  // error page is never saved under the console's name.
+  function looksLikeConsole(text) {
+    return typeof text === "string" &&
+      text.indexOf("<title>espp Omega Calibration Console") >= 0 &&
+      text.indexOf("OmegaProtocol") >= 0;
+  }
+  // Plain wording for the outcome. kind: saved | notconsole | http | offline |
+  // timeout | unreachable.
+  function describeSaveCopy(kind, status) {
+    switch (kind) {
+      case "saved": return "Saved a copy as " + SAVE_COPY_NAME + ". Look in your Downloads folder.";
+      case "notconsole": return "The page that came back was not the console (a sign-in page or an error page, perhaps), so nothing was saved. " +
+        "Download the console from the releases page on GitHub instead.";
+      case "http": return "The server could not provide the page (error " + status + "), so nothing was saved. " +
+        "Download the console from the releases page on GitHub instead.";
+      case "offline": return "This computer is offline, so nothing was saved. Try again when you are connected, or use the releases page on GitHub.";
+      default: return "The page could not be fetched, so nothing was saved. Try again, or download the console from the releases page on GitHub.";
+    }
+  }
+
   // Validates the parsed latest.json. Returns { ok, error, release } where
   // release is { version, tag, publishedAt, notesUrl, appUrl, size, sha256 }.
   function parseReleaseFeed(json, feedUrl) {
@@ -2447,6 +2502,7 @@
     encodeSimMessage, parseSimMessage, validateSimScript, createHidAccumulator,
     pickReconnectCandidate, autoReconnectStep,
     FEED_URL, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
+    SAVE_COPY_NAME, canSaveCopy, saveCopyUrl, looksLikeConsole, describeSaveCopy,
     OTA_SLOT_SIZE, CHIP_ID_ESP32S3, DEFAULT_PROJECT, KIND_LABEL,
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
     decideOutcome, CONFIRM_CHECKS, judgeConfirmCheck, awaitSensorHealthy, runConfirmCheck, confirmFailureNotice,
@@ -2497,6 +2553,7 @@
       describeUpdateError, formatProgress, formatBytes,
       FIRST_FLASH_URL, NO_USB_UPDATES_NOTE, usbUpdatesUnavailable, decideOutcomeNoUpdates,
       DEFAULT_PROJECT, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
+      SAVE_COPY_NAME, canSaveCopy, saveCopyUrl, looksLikeConsole, describeSaveCopy,
       SIM_PATTERNS, encodeSimMessage, parseSimMessage, validateSimScript, createHidAccumulator,
     } = globalThis.OmegaProtocol;
     const DISCOVERY_TIMEOUT_MS = 800;
@@ -2530,7 +2587,7 @@
                       "diagRefreshBtn", "diagInfo", "resetList",
                       "fwRunning", "fwPending", "markValidBtn", "fwControls", "fwNoUpdates", "fwNoUpdatesText", "fwNoUpdatesLink",
                       "fwVersion", "fwBuild", "fwIdf", "fwRunPart", "fwBootPart", "fwSha", "fwCopyBtn", "fwPrevSlot", "fwPrevVersion", "fwPrevBuild", "fwPrevState", "fwRevertBtn", "fwFile", "flashBtn", "fwProgress", "restartBtn",
-                      "latestCheckBtn", "latestInstallBtn", "latestAuto", "latestResult", "latestNotes",
+                      "saveCopyBtn", "saveCopyNote", "saveCopyReleases", "latestCheckBtn", "latestInstallBtn", "latestAuto", "latestResult", "latestNotes",
                       "fwDrop", "fwFileInfo", "confirmPanel", "confirmTitle", "confirmBody", "confirmOkBtn", "confirmCancelBtn",
                       "updateStatus", "updateSteps", "updateMessage", "updateDetail", "updateError", "fwReconnectBtn",
                       "fwRestartNowBtn", "fwFlashNote", "fwRevertNote",
@@ -4371,6 +4428,41 @@
       }
     }
     els.latestCheckBtn.addEventListener("click", () => checkLatest(false));
+    // Save a copy of this page: fetch the pristine source again (never the live
+    // DOM), check it is really the console, and download it through a Blob.
+    let saveCopyBusy = false;
+    async function saveCopy() {
+      if (saveCopyBusy) return;
+      saveCopyBusy = true; els.saveCopyBtn.disabled = true;
+      els.saveCopyNote.textContent = "Saving...";
+      let kind = "saved", status = 0;
+      try {
+        const res = await fetch(saveCopyUrl(location.href), { cache: "no-store" });
+        if (!res.ok) { kind = "http"; status = res.status; }
+        else {
+          const text = await res.text();
+          if (!looksLikeConsole(text)) kind = "notconsole";
+          else {
+            const url = URL.createObjectURL(new Blob([text], { type: "text/html" }));
+            const a = document.createElement("a");
+            a.href = url; a.download = SAVE_COPY_NAME;
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 10000);
+          }
+        }
+      } catch (e) {
+        kind = classifyFetchError(e, navigator.onLine);
+      }
+      els.saveCopyNote.textContent = describeSaveCopy(kind, status);
+      saveCopyBusy = false; els.saveCopyBtn.disabled = false;
+    }
+    if (canSaveCopy(location.href)) {
+      els.saveCopyBtn.addEventListener("click", saveCopy);
+    } else {
+      els.saveCopyBtn.hidden = true;
+      els.saveCopyNote.textContent = "This is a saved copy of the console, so it may not be the newest one. " +
+        "Get the newest from the releases page on GitHub.";
+    }
     function maybeAutoCheck() {
       if (!usbUpdates) return;
       renderLatest();

@@ -23,6 +23,13 @@ what each part of the number means and how a release is cut.
   working; the console falls back to the printed prompts when the firmware
   does not stream progress.
   ([#103](https://github.com/ATDev-Inc/omega-stick/pull/103))
+- **Keep your own copy of the console.** The console has a new "Save a copy of
+  this page" button that downloads it as `omega_stick_console.html`, a single
+  file that opens from your computer with no internet and connects to the
+  stick the same way. It is not updated automatically, so the releases page is
+  the place for a newer one. Each GitHub release now also carries the console
+  as an `omega_stick_console.html` download, starting with the next full
+  release, so it no longer depends on the project website or on the browser.
 
 ### Fixed
 

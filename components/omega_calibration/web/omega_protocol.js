@@ -1157,6 +1157,46 @@
     return FEED_URL;
   }
 
+  // "Save a copy of this page". Offered only when the page was served over
+  // http(s): from file:// the person already holds a copy and there is
+  // nothing to fetch.
+  const SAVE_COPY_NAME = "omega_stick_console.html";
+  function canSaveCopy(locationHref) {
+    try {
+      const p = new URL(String(locationHref)).protocol;
+      return p === "https:" || p === "http:";
+    } catch (_) { return false; }
+  }
+  // The address to fetch the pristine page source from: this page without its
+  // query string or hash. Null when the page was not served over http(s).
+  function saveCopyUrl(locationHref) {
+    if (!canSaveCopy(locationHref)) return null;
+    const u = new URL(String(locationHref));
+    u.search = "";
+    u.hash = "";
+    return u.href;
+  }
+  // True only when the text is really this console, so a captive portal or an
+  // error page is never saved under the console's name.
+  function looksLikeConsole(text) {
+    return typeof text === "string" &&
+      text.indexOf("<title>espp Omega Calibration Console") >= 0 &&
+      text.indexOf("OmegaProtocol") >= 0;
+  }
+  // Plain wording for the outcome. kind: saved | notconsole | http | offline |
+  // timeout | unreachable.
+  function describeSaveCopy(kind, status) {
+    switch (kind) {
+      case "saved": return "Saved a copy as " + SAVE_COPY_NAME + ". Look in your Downloads folder.";
+      case "notconsole": return "The page that came back was not the console (a sign-in page or an error page, perhaps), so nothing was saved. " +
+        "Download the console from the releases page on GitHub instead.";
+      case "http": return "The server could not provide the page (error " + status + "), so nothing was saved. " +
+        "Download the console from the releases page on GitHub instead.";
+      case "offline": return "This computer is offline, so nothing was saved. Try again when you are connected, or use the releases page on GitHub.";
+      default: return "The page could not be fetched, so nothing was saved. Try again, or download the console from the releases page on GitHub.";
+    }
+  }
+
   // Validates the parsed latest.json. Returns { ok, error, release } where
   // release is { version, tag, publishedAt, notesUrl, appUrl, size, sha256 }.
   function parseReleaseFeed(json, feedUrl) {
@@ -1554,6 +1594,7 @@
     encodeSimMessage, parseSimMessage, validateSimScript, createHidAccumulator,
     pickReconnectCandidate, autoReconnectStep,
     FEED_URL, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
+    SAVE_COPY_NAME, canSaveCopy, saveCopyUrl, looksLikeConsole, describeSaveCopy,
     OTA_SLOT_SIZE, CHIP_ID_ESP32S3, DEFAULT_PROJECT, KIND_LABEL,
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
     decideOutcome, CONFIRM_CHECKS, judgeConfirmCheck, awaitSensorHealthy, runConfirmCheck, confirmFailureNotice,
