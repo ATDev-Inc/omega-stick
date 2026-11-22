@@ -17,7 +17,7 @@ what each part of the number means and how a release is cut.
   recalibrate it. While online you always get the current page, and checking
   for or installing a firmware update still needs internet. It takes effect
   with the next full release, because the Pages site is only deployed then.
-
+  ([#121](https://github.com/ATDev-Inc/omega-stick/pull/121))
 - **Calibration you can watch.** The console's Recalibration section now shows
   a live picture of the stick while a calibration runs: a dot for the sensor
   reading, the measured center and its noise circle, and a ring of 32
