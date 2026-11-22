@@ -123,7 +123,7 @@ components/omega_calibration/ calibration maths, sensor fault monitor, persisted
                               the firmware health check, and the browser console (web/, protocol code in omega_protocol.js)
 components/omega_control/     pure, host-tested control-loop logic (nudge clicks, drift, sensor faults, output hold, the
                               recalibration gate) for both modes
-site/                         GitHub Pages landing page and first-flash page (ESP Web Tools), published by package_main.yml
+site/                         GitHub Pages landing page, first-flash page (ESP Web Tools) and console service worker, published by package_main.yml
 scripts/                      release_feed.mjs: builds latest.json, manifest.json and SHA256SUMS for the Pages site
 tests/host/                   desktop unit tests against the real espp code (stubs only for the OTA headers)
 tests/web/, tests/protocol/   Node tests for the console, and the golden frames shared with the host tests
