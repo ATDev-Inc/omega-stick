@@ -196,7 +196,7 @@ interrupted upload left a partial image, so a new upload is the way forward.
 ### Check for latest firmware
 
 The "Check for latest firmware" button reads
-`https://atdev-inc.github.io/omega-stick/firmware/latest.json` (which appears with the first full release; the copy of the
+`https://atdev-inc.github.io/omega-stick/firmware/latest.json` (the copy of the
 console on the Pages site reads its own sibling `firmware/latest.json`; there is
 no way to point it elsewhere from the page address), says whether an
 update is available, and links the release notes. "Download and install" fetches
@@ -257,6 +257,7 @@ full-flash image (`idf.py merge-bin`) and publish
 | --- | --- |
 | `/` | Landing page |
 | `/console/` | A copy of the calibration console |
+| `/console/sw.js` | Service worker that keeps the console page available offline |
 | `/flash.html` | First flash and recovery, using ESP Web Tools 10.4.0 |
 | `/firmware/omega_stick-X.Y.Z.bin` | App image, for console updates |
 | `/firmware/omega_stick-X.Y.Z-full.bin` | Merged bootloader, partition table and app, written at offset 0 |
@@ -264,9 +265,21 @@ full-flash image (`idf.py merge-bin`) and publish
 | `/firmware/latest.json` | Feed the console reads |
 | `/firmware/SHA256SUMS` | `sha256sum -c` format |
 
-The same `/firmware/` files are attached to the GitHub release. Browsers fetch
+The same `/firmware/` files are attached to the GitHub release, along with a
+copy of the console named `omega_stick_console.html` (the page at `/console/`,
+under a download-friendly name, outside `/firmware/` so it is not in the feed
+or in `SHA256SUMS`). The console's "Save a copy of this page" button saves the
+same file. Browsers fetch
 from Pages because GitHub release downloads send no CORS headers and Pages
 does. Drafts and prereleases do not update Pages.
+
+After one visit with internet, the hosted console also opens with no internet:
+`/console/sw.js` keeps a copy of the console page. It is network first, so
+while online you always get the current page (it has to match the firmware),
+and the saved copy is used only when the network fails. The firmware feed and
+images are never cached, so checking for and installing an update still need
+internet. The page registers the worker only on the Pages site; opening it from
+disk or a local server does not.
 
 `latest.json` is written by [scripts/release_feed.mjs](../scripts/release_feed.mjs).
 Paths are relative to the file itself:
@@ -291,10 +304,8 @@ in bytes and `sha256` is hex.
 Pages is already set up for this repository (Settings > Pages > Source:
 GitHub Actions, and the `github-pages` environment allows `main` and `v*`
 tags). A fork needs the same two settings before its first release can
-deploy. The site goes live with the first full release whose tag contains the
-Pages workflow; until then (2026-10-25: both URLs return 404) the flash page,
-the hosted console and the feed are not there, and the console's
-latest-release check reports the feed as unreachable.
+deploy. The site went live with v0.1.0 on 2026-10-25, and each full release
+redeploys it.
 
 ## First flash and recovery
 

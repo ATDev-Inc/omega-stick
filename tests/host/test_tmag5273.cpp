@@ -93,7 +93,7 @@ TEST(tmag_initialize_writes_the_configured_registers_in_order) {
   cfg.channels = Tmag::MagneticChannels::XYZ;              // 0x7 -> SENSOR_CONFIG_1 bits 7:4
   cfg.xy_range = Tmag::MagneticRange::HIGH;                // SENSOR_CONFIG_2 bit 1
   cfg.z_range = Tmag::MagneticRange::HIGH;                 // SENSOR_CONFIG_2 bit 0
-  cfg.conversion_average = Tmag::ConversionAverage::AVG_8; // 3 -> DEVICE_CONFIG_1 bits 6:4
+  cfg.conversion_average = Tmag::ConversionAverage::AVG_8; // 3 -> DEVICE_CONFIG_1 bits 4:2
   cfg.low_noise = true;                                    // DEVICE_CONFIG_2 bit 4
   cfg.operating_mode = Tmag::OperatingMode::CONTINUOUS;    // 2 -> DEVICE_CONFIG_2 bits 1:0
   Tmag dev(cfg);
@@ -108,7 +108,7 @@ TEST(tmag_initialize_writes_the_configured_registers_in_order) {
   };
   const Expect expected[] = {
       {Tmag::SENSOR_CONFIG_1, 0x70}, {Tmag::SENSOR_CONFIG_2, 0x02}, {Tmag::SENSOR_CONFIG_2, 0x03},
-      {Tmag::DEVICE_CONFIG_1, 0x30}, {Tmag::DEVICE_CONFIG_2, 0x10}, {Tmag::DEVICE_CONFIG_2, 0x12},
+      {Tmag::DEVICE_CONFIG_1, 0x0C}, {Tmag::DEVICE_CONFIG_2, 0x10}, {Tmag::DEVICE_CONFIG_2, 0x12},
   };
   CHECK_EQ(bus.writes.size(), std::size_t{6});
   for (std::size_t i = 0; i < bus.writes.size(); ++i) {
@@ -138,7 +138,7 @@ TEST(tmag_initialize_preserves_unrelated_bits_in_the_config_registers) {
 
   CHECK_EQ(reg(bus, Tmag::SENSOR_CONFIG_1), 0x3A); // low nibble kept, channels 3 in the high one
   CHECK_EQ(reg(bus, Tmag::SENSOR_CONFIG_2), 0xFD); // bit 1 cleared (XY LOW), bit 0 set (Z HIGH)
-  CHECK_EQ(reg(bus, Tmag::DEVICE_CONFIG_1), 0x9F); // bits 6:4 = 1, bit 7 and 3:0 kept
+  CHECK_EQ(reg(bus, Tmag::DEVICE_CONFIG_1), 0x87); // bits 4:2 = 1, bits 7:5 and 1:0 kept
   CHECK_EQ(reg(bus, Tmag::DEVICE_CONFIG_2), 0xE3); // bit 4 cleared, mode 3, top bits kept
 }
 
@@ -293,16 +293,17 @@ TEST(tmag_range_bits_match_the_register_map) {
   CHECK(dev.xy_range(ec) == Tmag::MagneticRange::LOW);
 }
 
-TEST(tmag_set_conversion_average_replaces_only_bits_6_4) {
+// DEVICE_CONFIG_1: CRC_EN bit 7, MAG_TEMPCO bits 6:5, CONV_AVG bits 4:2, I2C_RD bits 1:0.
+TEST(tmag_set_conversion_average_replaces_only_bits_4_2) {
   FakeBus bus;
   Tmag dev(bus.config());
   std::error_code ec;
   bus.regs[Tmag::DEVICE_CONFIG_1] = 0xFF;
   CHECK(dev.set_conversion_average(Tmag::ConversionAverage::AVG_1, ec));
-  CHECK_EQ(reg(bus, Tmag::DEVICE_CONFIG_1), 0x8F);
+  CHECK_EQ(reg(bus, Tmag::DEVICE_CONFIG_1), 0xE3);
   bus.regs[Tmag::DEVICE_CONFIG_1] = 0x00;
   CHECK(dev.set_conversion_average(Tmag::ConversionAverage::AVG_32, ec)); // 5
-  CHECK_EQ(reg(bus, Tmag::DEVICE_CONFIG_1), 0x50);
+  CHECK_EQ(reg(bus, Tmag::DEVICE_CONFIG_1), 0x14);
   CHECK(dev.conversion_average(ec) == Tmag::ConversionAverage::AVG_32);
 }
 

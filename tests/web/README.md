@@ -37,6 +37,17 @@ node --test "tests/web/*.test.js"
 - `latest.test.js`: the release-feed side of "Check for latest firmware"
   (`feedUrlFor`, `parseReleaseFeed`, `summarizeAvailability`), including a
   round trip through the feed that `scripts/release_feed.mjs` writes.
+- `offline.test.js`: when the console registers its service worker
+  (`shouldRegisterConsoleSw`), which requests `site/console-sw.js` handles,
+  and the worker's install, activate and fetch handlers run against a fake
+  service worker environment (other sites' caches survive activation; a failed
+  cache write still returns the fresh page).
+- `save_copy.test.js`: the console's "Save a copy of this page" button
+  (`canSaveCopy`, `saveCopyUrl`, and `looksLikeConsole`, which the real
+  `calibration_console.html` must pass and error or captive-portal pages must
+  fail; `fetchBytesWithDeadline`, which must abort a response whose body
+  stalls; and the wording for a started download, which must not claim the
+  file was saved).
 - `release_feed.test.js`: `scripts/release_feed.mjs`, which builds
   `latest.json`, `manifest.json` and `SHA256SUMS` for the Pages site.
 - `sim.test.js`: the simulator helpers in `omega_protocol.js`
