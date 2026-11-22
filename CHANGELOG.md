@@ -26,6 +26,11 @@ what each part of the number means and how a release is cut.
 
 ### Fixed
 
+- **Chrome's "go to page" prompt now opens this project's console.** When the
+  stick was plugged in, Chrome offered espp's generic board console, whose
+  calibration link went to a page that does not exist on espp's site. The
+  stick now points Chrome straight at
+  https://atdev-inc.github.io/omega-stick/console/.
 - **The sensor now averages the 32 samples it was asked for.** The TMAG5273
   driver wrote the averaging setting to the wrong bits of its configuration
   register, so the chip ran 16x averaging with a temperature-compensation mode
