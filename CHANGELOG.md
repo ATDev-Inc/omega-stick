@@ -26,6 +26,19 @@ what each part of the number means and how a release is cut.
 
 ### Fixed
 
+- **The cursor no longer moves while you nudge.** With nudge clicks on, the
+  cursor used to travel during the push itself, again when a nudge that
+  stayed below the exit threshold was dropped after one time window, and
+  again while the stick came back to center. A nudge is now recognized on any
+  10 ms poll instead of once per time window, the cursor is held still from
+  the start of a fast push, and it stays still after the click until the stick
+  is back at rest (or you push it out again by 0.2 of its travel). A nudge
+  that never goes past the exit threshold is one click as long as the nudge
+  time. The price is that a fast push which is not a nudge starts moving the
+  cursor a little late, by at most the nudge time; the cursor then catches
+  up, so no movement is lost. Slow pushes are unaffected, and so is
+  everything while nudge clicks are off (the default). The three nudge
+  settings keep their saved values.
 - **The sensor now averages the 32 samples it was asked for.** The TMAG5273
   driver wrote the averaging setting to the wrong bits of its configuration
   register, so the chip ran 16x averaging with a temperature-compensation mode

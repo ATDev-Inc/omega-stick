@@ -6,9 +6,10 @@
 // touches hardware sits behind the Ports interface, which main.cpp implements
 // (EspPorts) and the host tests fake.
 //
-// Time is always injected (StepInput::now), so tests drive the nudge window
+// Time is always injected (StepInput::now), so tests drive the nudge timing
 // and drift dwell without sleeping.
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -75,10 +76,45 @@ inline constexpr float SENSITIVITY = 15.0f;
 // flipped, set INVERT_NUDGE_Y to true rather than touching the logic below.
 inline constexpr bool INVERT_NUDGE_Y = false;
 
-// The enter threshold (delta), exit threshold (absolute), and measurement
-// time window live in espp::OmegaCalibration::DeviceSettings
-// (nudge_distance_threshold / nudge_exit_threshold / nudge_hold_time) so the
-// calibration console can tune them live. They arrive via StepInput::settings.
+// The enter threshold (delta), exit threshold (absolute), and nudge time live
+// in espp::OmegaCalibration::DeviceSettings (nudge_distance_threshold /
+// nudge_exit_threshold / nudge_hold_time) so the calibration console can tune
+// them live. They arrive via StepInput::settings.
+//
+// A nudge is a fast push: the stick's magnitude rises by the enter threshold
+// within the nudge time. It is checked on every poll, and the cursor is kept
+// still around it in three ways (NudgePhase below):
+//
+//   PENDING   a fast rise has started and may still become a nudge. Cursor
+//             movement is withheld, not sent. If the rise turns out too slow
+//             or stops short, the withheld movement is sent after all, so a
+//             push that is not a nudge loses nothing, it only starts late (by
+//             at most the nudge time).
+//   HELD      the nudge is active: button down or wheel ticks, no movement.
+//             It lasts at least the nudge time, then ends once the stick is
+//             at or below the exit threshold.
+//   SETTLING  the nudge has ended but the stick is still on its way back.
+//             The cursor stays still until the stick is at rest, or is pushed
+//             out again by NUDGE_SETTLE_BREAKOUT (the way out if it never
+//             comes to rest).
+
+// A rise slower than this fraction of the slowest possible nudge (enter
+// threshold / nudge time) is ordinary cursor movement: it neither starts a
+// PENDING gesture nor keeps one alive. Below 1 so that a nudge which starts
+// gently, or slows near its peak, is not given up on early.
+inline constexpr float NUDGE_PACE_FRACTION = 0.5f;
+
+// How far the stick must be pushed out again, above the lowest magnitude seen
+// since the nudge ended, for SETTLING to give the cursor back before the stick
+// has come to rest. Large enough that an unsteady hold does not trip it.
+inline constexpr float NUDGE_SETTLE_BREAKOUT = 0.2f;
+
+// The nudge time is clamped to this range inside the control loop. The lower
+// bound keeps the arithmetic finite. The upper bound limits how long cursor
+// movement can be withheld, whatever value was saved (SET_NUDGE_SETTINGS does
+// not bound it).
+inline constexpr std::chrono::milliseconds NUDGE_MIN_TIME{1};
+inline constexpr std::chrono::milliseconds NUDGE_MAX_TIME{1000};
 
 // The polling loop runs every 10ms. Emitting a wheel tick on every single
 // poll while a scroll nudge is held would scroll far too fast, so a tick is
@@ -93,6 +129,10 @@ inline constexpr std::int8_t SCROLL_STEP = 1;
 inline constexpr int SAVE_EVERY_N_NUDGES = 20;
 
 enum class NudgeDirection { NONE, LEFT, RIGHT, FORWARD, BACK };
+
+/// Where the nudge gesture is, see the overview above. IDLE is ordinary cursor
+/// movement.
+enum class NudgePhase { IDLE, PENDING, HELD, SETTLING };
 
 // Classifies a normalized (x, y) stick position into one of the four cardinal
 // nudge directions. Only called once the stick's magnitude has already
@@ -189,11 +229,26 @@ struct CommonState {
 struct MouseState {
   CommonState common{MOUSE_SENSOR_FAULT_CONFIG};
   // Current nudge-click state. This persists across polling iterations so a
-  // held nudge stays held.
+  // held nudge stays held. `nudge` is a direction exactly while phase is HELD.
   NudgeDirection nudge{NudgeDirection::NONE};
+  NudgePhase phase{NudgePhase::IDLE};
   int scroll_poll_count{0};
-  Clock::time_point window_start{};
-  float prev_x{0.0f}, prev_y{0.0f};
+  // The previous poll's magnitude and time: a rise is measured against it.
+  float last_mag{0.0f};
+  Clock::time_point last_time{};
+  // PENDING: the magnitude and time the rise started from, and whether the
+  // previous poll already saw the full enter threshold (a nudge needs two
+  // polls in a row, so one bad sample cannot click).
+  float pending_base{0.0f};
+  Clock::time_point pending_start{};
+  bool pending_reached{false};
+  // Cursor movement withheld while PENDING, and what is left to send of it
+  // once the gesture turned out not to be a nudge.
+  std::int32_t owed_dx{0}, owed_dy{0};
+  // HELD: when the nudge started.
+  Clock::time_point nudge_start{};
+  // SETTLING: the lowest magnitude seen since the nudge ended.
+  float settle_min{0.0f};
   bool initialised{false};
 };
 
@@ -243,96 +298,180 @@ inline StepOutput recalibration_output() {
   return out;
 }
 
+inline std::int8_t clamp_delta(std::int32_t v) {
+  return static_cast<std::int8_t>(v > 127 ? 127 : (v < -127 ? -127 : v));
+}
+
+// Drops any gesture in progress (a held nudge, withheld movement) and restarts
+// the rise measurement from this sample, so the next poll cannot see a rise
+// against a reading from before a sweep, a fault or an output hold.
+inline void reset_gesture(MouseState &s, float x, float y, Clock::time_point now) {
+  s.nudge = NudgeDirection::NONE;
+  s.phase = NudgePhase::IDLE;
+  s.scroll_poll_count = 0;
+  s.pending_reached = false;
+  s.owed_dx = 0;
+  s.owed_dy = 0;
+  s.last_mag = std::hypot(x, y);
+  s.last_time = now;
+  s.initialised = true;
+}
+
+// Advances the nudge gesture by one poll. `at_rest` is true when the stick
+// would not move the cursor at all on this poll.
+inline void nudge_update(MouseState &s, const StepInput &in, float cur_mag, bool at_rest) {
+  using FloatMs = std::chrono::duration<float, std::milli>;
+  const auto &settings = in.settings;
+  const auto nudge_time = std::clamp(settings.nudge_hold_time, NUDGE_MIN_TIME, NUDGE_MAX_TIME);
+  const float nudge_time_ms = FloatMs(nudge_time).count();
+  const float threshold = settings.nudge_distance_threshold;
+  // Magnitude per millisecond: slower than this is ordinary movement.
+  const float pace = NUDGE_PACE_FRACTION * threshold / nudge_time_ms;
+
+  if (s.phase == NudgePhase::HELD) {
+    // Not checked before the nudge time has passed: the stick is usually still
+    // rising when the nudge starts, and a click must not be shorter than this.
+    if (in.now - s.nudge_start >= nudge_time && cur_mag <= settings.nudge_exit_threshold) {
+      s.nudge = NudgeDirection::NONE;
+      s.phase = at_rest ? NudgePhase::IDLE : NudgePhase::SETTLING;
+      s.settle_min = cur_mag;
+    }
+    return;
+  }
+
+  if (s.phase == NudgePhase::SETTLING) {
+    s.settle_min = std::min(s.settle_min, cur_mag);
+    if (!at_rest && cur_mag - s.settle_min < NUDGE_SETTLE_BREAKOUT) {
+      return;
+    }
+    // At rest, or pushed out again: this poll is handled as IDLE, so a second
+    // quick nudge goes straight to PENDING without moving the cursor first.
+    s.phase = NudgePhase::IDLE;
+  }
+
+  if (s.phase == NudgePhase::IDLE) {
+    const float step = cur_mag - s.last_mag;
+    const float dt_ms = FloatMs(in.now - s.last_time).count();
+    if (!(step > 0.0f) || !(dt_ms > 0.0f) || step < pace * dt_ms) {
+      return;
+    }
+    s.phase = NudgePhase::PENDING;
+    s.pending_base = s.last_mag;
+    s.pending_start = s.last_time;
+    s.pending_reached = false;
+  }
+
+  // PENDING.
+  const float rise = cur_mag - s.pending_base;
+  const float elapsed_ms = FloatMs(in.now - s.pending_start).count();
+  if (rise >= threshold) {
+    if (s.pending_reached) {
+      s.nudge = classify_nudge(in.stick.x, in.stick.y);
+      s.phase = NudgePhase::HELD;
+      s.scroll_poll_count = 0;
+      s.nudge_start = in.now;
+      s.pending_reached = false;
+      // The withheld movement was the nudge itself: it is never sent.
+      s.owed_dx = 0;
+      s.owed_dy = 0;
+      return;
+    }
+    if (elapsed_ms <= nudge_time_ms) {
+      s.pending_reached = true;
+      return;
+    }
+  } else {
+    s.pending_reached = false;
+    if (elapsed_ms < nudge_time_ms && rise >= pace * elapsed_ms) {
+      return; // still rising fast enough to become a nudge
+    }
+  }
+  // Too slow, too late, or it stopped short: ordinary movement after all. The
+  // withheld movement stays in owed_dx/owed_dy and goes out from this poll on.
+  s.phase = NudgePhase::IDLE;
+  s.pending_reached = false;
+}
+
 } // namespace detail
 
 inline StepOutput mouse_step(MouseState &s, const StepInput &in) {
+  const float jx = in.stick.x;
+  const float jy = in.stick.y;
   if (in.recalibration_requested) {
     // Deliberate behaviour change: a neutral report goes out before every
     // recalibration, so a nudge-held button is released instead of staying
     // down for the whole sweep.
-    s.nudge = NudgeDirection::NONE;
-    s.scroll_poll_count = 0;
+    detail::reset_gesture(s, jx, jy, in.now);
     return detail::recalibration_output();
   }
 
-  const float jx = in.stick.x;
-  const float jy = in.stick.y;
   if (!s.initialised) {
-    s.window_start = in.now;
-    s.prev_x = jx;
-    s.prev_y = jy;
-    s.initialised = true;
+    detail::reset_gesture(s, jx, jy, in.now);
   }
 
-  const auto duration =
-      std::chrono::duration_cast<std::chrono::milliseconds>(in.now - s.window_start);
   const float cur_mag = std::hypot(jx, jy);
+  const std::int8_t stick_dx = detail::to_delta(jx * SENSITIVITY);
+  const std::int8_t stick_dy = detail::to_delta(jy * SENSITIVITY);
 
-  // Nudge tuning is read live each measurement window, so a console edit
-  // (SET_NUDGE_SETTINGS) takes effect on the very next window without needing
-  // a restart.
-  const auto &nudge_settings = in.settings;
-
-  // With nudge clicks switched off (SET_NUDGE_ENABLED), a held nudge is
-  // released on this very tick rather than at the next window, so a held
-  // button or scroll never outlives the switch. The gesture baseline follows
-  // the stick every tick while off, so switching back on, even mid-window,
-  // measures only movement made after the switch: a push made while off can
-  // never turn into a click.
-  if (!nudge_settings.nudge_enabled) {
-    if (s.nudge != NudgeDirection::NONE) {
-      s.nudge = NudgeDirection::NONE;
-      s.scroll_poll_count = 0;
+  // Nudge tuning is read live on every poll, so a console edit
+  // (SET_NUDGE_SETTINGS) takes effect at once without needing a restart.
+  if (in.settings.nudge_enabled) {
+    // A failed read repeats the previous sample (see StickSample::read_ok), so
+    // it says nothing new about the gesture: it must not start a nudge, nor be
+    // the second poll that confirms one. The sensor monitor deals with it.
+    if (in.stick.read_ok) {
+      detail::nudge_update(s, in, cur_mag, stick_dx == 0 && stick_dy == 0);
+      s.last_mag = cur_mag;
+      s.last_time = in.now;
     }
-    s.prev_x = jx;
-    s.prev_y = jy;
-    s.window_start = in.now;
-  }
-
-  // --- Nudge direction detection only (runs every nudge_hold_time window) ---
-  if (duration >= nudge_settings.nudge_hold_time) {
-    const float prev_mag = std::hypot(s.prev_x, s.prev_y);
-    const float mapped_magnitude = cur_mag - prev_mag;
-
-    if (s.nudge == NudgeDirection::NONE) {
-      if (nudge_settings.nudge_enabled &&
-          mapped_magnitude >= nudge_settings.nudge_distance_threshold) {
-        s.nudge = classify_nudge(jx, jy);
-        s.scroll_poll_count = 0;
-      }
-    } else if (cur_mag <= nudge_settings.nudge_exit_threshold) {
-      s.nudge = NudgeDirection::NONE;
-    }
-
-    s.prev_x = jx;
-    s.prev_y = jy;
-    s.window_start = in.now;
+  } else {
+    // With nudge clicks switched off (SET_NUDGE_ENABLED), a held nudge is
+    // released on this very tick, so a held button or scroll never outlives
+    // the switch, and the cursor follows the stick again at once (movement a
+    // PENDING gesture was withholding is sent, not dropped). The rise
+    // baseline follows the stick every tick while off, so switching back on
+    // measures only movement made after the switch: a push made while off can
+    // never turn into a click.
+    s.nudge = NudgeDirection::NONE;
+    s.phase = NudgePhase::IDLE;
+    s.scroll_poll_count = 0;
+    s.pending_reached = false;
+    s.last_mag = cur_mag;
+    s.last_time = in.now;
   }
 
   // --- Per-report mouse update: runs every 10ms iteration ---
   StepOutput out;
   out.send_report = true;
   MouseReport &mouse = out.mouse;
-  mouse.buttons = static_cast<std::uint8_t>((s.nudge == NudgeDirection::FORWARD ? 0x01 : 0) |
-                                            (s.nudge == NudgeDirection::RIGHT ? 0x02 : 0));
 
-  switch (s.nudge) {
-  case NudgeDirection::NONE:
-    mouse.dx = detail::to_delta(jx * SENSITIVITY);
-    mouse.dy = detail::to_delta(jy * SENSITIVITY);
+  switch (s.phase) {
+  case NudgePhase::IDLE: {
+    // The stick's movement, plus whatever a gesture that was not a nudge
+    // withheld (as much as one report holds; the rest follows).
+    const std::int32_t want_dx = s.owed_dx + stick_dx;
+    const std::int32_t want_dy = s.owed_dy + stick_dy;
+    mouse.dx = detail::clamp_delta(want_dx);
+    mouse.dy = detail::clamp_delta(want_dy);
+    s.owed_dx = want_dx - mouse.dx;
+    s.owed_dy = want_dy - mouse.dy;
     break;
-  case NudgeDirection::LEFT:
-    s.scroll_poll_count++;
-    if (s.scroll_poll_count % SCROLL_POLL_DIVIDER == 0)
-      mouse.wheel = SCROLL_STEP;
+  }
+  case NudgePhase::PENDING:
+    s.owed_dx += stick_dx;
+    s.owed_dy += stick_dy;
     break;
-  case NudgeDirection::BACK:
-    s.scroll_poll_count++;
-    if (s.scroll_poll_count % SCROLL_POLL_DIVIDER == 0)
-      mouse.wheel = -SCROLL_STEP;
+  case NudgePhase::HELD:
+    mouse.buttons = static_cast<std::uint8_t>((s.nudge == NudgeDirection::FORWARD ? 0x01 : 0) |
+                                              (s.nudge == NudgeDirection::RIGHT ? 0x02 : 0));
+    if (s.nudge == NudgeDirection::LEFT || s.nudge == NudgeDirection::BACK) {
+      s.scroll_poll_count++;
+      if (s.scroll_poll_count % SCROLL_POLL_DIVIDER == 0) {
+        mouse.wheel = s.nudge == NudgeDirection::LEFT ? SCROLL_STEP : -SCROLL_STEP;
+      }
+    }
     break;
-  case NudgeDirection::FORWARD:
-  case NudgeDirection::RIGHT:
+  case NudgePhase::SETTLING:
     break;
   }
 
@@ -374,12 +513,7 @@ inline void on_recalibration_done(CommonState &common, MouseState *mouse,
   }
   common.drift.reset();
   if (mouse) {
-    mouse->nudge = NudgeDirection::NONE;
-    mouse->scroll_poll_count = 0;
-    mouse->window_start = now;
-    mouse->prev_x = post_sweep.x;
-    mouse->prev_y = post_sweep.y;
-    mouse->initialised = true;
+    detail::reset_gesture(*mouse, post_sweep.x, post_sweep.y, now);
   }
 }
 
@@ -458,12 +592,7 @@ inline void mouse_tick(MouseState &s, const StepInput &in, Ports &ports) {
     // pending recalibration waits (the caller only consumes it when not
     // holding).
     detail::sensor_fault_update(s.common, in, ports);
-    s.nudge = NudgeDirection::NONE;
-    s.scroll_poll_count = 0;
-    s.window_start = in.now;
-    s.prev_x = in.stick.x;
-    s.prev_y = in.stick.y;
-    s.initialised = true;
+    detail::reset_gesture(s, in.stick.x, in.stick.y, in.now);
     ports.send_mouse(MouseReport{});
     return;
   }
@@ -471,17 +600,11 @@ inline void mouse_tick(MouseState &s, const StepInput &in, Ports &ports) {
   // report, no nudge detection, no drift correction. A pending recalibration
   // still runs (it reads the sensor itself and reports its own failure).
   const auto fault = detail::sensor_fault_update(s.common, in, ports);
-  if (fault.tripped) {
-    s.nudge = NudgeDirection::NONE;
-    s.scroll_poll_count = 0;
-  }
-  if (fault.recovered) {
-    // Same reset as after a recalibration: the next window must not see a
-    // delta against a reading from before the fault.
-    s.window_start = in.now;
-    s.prev_x = in.stick.x;
-    s.prev_y = in.stick.y;
-    s.initialised = true;
+  if (fault.tripped || fault.recovered) {
+    // Tripped: a held nudge is released and withheld movement dropped.
+    // Recovered: same reset as after a recalibration, so the next poll does
+    // not see a rise against a reading from before the fault.
+    detail::reset_gesture(s, in.stick.x, in.stick.y, in.now);
   }
   if (fault.faulted && !in.recalibration_requested) {
     ports.send_mouse(MouseReport{});

@@ -36,8 +36,8 @@ oc::StepInput input(float x, float y, int ms, bool recal = false, float raw_x = 
   in.stick = {x, y, raw_x, raw_y};
   in.now = at(ms);
   in.recalibration_requested = recal;
-  // DeviceSettings defaults (100 ms hold, 0.5 enter, 0.8 exit), but with nudge
-  // clicks on: they are off by default and these tests exercise them.
+  // DeviceSettings defaults (100 ms nudge time, 0.5 enter, 0.8 exit), but with
+  // nudge clicks on: they are off by default and these tests exercise them.
   in.settings.nudge_enabled = true;
   return in;
 }
@@ -63,8 +63,11 @@ std::int8_t expected_delta(float axis) {
   return static_cast<std::int8_t>(v);
 }
 
-// Drives the state into a held nudge at t = 100 ms with the stick at (x, y).
+// Drives the state into a held nudge at t = 100 ms with the stick at (x, y):
+// the push is seen at 90 ms and confirmed at 100 ms (a nudge needs two polls).
+// Returns the report of the poll that started the nudge.
 oc::StepOutput enter_nudge(oc::MouseState &s, float x, float y) {
+  oc::mouse_step(s, input(x, y, 90));
   return oc::mouse_step(s, input(x, y, 100));
 }
 
@@ -123,6 +126,51 @@ struct FakePorts : oc::Ports {
   }
 };
 
+// enter_nudge() through mouse_tick, for the tests that check what was sent.
+void enter_nudge_tick(oc::MouseState &s, FakePorts &ports, float x, float y) {
+  oc::mouse_tick(s, input(x, y, 90), ports);
+  oc::mouse_tick(s, input(x, y, 100), ports);
+}
+
+// Polls a mouse state every 10 ms, as the firmware does, starting from rest at
+// t = 0, and totals what it sends.
+struct Poller {
+  oc::MouseState s = fresh_mouse();
+  Cal::DeviceSettings settings = input(0.0f, 0.0f, 0).settings;
+  int ms{0};
+  int sum_dx{0}, sum_dy{0};
+  int moved_polls{0};  // polls whose report moved the cursor
+  int button_polls{0}; // polls whose report had a button down
+  int wheel_polls{0};
+  oc::StepOutput last;
+
+  oc::StepOutput poll(float x, float y) {
+    ms += 10;
+    oc::StepInput in = input(x, y, ms);
+    in.settings = settings;
+    last = oc::mouse_step(s, in);
+    sum_dx += last.mouse.dx;
+    sum_dy += last.mouse.dy;
+    moved_polls += (last.mouse.dx != 0 || last.mouse.dy != 0) ? 1 : 0;
+    button_polls += last.mouse.buttons != 0 ? 1 : 0;
+    wheel_polls += last.mouse.wheel != 0 ? 1 : 0;
+    return last;
+  }
+  void hold(float x, float y, int polls) {
+    for (int i = 0; i < polls; ++i) {
+      poll(x, y);
+    }
+  }
+  // A quick push to the right over three polls: 0.3, 0.6, then `peak` (0.6 or
+  // more). The second poll is the first over the enter threshold, so the
+  // nudge starts on the third.
+  void flick_right(float peak) {
+    poll(0.3f, 0.0f);
+    poll(0.6f, 0.0f);
+    poll(peak, 0.0f);
+  }
+};
+
 const std::vector<std::string> RECAL_SEQUENCE_MOUSE = {"send_mouse", "run_sweep", "read_stick",
                                                        "send_mouse"};
 const std::vector<std::string> RECAL_SEQUENCE_XAC = {"send_xac", "run_sweep", "read_stick",
@@ -146,47 +194,302 @@ TEST(control_classify_nudge_axis_tie_goes_to_x) {
   CHECK(oc::classify_nudge(-0.5f, -0.5f) == NudgeDirection::LEFT);
 }
 
-// ---- nudge window -----------------------------------------------------------
+// ---- nudge detection -------------------------------------------------------
 
-TEST(control_nudge_does_not_enter_before_the_hold_window_elapses) {
+TEST(control_nudge_needs_two_polls_over_the_threshold) {
   oc::MouseState s = fresh_mouse();
-  const auto out = oc::mouse_step(s, input(0.0f, FORWARD_Y * 0.9f, 99));
+  // First sight of the push: a gesture is pending, nothing is sent yet.
+  auto out = oc::mouse_step(s, input(0.0f, FORWARD_Y * 0.9f, 90));
+  CHECK(s.phase == oc::NudgePhase::PENDING);
   CHECK(s.nudge == NudgeDirection::NONE);
   CHECK_EQ(out.mouse.buttons, 0);
-}
-
-TEST(control_nudge_enters_once_the_window_elapsed_and_delta_is_over_threshold) {
-  oc::MouseState s = fresh_mouse();
-  const auto out = enter_nudge(s, 0.0f, FORWARD_Y * 0.9f);
+  CHECK_EQ(out.mouse.dy, 0);
+  // Still there on the next poll: the nudge starts.
+  out = oc::mouse_step(s, input(0.0f, FORWARD_Y * 0.9f, 100));
+  CHECK(s.phase == oc::NudgePhase::HELD);
   CHECK(s.nudge == NudgeDirection::FORWARD);
   CHECK_EQ(out.mouse.buttons, 0x01);
 }
 
-TEST(control_nudge_ignores_a_sub_threshold_delta) {
-  oc::MouseState s = fresh_mouse();
-  const auto out = enter_nudge(s, 0.0f, FORWARD_Y * 0.3f); // delta 0.3 < 0.5
-  CHECK(s.nudge == NudgeDirection::NONE);
-  CHECK_EQ(out.mouse.buttons, 0);
-  // Still plain cursor motion.
-  CHECK_EQ(out.mouse.dy, expected_delta(FORWARD_Y * 0.3f));
+TEST(control_one_bad_sample_cannot_click_and_its_movement_is_not_lost) {
+  Poller p;
+  p.hold(0.0f, 0.0f, 3);
+  p.poll(0.9f, 0.0f); // a single wild reading
+  CHECK_EQ(p.last.mouse.dx, 0);
+  p.hold(0.0f, 0.0f, 20);
+  CHECK(p.s.nudge == NudgeDirection::NONE);
+  CHECK_EQ(p.button_polls, 0);
+  // It moved the cursor exactly as it would have with no gesture detection.
+  CHECK_EQ(p.sum_dx, expected_delta(0.9f));
 }
 
-TEST(control_nudge_exits_only_below_the_exit_threshold_at_a_window_boundary) {
+TEST(control_a_failed_read_can_neither_start_nor_confirm_a_nudge) {
+  // A failed read repeats the previous sample. One wild reading followed by
+  // failed reads must not click, however long they go on (the sensor monitor,
+  // not exercised by mouse_step, is what ends that).
   oc::MouseState s = fresh_mouse();
-  enter_nudge(s, 0.0f, FORWARD_Y * 0.9f);
+  oc::mouse_step(s, input(0.9f, 0.0f, 10));
+  CHECK(s.phase == oc::NudgePhase::PENDING);
+  for (int ms = 20; ms <= 60; ms += 10) {
+    const auto out = oc::mouse_step(s, failed_read(0.9f, 0.0f, ms));
+    CHECK(s.nudge == NudgeDirection::NONE);
+    CHECK_EQ(out.mouse.buttons, 0);
+  }
+  // Nor can a stale sample that differs from the last good one start one.
+  oc::MouseState t = fresh_mouse();
+  for (int ms = 10; ms <= 60; ms += 10) {
+    oc::mouse_step(t, failed_read(0.9f, 0.0f, ms));
+    CHECK(t.phase == oc::NudgePhase::IDLE);
+    CHECK(t.nudge == NudgeDirection::NONE);
+  }
+}
+
+TEST(control_nudge_is_recognised_on_any_poll_not_only_every_nudge_time) {
+  // The same flick started at ten different offsets inside one 100 ms nudge
+  // time always starts the nudge on its third poll.
+  for (int offset = 0; offset < 10; ++offset) {
+    Poller p;
+    p.hold(0.0f, 0.0f, 3 + offset);
+    p.flick_right(0.9f);
+    CHECK(p.s.nudge == NudgeDirection::RIGHT);
+    CHECK_EQ(p.last.mouse.buttons, 0x02);
+    CHECK_EQ(p.button_polls, 1);
+    CHECK_EQ(p.moved_polls, 0);
+  }
+}
+
+TEST(control_nudge_ignores_a_sub_threshold_rise) {
+  Poller p;
+  p.poll(0.0f, FORWARD_Y * 0.3f); // rise 0.3 < 0.5
+  p.hold(0.0f, FORWARD_Y * 0.3f, 20);
+  CHECK(p.s.nudge == NudgeDirection::NONE);
+  CHECK_EQ(p.button_polls, 0);
+  // Plain cursor motion, and none of it lost.
+  CHECK_EQ(p.last.mouse.dy, expected_delta(FORWARD_Y * 0.3f));
+  CHECK_EQ(p.sum_dy, 21 * expected_delta(FORWARD_Y * 0.3f));
+}
+
+TEST(control_a_slow_push_moves_the_cursor_at_once_and_never_clicks) {
+  // 0.02 per poll: half the pace of the slowest nudge is 0.025 per poll.
+  Poller p;
+  for (int k = 1; k <= 45; ++k) {
+    const float x = 0.02f * static_cast<float>(k);
+    p.poll(x, 0.0f);
+    CHECK(p.s.phase == oc::NudgePhase::IDLE);
+    CHECK_EQ(p.last.mouse.dx, expected_delta(x));
+  }
+  CHECK_EQ(p.button_polls, 0);
+}
+
+TEST(control_a_rise_that_takes_longer_than_the_nudge_time_is_not_a_nudge) {
+  // 0.03 per poll is fast enough to be watched, but takes 170 ms to cover the
+  // 0.5 enter threshold, longer than the 100 ms nudge time.
+  Poller p;
+  int expected_sum = 0;
+  for (int k = 1; k <= 20; ++k) {
+    const float x = 0.03f * static_cast<float>(k);
+    p.poll(x, 0.0f);
+    expected_sum += expected_delta(x);
+  }
+  for (int k = 0; k < 20; ++k) {
+    p.poll(0.6f, 0.0f);
+    expected_sum += expected_delta(0.6f);
+  }
+  CHECK(p.s.nudge == NudgeDirection::NONE);
+  CHECK_EQ(p.button_polls, 0);
+  CHECK_EQ(p.sum_dx, expected_sum);
+}
+
+TEST(control_a_fast_push_that_stops_short_starts_late_but_loses_no_movement) {
+  Poller p;
+  int expected_sum = expected_delta(0.2f) + expected_delta(0.4f);
+  p.poll(0.2f, 0.0f);
+  p.poll(0.4f, 0.0f);
+  CHECK(p.s.phase == oc::NudgePhase::PENDING);
+  CHECK_EQ(p.moved_polls, 0);
+  int first_moved_ms = 0;
+  for (int k = 0; k < 20; ++k) {
+    p.poll(0.4f, 0.0f);
+    expected_sum += expected_delta(0.4f);
+    if (first_moved_ms == 0 && p.moved_polls > 0) {
+      first_moved_ms = p.ms;
+    }
+  }
+  CHECK(first_moved_ms > 0);
+  CHECK(first_moved_ms <= 100); // within the nudge time of the push starting
+  CHECK(p.s.phase == oc::NudgePhase::IDLE);
+  CHECK_EQ(p.button_polls, 0);
+  CHECK_EQ(p.sum_dx, expected_sum);
+}
+
+TEST(control_withheld_movement_larger_than_one_report_follows_in_the_next) {
+  // A long nudge time and a push that stops just short of the enter threshold:
+  // 300 ms of movement at 0.45 is 30 polls of 6 counts, more than one report.
+  Poller p;
+  p.settings.nudge_hold_time = milliseconds(300);
+  int expected_sum = 0;
+  for (int k = 0; k < 40; ++k) {
+    p.poll(0.45f, 0.0f);
+    expected_sum += expected_delta(0.45f);
+    CHECK(p.last.mouse.dx <= 127);
+  }
+  CHECK_EQ(p.button_polls, 0);
+  CHECK_EQ(p.sum_dx, expected_sum);
+  CHECK_EQ(p.s.owed_dx, 0);
+}
+
+// ---- cursor stays still around a nudge --------------------------------------
+
+TEST(control_a_quick_nudge_and_release_never_moves_the_cursor) {
+  Poller p;
+  p.hold(0.0f, 0.0f, 3);
+  p.flick_right(0.9f); // the nudge starts on the poll at t = 60 ms
+  CHECK(p.s.nudge == NudgeDirection::RIGHT);
+  // Let go straight away: back through 0.6, 0.3 and 0.1 to rest.
+  p.poll(0.6f, 0.0f);
+  p.poll(0.3f, 0.0f);
+  p.poll(0.1f, 0.0f);
+  p.hold(0.0f, 0.0f, 30);
+  CHECK(p.s.nudge == NudgeDirection::NONE);
+  CHECK(p.s.phase == oc::NudgePhase::IDLE);
+  CHECK_EQ(p.moved_polls, 0);
+  CHECK_EQ(p.sum_dx, 0);
+  // The click lasted the nudge time: ten 10 ms polls with the button down.
+  CHECK_EQ(p.button_polls, 10);
+}
+
+TEST(control_nudge_lasts_the_nudge_time_then_ends_at_the_exit_threshold) {
+  oc::MouseState s = fresh_mouse();
+  enter_nudge(s, 0.0f, FORWARD_Y * 0.9f); // starts at t = 100 ms
   CHECK(s.nudge == NudgeDirection::FORWARD);
 
-  // Mid-window: even a released stick does not drop the nudge yet.
+  // Before the nudge time has passed even a released stick does not end it.
   oc::mouse_step(s, input(0.0f, 0.0f, 150));
   CHECK(s.nudge == NudgeDirection::FORWARD);
-
-  // Next boundary (200 ms) with magnitude 0.85, above the 0.8 exit threshold.
-  oc::mouse_step(s, input(0.0f, FORWARD_Y * 0.85f, 200));
+  oc::mouse_step(s, input(0.0f, FORWARD_Y * 0.9f, 190));
   CHECK(s.nudge == NudgeDirection::FORWARD);
 
-  // Next boundary (300 ms) with magnitude 0.79, below it.
-  oc::mouse_step(s, input(0.0f, FORWARD_Y * 0.79f, 300));
+  // After it, magnitude 0.85 is above the 0.8 exit threshold: still held.
+  oc::mouse_step(s, input(0.0f, FORWARD_Y * 0.85f, 200));
+  CHECK(s.nudge == NudgeDirection::FORWARD);
+  oc::mouse_step(s, input(0.0f, FORWARD_Y * 0.85f, 250));
+  CHECK(s.nudge == NudgeDirection::FORWARD);
+
+  // 0.79 is below it: released on that very poll, not at a later boundary.
+  const auto out = oc::mouse_step(s, input(0.0f, FORWARD_Y * 0.79f, 260));
   CHECK(s.nudge == NudgeDirection::NONE);
+  CHECK(s.phase == oc::NudgePhase::SETTLING);
+  CHECK_EQ(out.mouse.buttons, 0);
+  CHECK_EQ(out.mouse.dy, 0);
+}
+
+TEST(control_a_nudge_that_stays_below_the_exit_threshold_clicks_once_and_keeps_still) {
+  // Pushed to 0.6 and held there. 0.6 never reaches the 0.8 exit threshold,
+  // so the click ends after the nudge time, and the cursor must not start
+  // moving although the stick is still deflected.
+  Poller p;
+  p.flick_right(0.6f);
+  CHECK(p.s.nudge == NudgeDirection::RIGHT);
+  p.hold(0.6f, 0.0f, 200);
+  CHECK(p.s.nudge == NudgeDirection::NONE);
+  CHECK(p.s.phase == oc::NudgePhase::SETTLING);
+  CHECK_EQ(p.button_polls, 10);
+  CHECK_EQ(p.moved_polls, 0);
+  // Back to rest: ordinary movement again.
+  p.poll(0.3f, 0.0f);
+  p.hold(0.0f, 0.0f, 5);
+  CHECK(p.s.phase == oc::NudgePhase::IDLE);
+  CHECK_EQ(p.moved_polls, 0);
+  for (int k = 1; k <= 10; ++k) {
+    const float x = 0.02f * static_cast<float>(k);
+    p.poll(x, 0.0f);
+    CHECK_EQ(p.last.mouse.dx, expected_delta(x));
+  }
+}
+
+TEST(control_cursor_stays_still_while_the_stick_returns_after_a_held_nudge) {
+  Poller p;
+  p.flick_right(0.95f);
+  p.hold(0.95f, 0.0f, 50); // held well past the nudge time: button stays down
+  CHECK(p.s.nudge == NudgeDirection::RIGHT);
+  CHECK_EQ(p.button_polls, 51);
+  // A slow return stroke, 0.05 per poll, from the 0.8 exit threshold down:
+  // the button comes up on its first poll.
+  for (int k = 16; k >= 0; --k) {
+    p.poll(0.05f * static_cast<float>(k), 0.0f);
+    CHECK_EQ(p.last.mouse.buttons, 0);
+  }
+  CHECK(p.s.phase == oc::NudgePhase::IDLE);
+  CHECK_EQ(p.moved_polls, 0);
+  CHECK_EQ(p.button_polls, 51);
+}
+
+TEST(control_pushing_out_again_after_a_nudge_gives_the_cursor_back) {
+  // The way out when the stick does not come back to rest: push it out by
+  // NUDGE_SETTLE_BREAKOUT (0.2) from the lowest point since the nudge ended.
+  Poller p;
+  p.flick_right(0.95f);
+  p.hold(0.95f, 0.0f, 20);
+  p.poll(0.6f, 0.0f);
+  p.hold(0.3f, 0.0f, 20); // parked at 0.3, never at rest
+  CHECK(p.s.phase == oc::NudgePhase::SETTLING);
+  CHECK_EQ(p.moved_polls, 0);
+  // Slowly outward, 0.02 per poll (too slow to be a second nudge).
+  for (int k = 1; k <= 7; ++k) {
+    p.poll(0.3f + 0.02f * static_cast<float>(k), 0.0f); // up to 0.44
+  }
+  CHECK(p.s.phase == oc::NudgePhase::SETTLING);
+  CHECK_EQ(p.moved_polls, 0);
+  for (int k = 8; k <= 13; ++k) {
+    p.poll(0.3f + 0.02f * static_cast<float>(k), 0.0f); // up to 0.56
+  }
+  CHECK(p.s.phase == oc::NudgePhase::IDLE);
+  CHECK_EQ(p.last.mouse.dx, expected_delta(0.56f));
+  CHECK_EQ(p.button_polls, 21);
+}
+
+TEST(control_a_second_nudge_before_the_stick_is_back_at_rest_still_clicks) {
+  Poller p;
+  p.flick_right(0.95f);
+  p.hold(0.95f, 0.0f, 20);
+  const int first_click_polls = p.button_polls;
+  p.poll(0.5f, 0.0f);
+  p.hold(0.2f, 0.0f, 3); // most of the way back, not at rest
+  CHECK(p.s.phase == oc::NudgePhase::SETTLING);
+  // Second flick from 0.2.
+  p.poll(0.5f, 0.0f);
+  p.poll(0.9f, 0.0f);
+  p.poll(0.9f, 0.0f);
+  CHECK(p.s.nudge == NudgeDirection::RIGHT);
+  CHECK_EQ(p.button_polls, first_click_polls + 1);
+  CHECK_EQ(p.moved_polls, 0);
+}
+
+TEST(control_nudge_time_is_clamped_inside_the_control_loop) {
+  {
+    // Zero: no division by zero, and no nudge can fit in it, so a hard push
+    // is plain movement from the first poll.
+    Poller p;
+    p.settings.nudge_hold_time = milliseconds(0);
+    for (int k = 0; k < 30; ++k) {
+      p.poll(0.9f, 0.0f);
+      CHECK_EQ(p.last.mouse.dx, expected_delta(0.9f));
+    }
+    CHECK_EQ(p.button_polls, 0);
+  }
+  {
+    // An hour: movement is withheld for NUDGE_MAX_TIME (1 s) at most.
+    Poller p;
+    p.settings.nudge_hold_time = std::chrono::hours(1);
+    int expected_sum = 0;
+    for (int k = 0; k < 110; ++k) {
+      p.poll(0.4f, 0.0f);
+      expected_sum += expected_delta(0.4f);
+    }
+    CHECK(p.s.phase == oc::NudgePhase::IDLE);
+    CHECK_EQ(p.button_polls, 0);
+    CHECK_EQ(p.sum_dx, expected_sum);
+  }
 }
 
 // ---- per-report output ------------------------------------------------------
@@ -201,7 +504,7 @@ TEST(control_forward_sets_button_1_right_sets_button_2_none_clears) {
   auto out = enter_nudge(s, 0.9f, 0.0f);
   CHECK(s.nudge == NudgeDirection::RIGHT);
   CHECK_EQ(out.mouse.buttons, 0x02);
-  // Release at the next boundary: buttons clear.
+  // Released once the nudge time has passed: buttons clear.
   out = oc::mouse_step(s, input(0.0f, 0.0f, 200));
   CHECK(s.nudge == NudgeDirection::NONE);
   CHECK_EQ(out.mouse.buttons, 0);
@@ -218,7 +521,9 @@ TEST(control_no_cursor_motion_while_nudging) {
 }
 
 TEST(control_none_state_motion_is_stick_times_sensitivity) {
-  oc::MouseState s = fresh_mouse();
+  // The stick is already there on the first sample, so no gesture is pending.
+  oc::MouseState s;
+  oc::mouse_step(s, input(0.5f, -0.25f, 0));
   const auto out = oc::mouse_step(s, input(0.5f, -0.25f, 10));
   CHECK_EQ(out.mouse.dx, expected_delta(0.5f));
   CHECK_EQ(out.mouse.dy, expected_delta(-0.25f));
@@ -228,7 +533,8 @@ TEST(control_none_state_motion_is_stick_times_sensitivity) {
 }
 
 TEST(control_none_state_motion_clamps_to_127) {
-  oc::MouseState s = fresh_mouse();
+  oc::MouseState s;
+  oc::mouse_step(s, input(10.0f, -10.0f, 0));
   const auto out = oc::mouse_step(s, input(10.0f, -10.0f, 10)); // 150 counts before clamping
   CHECK_EQ(out.mouse.dx, 127);
   CHECK_EQ(out.mouse.dy, -127);
@@ -240,9 +546,10 @@ TEST(control_scroll_left_and_back_tick_every_divider_poll_only) {
     const float x = left ? -0.9f : 0.0f;
     const float y = left ? 0.0f : -FORWARD_Y * 0.9f;
     const std::int8_t expected = left ? oc::SCROLL_STEP : -oc::SCROLL_STEP;
-    // The entry poll counts as poll 1; stay inside the next hold window.
+    // The entry poll (at 100 ms) counts as poll 1.
     for (int poll = 1; poll <= 2 * oc::SCROLL_POLL_DIVIDER; ++poll) {
-      const auto out = oc::mouse_step(s, input(x, y, 100 + (poll - 1) * 10));
+      const auto out =
+          poll == 1 ? enter_nudge(s, x, y) : oc::mouse_step(s, input(x, y, 100 + (poll - 1) * 10));
       CHECK(s.nudge == (left ? NudgeDirection::LEFT : NudgeDirection::BACK));
       const bool tick = poll % oc::SCROLL_POLL_DIVIDER == 0;
       CHECK_EQ(out.mouse.wheel, tick ? expected : 0);
@@ -259,7 +566,8 @@ TEST(control_scroll_count_resets_on_nudge_entry) {
   CHECK_EQ(s.scroll_poll_count, 3);
   oc::mouse_step(s, input(0.0f, 0.0f, 200)); // released: NONE
   CHECK(s.nudge == NudgeDirection::NONE);
-  // Re-enter at the next boundary; the count restarts from the entry poll.
+  // Nudge again; the count restarts from the entry poll.
+  oc::mouse_step(s, input(-0.9f, 0.0f, 290));
   oc::mouse_step(s, input(-0.9f, 0.0f, 300));
   CHECK(s.nudge == NudgeDirection::LEFT);
   CHECK_EQ(s.scroll_poll_count, 1);
@@ -276,7 +584,7 @@ TEST(control_mouse_recalibration_while_nudge_forward_sends_neutral_around_the_sw
   ports.clock = at(5000);
   oc::MouseState s;
   oc::mouse_tick(s, input(0.0f, 0.0f, 0), ports);
-  oc::mouse_tick(s, input(0.0f, FORWARD_Y * 0.9f, 100), ports);
+  enter_nudge_tick(s, ports, 0.0f, FORWARD_Y * 0.9f);
   CHECK(s.nudge == NudgeDirection::FORWARD);
   CHECK_EQ(ports.mouse.back().buttons, 0x01); // the button is held going in
   ports.calls.clear();
@@ -328,24 +636,26 @@ TEST(control_xac_recalibration_sends_neutral_around_the_sweep) {
   }
 }
 
-TEST(control_recalibration_resets_the_nudge_window_and_prev_sample) {
+TEST(control_recalibration_restarts_the_rise_measurement_from_the_post_sweep_sample) {
   FakePorts ports;
   ports.clock = at(1000);
   ports.post_sweep = {0.0f, FORWARD_Y * 0.9f, 0.0f, 0.0f}; // stick still held after the sweep
   oc::MouseState s;
   oc::mouse_tick(s, input(0.0f, 0.0f, 0), ports);
   oc::mouse_tick(s, input(0.0f, 0.0f, 500, true), ports);
-  CHECK(s.window_start == at(1000));
-  // cppcheck-suppress truncLongCastAssignment ; the firmware stores this float product
-  CHECK_NEAR(s.prev_y, FORWARD_Y * 0.9f, 1e-6);
+  CHECK(s.last_time == at(1000));
+  CHECK_NEAR(s.last_mag, 0.9f, 1e-6);
+  CHECK(s.phase == oc::NudgePhase::IDLE);
 
-  // Window not yet elapsed since the post-sweep reference: no entry.
-  oc::mouse_step(s, input(0.0f, FORWARD_Y * 0.9f, 1099));
-  CHECK(s.nudge == NudgeDirection::NONE);
-  // Window elapsed, but the stick has not moved since the post-sweep sample, so
-  // the delta is 0. (With a stale prev of 0 this would wrongly enter.)
-  oc::mouse_step(s, input(0.0f, FORWARD_Y * 0.9f, 1100));
-  CHECK(s.nudge == NudgeDirection::NONE);
+  // The stick has not moved since the post-sweep sample, so there is no rise:
+  // no gesture, and the cursor follows the stick at once. (Measured against
+  // the pre-sweep rest reading this would wrongly start a nudge.)
+  for (int ms = 1010; ms <= 1200; ms += 10) {
+    const auto out = oc::mouse_step(s, input(0.0f, FORWARD_Y * 0.9f, ms));
+    CHECK(s.nudge == NudgeDirection::NONE);
+    CHECK(s.phase == oc::NudgePhase::IDLE);
+    CHECK_EQ(out.mouse.dy, expected_delta(FORWARD_Y * 0.9f));
+  }
 }
 
 TEST(control_recalibration_resets_the_drift_compensator) {
@@ -544,12 +854,13 @@ TEST(control_mouse_nudge_disabled_never_starts_a_nudge) {
 TEST(control_mouse_turning_nudge_off_mid_hold_releases_at_once) {
   FakePorts ports;
   oc::MouseState s = fresh_mouse();
-  oc::mouse_tick(s, input(0.0f, FORWARD_Y * 0.9f, 100), ports);
+  enter_nudge_tick(s, ports, 0.0f, FORWARD_Y * 0.9f);
   CHECK(s.nudge == NudgeDirection::FORWARD);
   CHECK_EQ(ports.mouse.back().buttons, 0x01);
 
-  // Switched off between window boundaries with the stick still pushed: the
-  // button comes up on this tick and the cursor follows the stick again.
+  // Switched off before the nudge time has passed, with the stick still
+  // pushed: the button comes up on this tick and the cursor follows the stick
+  // again.
   oc::mouse_tick(s, nudge_off(input(0.0f, FORWARD_Y * 0.9f, 150)), ports);
   CHECK(s.nudge == NudgeDirection::NONE);
   CHECK_EQ(ports.mouse.back().buttons, 0);
@@ -584,6 +895,7 @@ TEST(control_mouse_turning_nudge_back_on_does_not_nudge_from_a_stale_reading) {
   for (int ms = 510; ms <= 600; ms += 10) {
     oc::mouse_step(s, input(0.0f, 0.0f, ms));
   }
+  oc::mouse_step(s, input(0.9f, 0.0f, 690));
   oc::mouse_step(s, input(0.9f, 0.0f, 700));
   CHECK(s.nudge == NudgeDirection::RIGHT);
 }
@@ -605,8 +917,32 @@ TEST(control_mouse_re_enabling_mid_window_does_not_click_from_movement_made_whil
   for (int ms = 310; ms <= 450; ms += 10) {
     oc::mouse_step(s, input(0.0f, 0.0f, ms));
   }
+  oc::mouse_step(s, input(0.9f, 0.0f, 550));
   oc::mouse_step(s, input(0.9f, 0.0f, 560));
   CHECK(s.nudge == NudgeDirection::RIGHT);
+}
+
+TEST(control_mouse_turning_nudge_off_sends_withheld_movement_and_ends_settling) {
+  {
+    // Off while a gesture is pending: what it withheld goes out at once.
+    oc::MouseState s = fresh_mouse();
+    auto out = oc::mouse_step(s, input(0.4f, 0.0f, 10));
+    CHECK(s.phase == oc::NudgePhase::PENDING);
+    CHECK_EQ(out.mouse.dx, 0);
+    out = oc::mouse_step(s, nudge_off(input(0.4f, 0.0f, 20)));
+    CHECK(s.phase == oc::NudgePhase::IDLE);
+    CHECK_EQ(out.mouse.dx, 2 * expected_delta(0.4f));
+  }
+  {
+    // Off while the cursor is kept still after a nudge: it moves again.
+    Poller p;
+    p.flick_right(0.6f);
+    p.hold(0.6f, 0.0f, 30);
+    CHECK(p.s.phase == oc::NudgePhase::SETTLING);
+    const auto out = oc::mouse_step(p.s, nudge_off(input(0.6f, 0.0f, p.ms + 10)));
+    CHECK(p.s.phase == oc::NudgePhase::IDLE);
+    CHECK_EQ(out.mouse.dx, expected_delta(0.6f));
+  }
 }
 
 TEST(control_xac_output_ignores_the_nudge_switch) {
@@ -732,7 +1068,7 @@ TEST(control_mouse_observed_follows_a_recovery_from_a_boot_time_fault) {
 TEST(control_mouse_sensor_fault_releases_a_held_nudge) {
   FakePorts ports;
   oc::MouseState s = fresh_mouse();
-  oc::mouse_tick(s, input(0.9f, 0.0f, 100), ports);
+  enter_nudge_tick(s, ports, 0.9f, 0.0f);
   CHECK(s.nudge == NudgeDirection::RIGHT);
   CHECK_EQ(ports.mouse.back().buttons, 0x02);
 
@@ -881,7 +1217,7 @@ oc::StepInput held(oc::StepInput in) {
 TEST(control_mouse_output_hold_sends_neutral_and_releases_a_held_nudge) {
   FakePorts ports;
   oc::MouseState s = fresh_mouse();
-  oc::mouse_tick(s, input(0.9f, 0.0f, 100), ports);
+  enter_nudge_tick(s, ports, 0.9f, 0.0f);
   CHECK(s.nudge == NudgeDirection::RIGHT);
   CHECK_EQ(ports.mouse.back().buttons, 0x02);
 
@@ -906,6 +1242,20 @@ TEST(control_mouse_output_hold_pre_empts_a_recalibration_request) {
   CHECK_EQ(ports.count("run_sweep"), 0);
   CHECK_EQ(ports.calls.size(), size_t{1});
   CHECK_EQ(ports.mouse.back().buttons, 0);
+}
+
+TEST(control_mouse_output_hold_drops_movement_a_pending_gesture_withheld) {
+  FakePorts ports;
+  oc::MouseState s = fresh_mouse();
+  oc::mouse_tick(s, input(0.4f, 0.0f, 10), ports);
+  CHECK(s.phase == oc::NudgePhase::PENDING);
+  CHECK_EQ(ports.mouse.back().dx, 0);
+  oc::mouse_tick(s, held(input(0.4f, 0.0f, 20)), ports);
+  CHECK_EQ(ports.mouse.back().dx, 0);
+  // Released: the cursor follows the stick, with no burst from before the hold.
+  oc::mouse_tick(s, input(0.4f, 0.0f, 30), ports);
+  CHECK(s.phase == oc::NudgePhase::IDLE);
+  CHECK_EQ(ports.mouse.back().dx, expected_delta(0.4f));
 }
 
 TEST(control_mouse_output_hold_release_resumes_without_a_bogus_nudge) {

@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "name": "the cursor stays still around a nudge, and a fast push that is not one still moves it",
+  "steps": [
+    { "at_ms": 0, "pattern": "calibrate" },
+    { "at_ms": 500, "action": "recalibrate" },
+    { "at_ms": 40000, "expect": { "calibrated": true } },
+    { "at_ms": 40500, "action": "set_nudge_enabled", "value": true },
+    { "at_ms": 40900, "stick": [0, 0] },
+    { "at_ms": 40950, "expect": { "clicked": "none", "mouse_moved": "none" } },
+
+    { "at_ms": 41000, "stick": [0, 0] },
+    { "at_ms": 41030, "stick": [0.95, 0] },
+    { "at_ms": 41400, "stick": [0.95, 0] },
+    { "at_ms": 41450, "stick": [0, 0] },
+    { "at_ms": 42000, "expect": { "clicked": "right", "mouse_moved": "none" } },
+
+    { "at_ms": 43000, "stick": [0, 0] },
+    { "at_ms": 43020, "stick": [0.65, 0] },
+    { "at_ms": 44000, "stick": [0.65, 0] },
+    { "at_ms": 44300, "stick": [0, 0] },
+    { "at_ms": 44800, "expect": { "clicked": "right", "mouse_moved": "none" } },
+
+    { "at_ms": 45000, "stick": [0, 0] },
+    { "at_ms": 45020, "stick": [0.4, 0] },
+    { "at_ms": 45500, "stick": [0.4, 0] },
+    { "at_ms": 45520, "stick": [0, 0] },
+    { "at_ms": 46000, "stick": [0, 0] },
+    { "at_ms": 46100, "expect": { "clicked": "none", "mouse_moved": "right" } }
+  ]
+}
