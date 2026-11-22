@@ -705,8 +705,8 @@
         </div>
         <div class="edit-row">
           <label for="nudgeTime">Nudge time window (ms)</label>
-          <input type="number" id="nudgeTime" step="10" min="0" max="2000" value="100">
-          <span class="muted">the time limit for that rise, and the shortest click. A fast push that is not a nudge starts moving the cursor up to this much later (at most 1000 ms)</span>
+          <input type="number" id="nudgeTime" step="10" min="10" max="1000" value="100">
+          <span class="muted">the time limit for that rise, and the shortest click. A fast push that is not a nudge starts moving the cursor up to this much later</span>
         </div>
         <div class="edit-row">
           <button id="applyNudgeBtn" class="primary" disabled>Apply live</button>
@@ -1215,6 +1215,18 @@
     v.setFloat32(1, centerOn ? centerVal : 0, true);
     v.setFloat32(5, rangeOn ? rangeVal : 0, true);
     return payload;
+  }
+  // Bounds on the nudge time in ms: the same ones the device enforces
+  // (OmegaCalibration::MIN_NUDGE_TIME / MAX_NUDGE_TIME).
+  const MIN_NUDGE_TIME_MS = 10;
+  const MAX_NUDGE_TIME_MS = 1000;
+  // Returns null when timeMs is an acceptable nudge time, else a plain message.
+  function nudgeTimeError(timeMs) {
+    if (!Number.isInteger(timeMs) || timeMs < MIN_NUDGE_TIME_MS || timeMs > MAX_NUDGE_TIME_MS) {
+      return "Nudge time window must be a whole number of milliseconds from " +
+             MIN_NUDGE_TIME_MS + " to " + MAX_NUDGE_TIME_MS + ".";
+    }
+    return null;
   }
   function encodeSetNudgeSettings(enter, exit, timeMs) {
     const payload = new Uint8Array(12);
@@ -2560,6 +2572,7 @@
     parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
     encodeSetManualOffset, encodeSetDeadzoneOverride,
     encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled,
+    MIN_NUDGE_TIME_MS, MAX_NUDGE_TIME_MS, nudgeTimeError,
     encodeSetPositionStream, buildSetPositionStream, parseCalibrationProgress, STAGE_NAME,
     NUDGE_SWITCH_UNSUPPORTED_NOTE, nudgeControls,
   };
@@ -2580,7 +2593,7 @@
     const {
       MAX_FRAME, MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, PROTOCOL_ID, PROTOCOL_VERSION, TYPE, INPUT_MODE,
       buildFrame, FrameParser, readU32, parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
-      encodeSetManualOffset, encodeSetDeadzoneOverride, encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled,
+      encodeSetManualOffset, encodeSetDeadzoneOverride, encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled, nudgeTimeError,
       encodeSetPositionStream, parseCalibrationProgress,
       nudgeControls,
       inspectImage, buildFlashPlan, buildRevertPlan, decideOutcome, CONFIRM_CHECKS, runConfirmCheck, confirmFailureNotice, describeSensorState,
@@ -3430,9 +3443,8 @@
       if (!Number.isFinite(exit) || exit < 0 || exit > 1) {
         logLine("err", "Nudge exit threshold must be a number in [0, 1]."); return;
       }
-      if (!Number.isFinite(timeMs) || timeMs < 0) {
-        logLine("err", "Nudge time window must be a non-negative number of milliseconds."); return;
-      }
+      const timeErr = nudgeTimeError(timeMs);
+      if (timeErr) { logLine("err", timeErr); return; }
       const payload = encodeSetNudgeSettings(enter, exit, timeMs);
       busy = true; updateUI(); setStatus("busy", "Applying nudge settings...");
       try {

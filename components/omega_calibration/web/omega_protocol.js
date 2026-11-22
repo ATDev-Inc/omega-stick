@@ -308,6 +308,18 @@
     v.setFloat32(5, rangeOn ? rangeVal : 0, true);
     return payload;
   }
+  // Bounds on the nudge time in ms: the same ones the device enforces
+  // (OmegaCalibration::MIN_NUDGE_TIME / MAX_NUDGE_TIME).
+  const MIN_NUDGE_TIME_MS = 10;
+  const MAX_NUDGE_TIME_MS = 1000;
+  // Returns null when timeMs is an acceptable nudge time, else a plain message.
+  function nudgeTimeError(timeMs) {
+    if (!Number.isInteger(timeMs) || timeMs < MIN_NUDGE_TIME_MS || timeMs > MAX_NUDGE_TIME_MS) {
+      return "Nudge time window must be a whole number of milliseconds from " +
+             MIN_NUDGE_TIME_MS + " to " + MAX_NUDGE_TIME_MS + ".";
+    }
+    return null;
+  }
   function encodeSetNudgeSettings(enter, exit, timeMs) {
     const payload = new Uint8Array(12);
     const v = new DataView(payload.buffer);
@@ -1652,6 +1664,7 @@
     parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
     encodeSetManualOffset, encodeSetDeadzoneOverride,
     encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled,
+    MIN_NUDGE_TIME_MS, MAX_NUDGE_TIME_MS, nudgeTimeError,
     encodeSetPositionStream, buildSetPositionStream, parseCalibrationProgress, STAGE_NAME,
     NUDGE_SWITCH_UNSUPPORTED_NOTE, nudgeControls,
   };

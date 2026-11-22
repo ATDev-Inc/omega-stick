@@ -118,10 +118,11 @@ inline constexpr float NUDGE_SETTLE_BREAKOUT = 0.2f;
 
 // The nudge time is clamped to this range inside the control loop. The lower
 // bound keeps the arithmetic finite. The upper bound limits how long cursor
-// movement can be withheld, whatever value was saved (SET_NUDGE_SETTINGS does
-// not bound it).
+// movement can be withheld. SET_NUDGE_SETTINGS and DeviceSettings::load already
+// keep the saved value within OmegaCalibration::MIN_NUDGE_TIME..MAX_NUDGE_TIME;
+// the clamp here covers a StepInput built any other way (tests, the simulator).
 inline constexpr std::chrono::milliseconds NUDGE_MIN_TIME{1};
-inline constexpr std::chrono::milliseconds NUDGE_MAX_TIME{1000};
+inline constexpr std::chrono::milliseconds NUDGE_MAX_TIME = espp::OmegaCalibration::MAX_NUDGE_TIME;
 
 // The polling loop runs every 10ms. Emitting a wheel tick on every single
 // poll while a scroll nudge is held would scroll far too fast, so a tick is

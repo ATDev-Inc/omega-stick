@@ -150,6 +150,20 @@ test("encodeSetNudgeSettings: f32 enter, f32 exit, u32 ms, little-endian", () =>
                    concat(f32le(0.5), f32le(0.125), u32le(300)));
 });
 
+test("nudge time limits match the device (MIN_NUDGE_TIME / MAX_NUDGE_TIME)", () => {
+  assert.equal(P.MIN_NUDGE_TIME_MS, 10);
+  assert.equal(P.MAX_NUDGE_TIME_MS, 1000);
+});
+
+test("nudgeTimeError: accepts 10 to 1000, refuses the rest with the range named", () => {
+  for (const ok of [10, 100, 1000]) assert.equal(P.nudgeTimeError(ok), null);
+  for (const bad of [0, 9, 1001, 2000, -5, 100.5, NaN, Infinity]) {
+    const msg = P.nudgeTimeError(bad);
+    assert.equal(typeof msg, "string", String(bad));
+    assert.match(msg, /10 to 1000/);
+  }
+});
+
 test("encodeSetInputMode: one byte, 0 = mouse, 1 = XAC", () => {
   assert.deepEqual(P.encodeSetInputMode(P.INPUT_MODE.MOUSE), bytes(0));
   assert.deepEqual(P.encodeSetInputMode(P.INPUT_MODE.XAC), bytes(1));
