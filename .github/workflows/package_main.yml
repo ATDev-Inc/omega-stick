@@ -186,6 +186,7 @@ jobs:
           touch _site/.nojekyll
           # A copy of the console, not a fork: it is one self-contained file.
           cp components/omega_calibration/web/calibration_console.html _site/console/index.html
+          cp site/console-sw.js _site/console/sw.js
           # The same file under a download-friendly name, attached to the release
           # (kept out of _site/firmware so the feed and SHA256SUMS are unchanged).
           cp components/omega_calibration/web/calibration_console.html _release_assets/omega_stick_console.html

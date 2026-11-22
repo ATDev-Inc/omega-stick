@@ -101,7 +101,7 @@ build and run it is in [sim/README.md](sim/README.md).
 
 | Path | What it is |
 |---|---|
-| [site/](site/) | GitHub Pages site published with each full release: `index.html` (landing page), `flash.html` (first flash and recovery with ESP Web Tools), `site.css` |
+| [site/](site/) | GitHub Pages site published with each full release: `index.html` (landing page), `flash.html` (first flash and recovery with ESP Web Tools), `site.css`, `console-sw.js` (offline service worker for the console) |
 | [scripts/release_feed.mjs](scripts/release_feed.mjs) | Builds `latest.json`, `manifest.json` and `SHA256SUMS` for the Pages site |
 
 The Pages site itself is assembled in CI. It also carries a copy of the
@@ -135,7 +135,7 @@ console and the firmware files; see
 
 | Path | What it is |
 |---|---|
-| [models/](models/) | STL files for the printed parts: joystick, magnet and sensor holders, QT Py holder, sockets, topper |
+| [models/](models/) | STL files for the printed parts: joystick, magnet and sensor holders, QT Py holder, sockets, topper; their Fusion 360 source `omega_stick.f3d`; licensed CERN-OHL-P-2.0 ([LICENSE](models/LICENSE)) |
 | [assets/logo/](assets/logo/) | Logo, wordmark and scene artwork, with the scripts that generate them. See its [README](assets/logo/README.md) |
 
 ## GitHub configuration

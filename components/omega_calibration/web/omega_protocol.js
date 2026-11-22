@@ -1157,6 +1157,21 @@
     return FEED_URL;
   }
 
+  // Whether the console page should register its offline service worker
+  // (site/console-sw.js, published as /omega-stick/console/sw.js). Only on the
+  // project's own Pages site over https at the console path: never from
+  // file://, a local server (the simulator end-to-end tests), or a fork.
+  // hasServiceWorker: whether the browser supports service workers.
+  const CONSOLE_PATH = PAGES_BASE + "console/";
+  function shouldRegisterConsoleSw(locationHref, hasServiceWorker) {
+    if (!hasServiceWorker) return false;
+    try {
+      const u = new URL(String(locationHref));
+      return u.protocol === "https:" && u.origin === PAGES_ORIGIN &&
+        (u.pathname === CONSOLE_PATH || u.pathname === CONSOLE_PATH + "index.html");
+    } catch (_) { return false; }
+  }
+
   // "Save a copy of this page". Offered only when the page was served over
   // http(s): from file:// the person already holds a copy and there is
   // nothing to fetch.
@@ -1616,7 +1631,7 @@
     SIM_PATTERNS, SIM_FAULTS, SIM_NEXT_IMAGE,
     encodeSimMessage, parseSimMessage, validateSimScript, createHidAccumulator,
     pickReconnectCandidate, autoReconnectStep,
-    FEED_URL, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
+    FEED_URL, RELEASES_URL, feedUrlFor, shouldRegisterConsoleSw, parseReleaseFeed, summarizeAvailability,
     SAVE_COPY_NAME, SAVE_COPY_TIMEOUT_MS, canSaveCopy, saveCopyUrl, looksLikeConsole, fetchBytesWithDeadline, describeSaveCopy,
     OTA_SLOT_SIZE, CHIP_ID_ESP32S3, DEFAULT_PROJECT, KIND_LABEL,
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,

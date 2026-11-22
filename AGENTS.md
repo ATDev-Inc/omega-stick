@@ -123,7 +123,7 @@ components/omega_calibration/ calibration maths, sensor fault monitor, persisted
                               the firmware health check, and the browser console (web/, protocol code in omega_protocol.js)
 components/omega_control/     pure, host-tested control-loop logic (nudge clicks, drift, sensor faults, output hold, the
                               recalibration gate) for both modes
-site/                         GitHub Pages landing page and first-flash page (ESP Web Tools), published by package_main.yml
+site/                         GitHub Pages landing page, first-flash page (ESP Web Tools) and console service worker, published by package_main.yml
 scripts/                      release_feed.mjs: builds latest.json, manifest.json and SHA256SUMS for the Pages site
 tests/host/                   desktop unit tests against the real espp code (stubs only for the OTA headers)
 tests/web/, tests/protocol/   Node tests for the console, and the golden frames shared with the host tests
@@ -133,7 +133,7 @@ sim/                          omega_sim, the desktop simulator: src/, OTA stubs,
 cmake/omega_host.cmake        shared desktop build of espp and the local components, used by tests/host and sim
 docs/                         PRD, requirements, decisions, compliance, status, and research snapshots
 files/                        source directory for the littlefs image flashed with the app
-models/                       STL files for the printed parts
+models/                       STL files and Fusion 360 source for the printed parts (CERN-OHL-P-2.0, models/LICENSE)
 partitions.csv                two OTA app slots of 1920 KB, littlefs 2 MB (calibration and settings files), coredump 64 KB
 version.txt                   firmware MAJOR.MINOR.PATCH, see "Versioning" below
 sdkconfig.defaults            project-wide config; sdkconfig itself is gitignored
