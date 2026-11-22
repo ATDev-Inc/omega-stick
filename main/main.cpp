@@ -52,6 +52,13 @@ static constexpr uint8_t TMAG_ADDRESS = 0x35;
 static constexpr uint16_t OMEGA_USB_VID = 0x1209;
 static constexpr uint16_t OMEGA_USB_PID = 0x0d32;
 
+// WebUSB landing page: the page Chrome offers to open when the stick is
+// plugged in. Without it espp::UsbDevice advertises espp's own board console,
+// whose link to calibration_console.html points at espp's site, where this
+// project's console is not hosted. No scheme here: https comes from
+// url_scheme (1).
+static constexpr const char *OMEGA_WEBUSB_LANDING_PAGE = "atdev-inc.github.io/omega-stick/console/";
+
 // Manual per-axis trim, added on top of the measured center, ONLY on a
 // board with no saved calibration (it is carried into the first console
 // calibration) -- see the calibration section below.
@@ -947,6 +954,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
 
     espp::UsbDevice::VendorFunction vendor_fn;
     vendor_fn.interface_name = "omega-stick vendor";
+    vendor_fn.landing_page_url = OMEGA_WEBUSB_LANDING_PAGE;
     vendor_fn.on_receive = [&vendor_link](std::span<const uint8_t> data) {
       vendor_link.push(data);
     };
@@ -1149,6 +1157,7 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     cdc_link.serve_discovery("omega-stick", esp_app_get_description()->version);
     espp::UsbDevice::VendorFunction vendor_fn;
     vendor_fn.interface_name = "omega-stick vendor";
+    vendor_fn.landing_page_url = OMEGA_WEBUSB_LANDING_PAGE;
     vendor_fn.on_receive = [&vendor_link](std::span<const uint8_t> data) {
       vendor_link.push(data);
     };
