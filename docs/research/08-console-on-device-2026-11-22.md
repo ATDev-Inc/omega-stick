@@ -1,4 +1,4 @@
-# 07: Carrying the console on the stick, 2026-11-22
+# 08: Carrying the console on the stick, 2026-11-22
 
 Point-in-time snapshot. Captured 2026-11-22 against `main` at `95db1d2`
 (firmware 0.2.0 unreleased, espp 1.3.8). Method: a read of the vendored TinyUSB
