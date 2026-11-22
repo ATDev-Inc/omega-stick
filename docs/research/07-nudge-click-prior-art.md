@@ -10,7 +10,7 @@ deciding?
 Method: three parallel web research passes (power wheelchair mouse modes,
 assistive pointing devices and accessibility software, gaming and general
 pointing-device engineering). Many primary sources were blocked or too large to
-fetch, so most of what follows is a lead, not a fact. Only the two items under
+fetch, so most of what follows is a lead, not a fact. Only the three items under
 "Confirmed" were read in the primary source. Everything marked `UNVERIFIED` came
 from search snippets, summaries or abstracts.
 
@@ -80,6 +80,27 @@ packet. As soon as a metric leaves the flick bounds, detection ends and the held
 packets are released; on a flick they are dropped. The stated basis is that
 drags are typically slow, so speed and straightness separate the two.
 
+### libinput tap-to-click
+
+Source: libinput 1.29.1,
+[evdev-mt-touchpad-tap.c](https://chromium.googlesource.com/external/gitlab.freedesktop.org/libinput/libinput/+/refs/tags/upstream/1.29.1/src/evdev-mt-touchpad-tap.c)
+and
+[evdev-mt-touchpad.c](https://chromium.googlesource.com/external/gitlab.freedesktop.org/libinput/libinput/+/refs/tags/upstream/1.29.1/src/evdev-mt-touchpad.c).
+
+- The tap timeout is 180 ms (`DEFAULT_TAP_TIMEOUT_PERIOD`) and the movement
+  threshold 1.3 mm (`DEFAULT_TAP_MOVE_THRESHOLD`).
+- With tapping enabled, small pointer motion is filtered while a touch might
+  still be a tap. `tp_tap_handle_state()` returns `filter_motion` set for
+  `TAP_STATE_TOUCH` (and for the tapped and multi-finger touch states), and
+  `tp_post_events()` then returns before its normal motion processing.
+- Normal processing resumes once the touch stops qualifying as a tap: moving
+  past the threshold takes the state to `TAP_STATE_DEAD`, and the timeout takes
+  it to `TAP_STATE_HOLD`. Neither state filters motion.
+
+So libinput is another example of suppressing movement while deciding whether
+an input is a click. Whether the filtered motion is sent afterwards, and when
+the click itself is sent, were not checked.
+
 ## Field data point
 
 One daily user of a power wheelchair mouse mode reports a nudge time setting of
@@ -121,9 +142,6 @@ point 4 of "What this suggests".
 - **Smash-style games**: a flick is separated from a tilt by time to threshold.
   Community figures give windows of 2 to 6 frames at 60 Hz, about 33 to 100 ms
   (<https://smashboards.com/threads/all-about-stick-sensitivity.466696/>).
-- **libinput tap-to-click**: tap timeout 180 ms, move threshold 1.3 mm, from a
-  mirrored copy of `evdev-mt-touchpad-tap.c`. The click fires on release.
-  Pointer motion is not delayed; a small movement is tolerated.
 - **TrackPoint press-to-select**: Linux exposes `press_to_select` and
   `upthresh`, an offset from a running average
   (<https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-devices-platform-trackpoint>).
