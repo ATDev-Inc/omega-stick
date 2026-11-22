@@ -557,6 +557,11 @@ inline void xac_tick(XacState &s, const StepInput &in, Ports &ports) {
 /// The gate stays busy from the moment a request is accepted until finish(),
 /// so a second request that arrives while the sweep is running is refused
 /// (device_or_resource_busy) instead of queueing another full sweep behind it.
+///
+/// It also carries FINISH_CALIBRATION ("end the range sweep now"): the
+/// service calls request_finish(), which only succeeds while the sweep's
+/// finish window is open (sweep_stage() opens it for the range stage), and
+/// the sweep polls take_finish(). All of it is lock-free atomics.
 class RecalibrationGate {
 public:
   /// Accepts a request if none is pending or running. Otherwise sets ec to
@@ -577,11 +582,51 @@ public:
   }
 
   /// Marks the sweep done (or abandoned) so a new request is accepted.
-  void finish() { state_.store(State::Idle); }
+  /// Also closes the finish window and drops an unconsumed finish request.
+  void finish() {
+    set_finish_window(false);
+    state_.store(State::Idle);
+  }
+
+  /// Opened by the sweep (its progress callback) while the range stage is
+  /// sampling, the only time a finish request can take effect, and closed
+  /// when sampling stops. Either edge drops an unconsumed finish request, so
+  /// one can never leak into a later sweep.
+  void set_finish_window(bool open) {
+    finish_requested_.store(false);
+    finish_window_.store(open);
+  }
+
+  /// Called by the sweep's progress callback with each report's stage: opens
+  /// the finish window when the range sweep starts sampling and closes it
+  /// when sampling ends. Acts on changes only, so a finish request that lands
+  /// between two reports of the same stage is kept for take_finish().
+  void sweep_stage(espp::OmegaCalibration::Stage stage) {
+    const bool sampling = stage == espp::OmegaCalibration::Stage::RANGE_SWEEP;
+    if (sampling != finish_window_.load()) {
+      set_finish_window(sampling);
+    }
+  }
+
+  /// FINISH_CALIBRATION from the calibration service (USB task): accepted
+  /// only while a sweep is running and its finish window is open.
+  bool request_finish() {
+    if (state_.load() != State::Running || !finish_window_.load()) {
+      return false;
+    }
+    finish_requested_.store(true);
+    return true;
+  }
+
+  /// Polled by the sweep (OmegaCalibration::Config::finish_requested): true
+  /// once per accepted finish request.
+  bool take_finish() { return finish_requested_.exchange(false); }
 
 private:
   enum class State : uint8_t { Idle, Requested, Running };
   std::atomic<State> state_{State::Idle};
+  std::atomic<bool> finish_window_{false};
+  std::atomic<bool> finish_requested_{false};
 };
 
 } // namespace espp::omega_control

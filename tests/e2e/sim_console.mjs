@@ -139,9 +139,28 @@ async function main() {
   await pattern("calibrate");
   await waitFor("the recalibrate button", async () => !(await ev($("recalibrateBtn") + ".disabled")), 10000);
   await click("recalibrateBtn");
-  await waitLog("the range calibration prompt", /Move the joystick slowly/, 30000);
-  const logA = await logText();
+  // The visual calibration panel follows the sweep: the stage line advances through
+  // the steps and the ring reaches 32 of 32 directions (needs the firmware's progress
+  // frames and the sim's one-lap calibrate pattern). Poll from the click, since the
+  // center steps are over before the range prompt is printed.
+  const stagesSeen = new Set();
+  let maxDirections = 0;
+  const vizEnd = Date.now() + 60000;
+  while (Date.now() < vizEnd && !/Recalibration finished successfully/.test(await logText())) {
+    const m = /^Step (\d) of 6/.exec(await text("calStageLine"));
+    if (m) stagesSeen.add(+m[1]);
+    const d = /(\d+) of 32 directions/.exec(await text("calSectorCount"));
+    if (d) maxDirections = Math.max(maxDirections, +d[1]);
+    await sleep(200);
+  }
   await waitLog("state refresh after the sweep", /Recalibration finished successfully/, 40000);
+  // After the result the panel keeps the sweep's final count ("Last calibration: 32 of 32 directions").
+  { const d = /(\d+) of 32 directions/.exec(await text("calSectorCount")); if (d) maxDirections = Math.max(maxDirections, +d[1]); }
+  await waitLog("the range calibration prompt", /Move the joystick slowly/, 1000);
+  const logA = await logText();
+  check("a2", "visual calibration panel: the stage text advances to the sweep and the ring reaches 32 of 32 directions",
+    stagesSeen.has(6) && stagesSeen.size >= 3 && maxDirections === 32,
+    "stages seen " + [...stagesSeen].join(",") + " | most directions " + maxDirections);
   await waitFor("the notice to clear", async () => await ev($("calNeededNotice") + ".hidden"), 10000).catch(() => { });
   await sleep(500);
   const noticeAfterHidden = await ev($("calNeededNotice") + ".hidden");
@@ -182,6 +201,16 @@ async function main() {
   await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: rect.x, y: upY, button: "left", buttons: 0, clickCount: 1 });
   await sleep(500);
   await click("simClearOutBtn");
+  // Live stick view: pushing up must draw the dot above the center (up on the
+  // stick is up on the screen). The lease is renewed only while the canvas is
+  // on screen, so bring it into view first; the pad keeps keyboard focus.
+  await ev($("calCanvas") + ".scrollIntoView({block:'center'})");
+  await waitFor("live stick dot", async () => (await ev($("calCanvas") + ".dataset.dotDy")) !== undefined, 8000).catch(() => { });
+  await key("ArrowUp", 10);
+  await waitFor("dot above center", async () => Number(await ev($("calCanvas") + ".dataset.dotDy")) < -3, 8000).catch(() => { });
+  const dotDyUp = await ev($("calCanvas") + ".dataset.dotDy");
+  await key("Home");
+  await sleep(300);
   // Nudge clicks are off on a fresh board (#102), so the console switch must be
   // unchecked here. Turn them on through the console before nudging.
   const nudgeOffByDefault = !(await ev($("nudgeEnabled") + ".checked"));
@@ -191,10 +220,11 @@ async function main() {
   await pattern("nudge_right");
   await waitFor("a click indicator", async () => /Last click: (left|right)/.test(await text("simLastClick")), 8000).catch(() => { });
   const click1 = await text("simLastClick");
-  check("b", "stick right moves the dot right, pushing up moves it up (negative dy), nudge is off by default and clicks once turned on",
-    b1 && b1.dx > b0.dx + 3 && b2 && b2.dy < -3 && nudgeOffByDefault && /Last click: (left|right)/.test(click1),
+  check("b", "stick right moves the dot right, pushing up moves it up (negative dy) and draws the live dot above center, nudge is off by default and clicks once turned on",
+    b1 && b1.dx > b0.dx + 3 && b2 && b2.dy < -3 && Number(dotDyUp) < -3 && nudgeOffByDefault &&
+    /Last click: (left|right)/.test(click1),
     "right: dx " + b0.dx + " -> " + (b1 && b1.dx) + "; up: " + stickText + ", totals " + JSON.stringify(b2) +
-    "; nudge off by default: " + nudgeOffByDefault + "; nudge: " + click1);
+    "; live dot dy when up: " + dotDyUp + "; nudge off by default: " + nudgeOffByDefault + "; nudge: " + click1);
   await sleep(1500);
   await click("simStopBtn");
 

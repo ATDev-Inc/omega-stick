@@ -195,7 +195,7 @@ espp.
   test enforces the copy). Message IDs are append-only: never renumber or
   reuse one, since released firmware and the console must keep talking to each
   other. The service is found by its dispatcher protocol id `omega.calibration`
-  (`kProtocol`, version `kProtocolVersion` 1), not by module id; module 5 is
+  (`kProtocol`, version `kProtocolVersion` 2), not by module id; module 5 is
   only the default. Change the id only for an incompatible wire format, and
   bump the version otherwise (decision D24).
   See the [component README](components/omega_calibration/README.md).
