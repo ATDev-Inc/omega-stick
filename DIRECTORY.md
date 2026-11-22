@@ -101,7 +101,7 @@ build and run it is in [sim/README.md](sim/README.md).
 
 | Path | What it is |
 |---|---|
-| [site/](site/) | GitHub Pages site published with each full release: `index.html` (landing page), `flash.html` (first flash and recovery with ESP Web Tools), `site.css` |
+| [site/](site/) | GitHub Pages site published with each full release: `index.html` (landing page), `flash.html` (first flash and recovery with ESP Web Tools), `site.css`, `console-sw.js` (offline service worker for the console) |
 | [scripts/release_feed.mjs](scripts/release_feed.mjs) | Builds `latest.json`, `manifest.json` and `SHA256SUMS` for the Pages site |
 
 The Pages site itself is assembled in CI. It also carries a copy of the

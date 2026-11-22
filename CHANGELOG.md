@@ -11,6 +11,13 @@ what each part of the number means and how a release is cut.
 
 ### Added
 
+- **The hosted console works offline after the first visit.** Once you have
+  opened <https://atdev-inc.github.io/omega-stick/console/> with internet, the
+  page opens again with no internet, so you can still connect the stick and
+  recalibrate it. While online you always get the current page, and checking
+  for or installing a firmware update still needs internet. It takes effect
+  with the next full release, because the Pages site is only deployed then.
+
 - **Calibration you can watch.** The console's Recalibration section now shows
   a live picture of the stick while a calibration runs: a dot for the sensor
   reading, the measured center and its noise circle, and a ring of 32
