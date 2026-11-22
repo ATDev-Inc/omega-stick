@@ -258,6 +258,26 @@ TEST(service_set_nudge_settings_validates_ranges) {
   CHECK_EQ(s.nudge_hold_time.count(), 150);
 }
 
+TEST(service_set_nudge_settings_bounds_the_time) {
+  Fixture fx("svc_nudge_time");
+  auto build = [](uint32_t ms) {
+    std::vector<uint8_t> p;
+    support::put_f32(p, 0.35f);
+    support::put_f32(p, 0.65f);
+    stream::put_u32(p, ms);
+    return p;
+  };
+  CHECK(is(fx.request(Msg::SetNudgeSettings, build(150)), Msg::Ok));
+  for (const uint32_t bad : {0u, 9u, 1001u, 0xFFFFFFFFu}) {
+    CHECK(is(fx.request(Msg::SetNudgeSettings, build(bad)), Msg::Error));
+    CHECK_EQ(fx.store.settings().nudge_hold_time.count(), 150); // untouched
+  }
+  CHECK(is(fx.request(Msg::SetNudgeSettings, build(10)), Msg::Ok));
+  CHECK_EQ(fx.store.settings().nudge_hold_time.count(), 10);
+  CHECK(is(fx.request(Msg::SetNudgeSettings, build(1000)), Msg::Ok));
+  CHECK_EQ(fx.store.settings().nudge_hold_time.count(), 1000);
+}
+
 TEST(service_set_input_mode_switches_store_and_notifies) {
   std::vector<OmegaStore::InputMode> seen;
   Fixture fx("svc_mode", {.on_mode_changed = [&](OmegaStore::InputMode m) { seen.push_back(m); }});

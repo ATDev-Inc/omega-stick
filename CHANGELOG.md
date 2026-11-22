@@ -83,6 +83,21 @@ what each part of the number means and how a release is cut.
   the raw reading less the trim, so the trim is kept. This changes input
   behaviour and needs a hardware check.
   ([#96](https://github.com/ATDev-Inc/omega-stick/pull/96))
+- **The nudge time is now limited to 10 to 1000 ms.** The console and the
+  device accepted any value: 0 let a single noisy reading fire a nudge click,
+  and a huge value silently turned nudging off. Both now refuse a time outside
+  that range, and the console says so. A stick that already has a longer time
+  saved (the console used to allow up to 2000 ms) now uses 1000 ms, and one
+  with a time under 10 ms saved uses the default, 100 ms. Either changes how
+  nudges feel on that stick, so this needs a hardware check. Closes #79.
+  ([#130](https://github.com/ATDev-Inc/omega-stick/pull/130))
+- **A damaged settings file can no longer set nonsense values.** Loading
+  `omega_settings.cfg` accepted `nan`, infinity, negative and out of range
+  numbers, and an `input_mode` that is neither mouse nor XAC. Each value is now
+  checked against the same range the console enforces, and a bad one falls back
+  to its default while the other settings are kept. A bad `nudge_enabled`
+  loads as off. Needs a hardware check. Closes #78.
+  ([#130](https://github.com/ATDev-Inc/omega-stick/pull/130))
 
 ## [0.1.1] - 2026-10-26
 
