@@ -245,7 +245,10 @@ TEST(settings_load_replaces_each_bad_value_with_its_default) {
                  k == "nudge_distance_threshold" ? d.nudge_distance_threshold : 0.4f, 1e-6);
       CHECK_NEAR(s.nudge_exit_threshold,
                  k == "nudge_exit_threshold" ? d.nudge_exit_threshold : 0.7f, 1e-6);
-      CHECK_EQ(s.nudge_hold_time.count(), k == "nudge_hold_time_ms" ? 100 : 250);
+      // A nudge time that is too long is held at the maximum, not defaulted.
+      const std::string b = bad;
+      const int bad_hold = (b == "99999" || b == "1e30") ? 1000 : 100;
+      CHECK_EQ(s.nudge_hold_time.count(), k == "nudge_hold_time_ms" ? bad_hold : 250);
       CHECK_EQ(s.nudge_enabled, k == "nudge_enabled" ? d.nudge_enabled : false);
       CHECK(s.input_mode == (k == "input_mode" ? d.input_mode : OmegaCalibration::InputMode::XAC));
     }
@@ -269,7 +272,11 @@ TEST(settings_load_rejects_undefined_modes_and_out_of_range_times) {
   CHECK_EQ(load("nudge_hold_time_ms=9\n").nudge_hold_time.count(), 100);
   CHECK_EQ(load("nudge_hold_time_ms=10\n").nudge_hold_time.count(), 10);
   CHECK_EQ(load("nudge_hold_time_ms=1000\n").nudge_hold_time.count(), 1000);
-  CHECK_EQ(load("nudge_hold_time_ms=1001\n").nudge_hold_time.count(), 100);
+  // Earlier consoles accepted up to 2000 ms: such a value is held at the
+  // maximum, the closest allowed setting.
+  CHECK_EQ(load("nudge_hold_time_ms=1001\n").nudge_hold_time.count(), 1000);
+  CHECK_EQ(load("nudge_hold_time_ms=2000\n").nudge_hold_time.count(), 1000);
+  CHECK_EQ(load("nudge_hold_time_ms=-5\n").nudge_hold_time.count(), 100);
   CHECK_NEAR(load("nudge_distance_threshold=0\n").nudge_distance_threshold, 0.5f, 1e-6);
   CHECK(!load("nudge_enabled=2\n").nudge_enabled);
 }

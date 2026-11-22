@@ -516,10 +516,19 @@ public:
           enter && *enter > 0.0f ? *enter : defaults.nudge_distance_threshold;
       settings.nudge_exit_threshold =
           get("nudge_exit_threshold", 0.0f, 1.0f).value_or(defaults.nudge_exit_threshold);
-      const auto hold = get("nudge_hold_time_ms", static_cast<float>(MIN_NUDGE_TIME.count()),
-                            static_cast<float>(MAX_NUDGE_TIME.count()));
-      settings.nudge_hold_time = hold ? std::chrono::milliseconds(static_cast<long long>(*hold))
-                                      : defaults.nudge_hold_time;
+      // The nudge time. Too short, negative or not a number is unusable and
+      // takes the default. Too long is a value earlier consoles accepted (up
+      // to 2000 ms), so it is held at the maximum, the closest allowed setting,
+      // instead of jumping to the much shorter default.
+      const auto hold = values.find("nudge_hold_time_ms");
+      if (hold == values.end() || !std::isfinite(hold->second) ||
+          hold->second < static_cast<float>(MIN_NUDGE_TIME.count())) {
+        settings.nudge_hold_time = defaults.nudge_hold_time;
+      } else if (hold->second > static_cast<float>(MAX_NUDGE_TIME.count())) {
+        settings.nudge_hold_time = MAX_NUDGE_TIME;
+      } else {
+        settings.nudge_hold_time = std::chrono::milliseconds(static_cast<long long>(hold->second));
+      }
 
       // Asymmetric on purpose: a fresh board defaults to off (the member
       // initializer), but a file written by firmware older than the on/off
