@@ -402,6 +402,10 @@ struct Ports {
   /// it since this copy was taken), so the adapter writes the store's center
   /// back into `center`.
   virtual void apply_drift(CenterResult &center, const RangeResult &range) = 0;
+  /// Copies the store's live manual offset into `center` (only manual_offset_x
+  /// and manual_offset_y). Called before each step so the drift target uses
+  /// the trim the console may have changed since the cached copy was taken.
+  virtual void refresh_manual_offset(CenterResult &center) = 0;
   /// Fresh joystick reading (used after a sweep).
   virtual StickSample read_stick() = 0;
   virtual Clock::time_point now() = 0;
@@ -488,6 +492,7 @@ inline void mouse_tick(MouseState &s, const StepInput &in, Ports &ports) {
     return;
   }
 
+  ports.refresh_manual_offset(s.common.center);
   const StepOutput out = mouse_step(s, in);
   if (out.send_report) {
     ports.send_mouse(out.mouse);
@@ -524,6 +529,7 @@ inline void xac_tick(XacState &s, const StepInput &in, Ports &ports) {
     return;
   }
 
+  ports.refresh_manual_offset(s.common.center);
   const StepOutput out = xac_step(s, in);
   if (out.send_report) {
     ports.send_xac(out.xac);

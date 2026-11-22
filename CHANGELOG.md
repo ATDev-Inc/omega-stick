@@ -76,6 +76,13 @@ what each part of the number means and how a release is cut.
   attached to a release could fail to flash. They now package esptool 5, read
   from the build.
 - **Calibration and settings saves can no longer be cut short.** A power loss or USB unplug during a save used to be able to leave an empty or partial file, losing the calibration or the input mode and nudge settings. Both files are now written to a temporary file and renamed into place, so the previous file survives an interrupted save. Fixes #75 ([#97](https://github.com/ATDev-Inc/omega-stick/pull/97)).
+- **Idle drift correction no longer undoes a manual center trim.** The stick
+  rests at the measured center plus the trim, but drift correction blended the
+  measured center toward the raw reading, so a stick left idle slowly absorbed
+  the trim and the cursor creep it cancelled came back. It now blends toward
+  the raw reading less the trim, so the trim is kept. This changes input
+  behaviour and needs a hardware check.
+  ([#96](https://github.com/ATDev-Inc/omega-stick/pull/96))
 
 ## [0.1.1] - 2026-10-26
 
