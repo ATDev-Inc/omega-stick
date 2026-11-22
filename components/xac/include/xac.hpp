@@ -1,11 +1,11 @@
 #pragma once
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include "hid-rp-gamepad.hpp"
-// TODO: add config option for chosing L or R port joystick-- default to R or something
-//  untested code
 
 namespace espp {
 
@@ -14,14 +14,11 @@ namespace espp {
  *
  * Uses the standard ESPP GamepadInputReport HID format.
  *
- * Physical controls exposed by this device:
+ * The omega-stick is a single physical joystick. It can be presented to the
+ * XAC as either joystick port, selected with Side:
  *
- *   Left joystick:
- *     X = joystick X
- *     Y = joystick Y
- *
- *   Right joystick:
- *     Z/RZ remain centered
+ *   Side::RIGHT: stick drives axes 0, 1 (X, Y); axes 2, 3 (Z, RZ) stay centered
+ *   Side::LEFT:  stick drives axes 2, 3 (Z, RZ); axes 0, 1 (X, Y) stay centered
  *
  *   Triggers:
  *     remain released
@@ -31,9 +28,6 @@ namespace espp {
  *
  *   Buttons:
  *     12 buttons available
- *
- * The device therefore behaves as a single physical joystick while
- * retaining the standard GamepadInputReport HID descriptor.
  */
 template <uint8_t REPORT_ID = 1>
 class XacInputReport : public GamepadInputReport<12,           // BUTTON_COUNT
@@ -50,31 +44,68 @@ public:
 
   using Hat = typename Base::Hat;
 
-  constexpr XacInputReport() { reset(); }
+  /// Which XAC joystick port the stick is reported as.
+  enum class Side : std::uint8_t {
+    RIGHT = 0, ///< axes 0, 1 (X, Y)
+    LEFT = 1,  ///< axes 2, 3 (Z, RZ)
+  };
+
+  constexpr explicit XacInputReport(Side side = Side::RIGHT)
+      : side_(side) {
+    reset();
+  }
+
+  /**
+   * @brief Select which joystick the stick is reported as.
+   *
+   * Recenters both joysticks so the previously selected axes do not keep a
+   * stale deflection.
+   */
+  constexpr void set_side(Side side) {
+    side_ = side;
+    Base::set_joystick_axis(0, Base::joystick_center);
+    Base::set_joystick_axis(1, Base::joystick_center);
+    Base::set_joystick_axis(2, Base::joystick_center);
+    Base::set_joystick_axis(3, Base::joystick_center);
+  }
+
+  constexpr Side side() const { return side_; }
 
   /**
    * @brief Reset the joystick to center and all controls to neutral.
+   *
+   * Keeps the selected side.
    */
   constexpr void reset() {
     Base::reset();
-
-    // The XAC only uses our physical left joystick.
-    //
-    // Keep the unused right joystick centered.
-    // Base::set_right_joystick(0.0f, 0.0f);
-    // Base::set_left_joystick(0.0f, 0.0f);
-    // Keep both triggers released.
+    // Both joysticks centered; both triggers released.
     Base::set_left_trigger(0.0f);
     Base::set_right_trigger(0.0f);
   }
 
   /**
-   * @brief Set the joystick position.
+   * @brief Set the joystick position on the selected side.
    *
    * @param x X position in range [-1, 1]
    * @param y Y position in range [-1, 1]
    */
   constexpr void set_joystick(float x, float y) {
+    set_x(x);
+    set_y(y);
+  }
+
+  /**
+   * @brief Set the joystick position on the selected side using raw 8-bit data.
+   */
+  constexpr void set_joystick(std::uint8_t x, std::uint8_t y) {
+    set_x(x);
+    set_y(y);
+  }
+
+  /**
+   * @brief Set only the X axis of the selected side, in range [-1, 1].
+   */
+  constexpr void set_x(float x) {
     // Clamp before handing off to GamepadInputReport::set_joystick_axis().
     // That function casts (value * range + center) straight to uint8_t
     // WITHOUT clamping the float first -- a value even slightly outside
@@ -82,30 +113,23 @@ public:
     // float to an unsigned integer type, which is undefined behavior in
     // C++, not a safe wrap/clamp. Clamping here, before the call, avoids
     // ever handing it an out-of-range float.
-    x = std::clamp(x, -1.0f, 1.0f);
-    y = std::clamp(y, -1.0f, 1.0f);
-    // Base::set_right_joystick(x, y);
-    // Base::set_left_joystick(x, y);
-    Base::set_joystick_axis(0, x); // d-pad or nothing
-    Base::set_joystick_axis(1, y); // right stick x, left dpad
-    Base::set_joystick_axis(2, x); // right stick y
-    Base::set_joystick_axis(3, y); // left x, right d-pad
+    Base::set_joystick_axis(x_axis(), std::clamp(x, -1.0f, 1.0f));
   }
-  constexpr void set_joystick(std::uint8_t x, std::uint8_t y) {
-    Base::set_joystick_axis(0, x);
-    Base::set_joystick_axis(1, y);
-  }
-  constexpr void set_x(float x) { Base::set_joystick_axis(0, std::clamp(x, -1.0f, 1.0f)); }
-  constexpr void set_y(float y) { Base::set_joystick_axis(1, std::clamp(y, -1.0f, 1.0f)); }
-  /**
-   * @brief Set only the X axis using raw 8-bit data.
-   */
-  constexpr void set_x(std::uint8_t x) { Base::set_joystick_axis(2, x); }
 
   /**
-   * @brief Set only the Y axis using raw 8-bit data.
+   * @brief Set only the Y axis of the selected side, in range [-1, 1].
    */
-  constexpr void set_y(std::uint8_t y) { Base::set_joystick_axis(3, y); }
+  constexpr void set_y(float y) { Base::set_joystick_axis(y_axis(), std::clamp(y, -1.0f, 1.0f)); }
+
+  /**
+   * @brief Set only the X axis of the selected side using raw 8-bit data.
+   */
+  constexpr void set_x(std::uint8_t x) { Base::set_joystick_axis(x_axis(), x); }
+
+  /**
+   * @brief Set only the Y axis of the selected side using raw 8-bit data.
+   */
+  constexpr void set_y(std::uint8_t y) { Base::set_joystick_axis(y_axis(), y); }
 
   /**
    * @brief Set a button.
@@ -151,6 +175,12 @@ public:
                           Base::get_descriptor() // report ID + axes/hat/buttons go inside here
                           ));
   }
+
+private:
+  constexpr std::size_t x_axis() const { return side_ == Side::LEFT ? 2 : 0; }
+  constexpr std::size_t y_axis() const { return side_ == Side::LEFT ? 3 : 1; }
+
+  Side side_{Side::RIGHT};
 };
 
 /**

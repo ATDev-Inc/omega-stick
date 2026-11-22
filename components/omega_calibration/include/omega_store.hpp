@@ -53,6 +53,7 @@ public:
   using RangeResult = OmegaCalibration::RangeResult;
   using DeviceSettings = OmegaCalibration::DeviceSettings;
   using InputMode = OmegaCalibration::InputMode;
+  using XacSide = OmegaCalibration::XacSide;
 
   /// Called (OUTSIDE the internal lock) after a live update that changes the
   /// EFFECTIVE calibration -- a manual offset or a deadzone override -- so
@@ -218,6 +219,13 @@ public:
   void set_nudge_enabled(bool enabled) {
     std::lock_guard<std::mutex> lock(mutex_);
     settings_.nudge_enabled = enabled;
+  }
+
+  /// Selects the XAC joystick (right or left) live. No change-notification is
+  /// fired: the XAC loop reads settings() every iteration.
+  void set_xac_side(XacSide side) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    settings_.xac_side = side;
   }
 
   /// Sets the input mode live and fires on_mode_changed() (outside the

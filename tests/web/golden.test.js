@@ -26,6 +26,7 @@ const ENCODERS = {
   SET_INPUT_MODE_MOUSE: (a) => P.encodeSetInputMode(a.mode),
   SET_INPUT_MODE_INVALID: (a) => P.encodeSetInputMode(a.mode),
   SET_NUDGE_ENABLED_OFF: (a) => P.encodeSetNudgeEnabled(a.enabled),
+  SET_XAC_SIDE_LEFT: (a) => P.encodeSetXacSide(a.side),
 };
 // Visual calibration entries (any name starting with SET_POSITION_STREAM) arrive
 // when the firmware side regenerates the file; FINISH_CALIBRATION has no payload.
