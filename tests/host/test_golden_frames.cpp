@@ -174,13 +174,8 @@ std::string state_fields(const std::vector<uint8_t> &p) {
   o.add("inputMode", std::to_string(p[78]));
   // Trailing u8 added after the first release; null for a 79-byte payload.
   o.add("nudgeEnabled", p.size() > 79 ? std::string(p[79] ? "true" : "false") : "null");
-<<<<<<< Updated upstream
-=======
   // Trailing u8 added after nudge_enabled; null for an 80-byte payload.
-  o.add("xacSide", p.size() > 80 ? std::to_string(p[80]) : "null");
-  // Trailing u8 added after xac_side; null for an 81-byte payload.
-  o.add("nudgeCalibrated", p.size() > 81 ? std::string(p[81] ? "true" : "false") : "null");
->>>>>>> Stashed changes
+  o.add("nudgeCalibrated", p.size() > 80 ? std::string(p[80] ? "true" : "false") : "null");
   return o.str();
 }
 

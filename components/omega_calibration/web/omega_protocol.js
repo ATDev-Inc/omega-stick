@@ -39,12 +39,8 @@
     SET_NUDGE_ENABLED: 0x60,
     FINISH_CALIBRATION: 0x61,
     SET_POSITION_STREAM: 0x62,
-<<<<<<< Updated upstream
-=======
-    SET_XAC_SIDE: 0x63,
     START_NUDGE_CALIBRATION: 0x64,
     CANCEL_NUDGE_CALIBRATION: 0x65,
->>>>>>> Stashed changes
     STATE: 0xD0,
     CALIBRATION_RESULT: 0xD1,
     FW_INFO: 0xD2,
@@ -201,25 +197,14 @@
     return { id: MODULE_CALIBRATION, how: "missing", versionMismatch: false };
   }
 
-<<<<<<< Updated upstream
-  // Fixed 80-byte STATE struct; see calibration_service.hpp. The trailing u8
-  // nudge_enabled is newer than the rest: firmware without the nudge on/off
-  // switch sends 79 bytes, which decodes as nudgeEnabled null (nudge clicks
-  // are always on there; see nudgeControls). Bytes after it are ignored.
-  function decodeState(payload) {
-    if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79 or 80)");
-=======
-  // Fixed 82-byte STATE struct; see calibration_service.hpp. The trailing u8s
+  // Fixed 81-byte STATE struct; see calibration_service.hpp. The trailing u8s
   // are newer than the rest: firmware without the nudge on/off switch sends
   // 79 bytes, which decodes as nudgeEnabled null (nudge clicks are always on
-  // there; see nudgeControls), firmware without the XAC side switch sends
-  // 80 (or 79), which decodes as xacSide null (always the right joystick; see
-  // xacSideControls), and firmware without nudge calibration sends 81 (or
-  // fewer), which decodes as nudgeCalibrated null (see nudgeEnableAction).
+  // there; see nudgeControls), and firmware without nudge calibration sends 80
+  // (or 79), which decodes as nudgeCalibrated null (see nudgeEnableAction).
   // Bytes after them are ignored.
   function decodeState(payload) {
-    if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79 to 82)");
->>>>>>> Stashed changes
+    if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79 to 81)");
     const v = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
     let o = 0;
     const f32 = () => { const x = v.getFloat32(o, true); o += 4; return x; };
@@ -242,11 +227,7 @@
     s.nudgeTimeMs = u32();
     s.inputMode = u8();
     s.nudgeEnabled = o < payload.length ? u8() !== 0 : null;
-<<<<<<< Updated upstream
-=======
-    s.xacSide = o < payload.length ? u8() : null;
     s.nudgeCalibrated = o < payload.length ? u8() !== 0 : null;
->>>>>>> Stashed changes
     return s;
   }
 
@@ -422,6 +403,18 @@
     v.setFloat32(1, centerOn ? centerVal : 0, true);
     v.setFloat32(5, rangeOn ? rangeVal : 0, true);
     return payload;
+  }
+  // Bounds on the nudge time in ms: the same ones the device enforces
+  // (OmegaCalibration::MIN_NUDGE_TIME / MAX_NUDGE_TIME).
+  const MIN_NUDGE_TIME_MS = 10;
+  const MAX_NUDGE_TIME_MS = 1000;
+  // Returns null when timeMs is an acceptable nudge time, else a plain message.
+  function nudgeTimeError(timeMs) {
+    if (!Number.isInteger(timeMs) || timeMs < MIN_NUDGE_TIME_MS || timeMs > MAX_NUDGE_TIME_MS) {
+      return "Nudge time window must be a whole number of milliseconds from " +
+             MIN_NUDGE_TIME_MS + " to " + MAX_NUDGE_TIME_MS + ".";
+    }
+    return null;
   }
   function encodeSetNudgeSettings(enter, exit, timeMs) {
     const payload = new Uint8Array(12);
@@ -1272,6 +1265,84 @@
     return FEED_URL;
   }
 
+  // Whether the console page should register its offline service worker
+  // (site/console-sw.js, published as /omega-stick/console/sw.js). Only on the
+  // project's own Pages site over https at the console path: never from
+  // file://, a local server (the simulator end-to-end tests), or a fork.
+  // hasServiceWorker: whether the browser supports service workers.
+  const CONSOLE_PATH = PAGES_BASE + "console/";
+  function shouldRegisterConsoleSw(locationHref, hasServiceWorker) {
+    if (!hasServiceWorker) return false;
+    try {
+      const u = new URL(String(locationHref));
+      return u.protocol === "https:" && u.origin === PAGES_ORIGIN &&
+        (u.pathname === CONSOLE_PATH || u.pathname === CONSOLE_PATH + "index.html");
+    } catch (_) { return false; }
+  }
+
+  // "Save a copy of this page". Offered only when the page was served over
+  // http(s): from file:// the person already holds a copy and there is
+  // nothing to fetch.
+  const SAVE_COPY_NAME = "omega_stick_console.html";
+  function canSaveCopy(locationHref) {
+    try {
+      const p = new URL(String(locationHref)).protocol;
+      return p === "https:" || p === "http:";
+    } catch (_) { return false; }
+  }
+  // The address to fetch the pristine page source from: this page without its
+  // query string or hash. Null when the page was not served over http(s).
+  function saveCopyUrl(locationHref) {
+    if (!canSaveCopy(locationHref)) return null;
+    const u = new URL(String(locationHref));
+    u.search = "";
+    u.hash = "";
+    return u.href;
+  }
+  // True only when the text is really this console, so a captive portal or an
+  // error page is never saved under the console's name.
+  function looksLikeConsole(text) {
+    return typeof text === "string" &&
+      text.indexOf("<title>espp Omega Calibration Console") >= 0 &&
+      text.indexOf("OmegaProtocol") >= 0;
+  }
+  // How long "Save a copy" waits for the whole page, headers and body.
+  const SAVE_COPY_TIMEOUT_MS = 30000;
+  // Fetches a page and reads its whole body under one deadline. The timer
+  // stays armed until the body is complete, so a response that starts and
+  // then stalls is aborted too (the abort also cancels the body read) and the
+  // caller gets an AbortError instead of waiting for ever. Resolves to
+  // { ok, status, bytes }; bytes (an ArrayBuffer) only when ok.
+  // deps: { fetch, AbortController, setTimeout, clearTimeout }, injected so a
+  // test can stall a body.
+  async function fetchBytesWithDeadline(url, ms, deps) {
+    const ctl = new deps.AbortController();
+    const timer = deps.setTimeout(() => ctl.abort(), ms);
+    try {
+      const res = await deps.fetch(url, { cache: "no-store", signal: ctl.signal });
+      if (!res.ok) return { ok: false, status: res.status };
+      return { ok: true, status: res.status, bytes: await res.arrayBuffer() };
+    } finally { deps.clearTimeout(timer); }
+  }
+  // Plain wording for the outcome. kind: started | notconsole | http |
+  // offline | timeout | unreachable. "started" means the file was handed to
+  // the browser. The page cannot see whether the browser then saved it (a
+  // blocked or cancelled download reports nothing back), so the wording asks
+  // the person to check instead of claiming a saved file.
+  function describeSaveCopy(kind, status) {
+    switch (kind) {
+      case "started": return "The download of " + SAVE_COPY_NAME + " has started. Check that the file is in your Downloads folder. " +
+        "If it is not there, your browser may have blocked it: download the console from the releases page on GitHub instead.";
+      case "notconsole": return "The page that came back was not the console (a sign-in page or an error page, perhaps), so nothing was saved. " +
+        "Download the console from the releases page on GitHub instead.";
+      case "http": return "The server could not provide the page (error " + status + "), so nothing was saved. " +
+        "Download the console from the releases page on GitHub instead.";
+      case "offline": return "This computer is offline, so nothing was saved. Try again when you are connected, or use the releases page on GitHub.";
+      case "timeout": return "The page took too long to arrive, so nothing was saved. Try again, or download the console from the releases page on GitHub.";
+      default: return "The page could not be fetched, so nothing was saved. Try again, or download the console from the releases page on GitHub.";
+    }
+  }
+
   // Validates the parsed latest.json. Returns { ok, error, release } where
   // release is { version, tag, publishedAt, notesUrl, appUrl, size, sha256 }.
   function parseReleaseFeed(json, feedUrl) {
@@ -1668,7 +1739,8 @@
     SIM_PATTERNS, SIM_FAULTS, SIM_NEXT_IMAGE,
     encodeSimMessage, parseSimMessage, validateSimScript, createHidAccumulator,
     pickReconnectCandidate, autoReconnectStep,
-    FEED_URL, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
+    FEED_URL, RELEASES_URL, feedUrlFor, shouldRegisterConsoleSw, parseReleaseFeed, summarizeAvailability,
+    SAVE_COPY_NAME, SAVE_COPY_TIMEOUT_MS, canSaveCopy, saveCopyUrl, looksLikeConsole, fetchBytesWithDeadline, describeSaveCopy,
     OTA_SLOT_SIZE, CHIP_ID_ESP32S3, DEFAULT_PROJECT, KIND_LABEL,
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
     decideOutcome, CONFIRM_CHECKS, judgeConfirmCheck, awaitSensorHealthy, runConfirmCheck, confirmFailureNotice,
@@ -1688,15 +1760,12 @@
     parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
     encodeSetManualOffset, encodeSetDeadzoneOverride,
     encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled,
+    MIN_NUDGE_TIME_MS, MAX_NUDGE_TIME_MS, nudgeTimeError,
     encodeSetPositionStream, buildSetPositionStream, parseCalibrationProgress, STAGE_NAME,
     NUDGE_SWITCH_UNSUPPORTED_NOTE, nudgeControls,
-<<<<<<< Updated upstream
-=======
-    XAC_SIDE_UNSUPPORTED_NOTE, xacSideControls,
     NUDGE_CAL_STATUS, NUDGE_ATTEMPT, NUDGE_DIRECTION, NUDGE_DIRECTION_TEXT, decodeNudgeCalibration,
     nudgeDirectionName, nudgeCalibrationView, nudgeEnableAction, nudgeCalibrationControls,
     NUDGE_CAL_UNSUPPORTED_NOTE, NUDGE_CAL_XAC_NOTE,
->>>>>>> Stashed changes
   };
   globalThis.OmegaProtocol = OmegaProtocol;
   if (typeof module !== "undefined" && module.exports) module.exports = OmegaProtocol;

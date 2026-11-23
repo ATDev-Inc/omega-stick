@@ -42,6 +42,9 @@
 //   0x53 SET_NUDGE_SETTINGS     - payload: f32 nudge_enter_threshold (delta),
 //                                 f32 nudge_exit_threshold (absolute),
 //                                 u32 nudge_time_ms (measurement window).
+//                                 The time must be within MIN_NUDGE_TIME..
+//                                 MAX_NUDGE_TIME (10..1000 ms), or the reply is
+//                                 ERROR (invalid_argument) and nothing is stored.
 //                                 Reply: OK / ERROR.
 //   0x54 SET_INPUT_MODE         - payload: u8 mode (0 = mouse, 1 = XAC). The OK's
 //                                 u32 is 1 when the device is switching (it
@@ -159,16 +162,6 @@
 //                                 payload that is not exactly 4 bytes).
 //                                 Protocol version 2; older firmware ignores
 //                                 the frame (no reply).
-<<<<<<< Updated upstream
-=======
-//   0x63 SET_XAC_SIDE           : payload: u8 side (0 = right joystick, HID
-//                                 axes 0/1; 1 = left joystick, axes 2/3).
-//                                 Applied live in XAC mode (no restart) and
-//                                 kept in the settings; SAVE_TO_FLASH
-//                                 persists it. Reply: OK / ERROR
-//                                 (invalid_argument for any other value or
-//                                 payload length). Older firmware ignores
-//                                 the frame (no reply).
 //   0x64 START_NUDGE_CALIBRATION : no payload. ASYNC, like START_CALIBRATION:
 //                                 asks the mouse loop to measure the
 //                                 person's nudges (NUDGE_CAL_REPEATS in each
@@ -199,7 +192,6 @@
 //                                 with a payload, function_not_supported
 //                                 when Config::cancel_nudge_calibration is
 //                                 unset.
->>>>>>> Stashed changes
 //
 // Message types & payloads (device -> host), same module, reply flag set:
 //   0xD3 DIAGNOSTICS : payload (see build_diagnostics_payload() below):
@@ -224,11 +216,7 @@
 //                                           older firmware ends the payload
 //                                           after the reset list, and hosts
 //                                           must ignore any bytes after it)
-<<<<<<< Updated upstream
-//   0xD0 STATE - payload: fixed 80-byte little-endian struct, in this exact
-=======
-//   0xD0 STATE - payload: fixed 82-byte little-endian struct, in this exact
->>>>>>> Stashed changes
+//   0xD0 STATE - payload: fixed 81-byte little-endian struct, in this exact
 //                order (see build_state_payload() below):
 //                  f32 center_x, center_y, center_noise_radius,
 //                  f32 center_deadzone                 (calibration-derived)
@@ -250,23 +238,15 @@
 //                                                        firmware sends 79
 //                                                        bytes, which hosts
 //                                                        read as enabled)
-<<<<<<< Updated upstream
-=======
-//                  u8  xac_side                         (0 = right, 1 = left;
-//                                                        added after
-//                                                        nudge_enabled: older
-//                                                        firmware sends 80
-//                                                        bytes, which hosts
-//                                                        read as unknown)
 //                  u8  nudge_calibrated                 (0/1: the nudge
 //                                                        settings came from a
 //                                                        nudge calibration;
-//                                                        added after xac_side:
-//                                                        older firmware sends
-//                                                        81 bytes and has no
+//                                                        added after
+//                                                        nudge_enabled: older
+//                                                        firmware sends 80
+//                                                        bytes and has no
 //                                                        START_NUDGE_
 //                                                        CALIBRATION)
->>>>>>> Stashed changes
 //   0xD2 FW_INFO : payload: u8 pending_verify (0/1), u8 session_active
 //                (0/1), then length-prefixed strings (u8 len + bytes, at
 //                most 255 bytes each, no terminator) in this order:
@@ -501,17 +481,11 @@ public:
     SetNudgeEnabled = 0x60,     ///< u8: turn nudge clicks off (0) or on (1)
     FinishCalibration = 0x61,   ///< end the running range sweep now and evaluate it
     SetPositionStream = 0x62,   ///< u32 lease_ms: stream live positions on this link (0 stops)
-<<<<<<< Updated upstream
-    // device -> host
-    State = 0xD0,               ///< fixed 80-byte calibration + settings struct
-=======
-    SetXacSide = 0x63, ///< u8: XAC joystick, 0 = right (axes 0/1), 1 = left (axes 2/3)
     // nudge calibration
     StartNudgeCalibration = 0x64,  ///< ASYNC: measure the person's nudges, derive the settings
     CancelNudgeCalibration = 0x65, ///< stop a pending or running nudge calibration
     // device -> host
-    State = 0xD0, ///< fixed 82-byte calibration + settings struct
->>>>>>> Stashed changes
+    State = 0xD0,               ///< fixed 81-byte calibration + settings struct
     CalibrationResult = 0xD1,   ///< UNSOLICITED: outcome of an async StartCalibration
     FwInfo = 0xD2,              ///< u8 pending_verify, u8 session_active, str project, str version
     Diagnostics = 0xD3,         ///< variable-length sensor fault status + reset log
@@ -546,11 +520,7 @@ public:
 
   /// Wire size of the STATE payload (see the header comment for the exact
   /// field layout).
-<<<<<<< Updated upstream
-  static constexpr size_t kStatePayloadSize = 80;
-=======
-  static constexpr size_t kStatePayloadSize = 82;
->>>>>>> Stashed changes
+  static constexpr size_t kStatePayloadSize = 81;
 
   /// One calibration progress report (the CALIBRATION_PROGRESS fields).
   using Progress = OmegaCalibration::Progress;
@@ -1301,12 +1271,22 @@ protected:
       const float enter_threshold = get_f32(payload, 0);
       const float exit_threshold = get_f32(payload, 4);
       const uint32_t time_ms = stream::get_u32(payload.subspan(8));
+      // No enter-versus-exit ordering check: enter is a rise (a delta) and exit
+      // is an absolute position, so the two are not comparable.
       if (!(enter_threshold > 0.0f) || enter_threshold > 1.0f) {
         reply = build_error(std::errc::invalid_argument, "nudge enter threshold must be in (0, 1]");
         return true;
       }
       if (!(exit_threshold >= 0.0f) || exit_threshold > 1.0f) {
         reply = build_error(std::errc::invalid_argument, "nudge exit threshold must be in [0, 1]");
+        return true;
+      }
+      if (time_ms < static_cast<uint32_t>(OmegaCalibration::MIN_NUDGE_TIME.count()) ||
+          time_ms > static_cast<uint32_t>(OmegaCalibration::MAX_NUDGE_TIME.count())) {
+        reply = build_error(std::errc::invalid_argument,
+                            fmt::format("nudge time must be between {} and {} ms",
+                                        OmegaCalibration::MIN_NUDGE_TIME.count(),
+                                        OmegaCalibration::MAX_NUDGE_TIME.count()));
         return true;
       }
       store_.set_nudge_settings(enter_threshold, exit_threshold,
@@ -1465,11 +1445,7 @@ protected:
     }
   }
 
-<<<<<<< Updated upstream
-  /// Encode a Snapshot into the fixed 80-byte STATE payload (see the header
-=======
-  /// Encode a Snapshot into the fixed 82-byte STATE payload (see the header
->>>>>>> Stashed changes
+  /// Encode a Snapshot into the fixed 81-byte STATE payload (see the header
   /// comment for the exact field order).
   static std::vector<uint8_t> build_state_payload(const OmegaStore::Snapshot &snap) {
     std::vector<uint8_t> payload;
@@ -1504,11 +1480,7 @@ protected:
     espp::stream_frame::put_u32(payload, static_cast<uint32_t>(settings.nudge_hold_time.count()));
     payload.push_back(static_cast<uint8_t>(settings.input_mode));
     payload.push_back(settings.nudge_enabled ? 1 : 0);
-<<<<<<< Updated upstream
-=======
-    payload.push_back(static_cast<uint8_t>(settings.xac_side));
     payload.push_back(settings.nudge_calibrated ? 1 : 0);
->>>>>>> Stashed changes
 
     return payload;
   }

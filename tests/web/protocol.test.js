@@ -75,10 +75,7 @@ test("constants match stream_frame.hpp and calibration_service.hpp", () => {
     START_CALIBRATION: 0x56, RESTART: 0x57, OTA_BEGIN: 0x58, OTA_DATA: 0x59,
     OTA_FINISH: 0x5A, OTA_ABORT: 0x5B, GET_FW_INFO: 0x5C, MARK_VALID: 0x5D,
     REVERT: 0x5E, GET_DIAGNOSTICS: 0x5F, SET_NUDGE_ENABLED: 0x60, FINISH_CALIBRATION: 0x61, SET_POSITION_STREAM: 0x62,
-<<<<<<< Updated upstream
-=======
-    SET_XAC_SIDE: 0x63, START_NUDGE_CALIBRATION: 0x64, CANCEL_NUDGE_CALIBRATION: 0x65,
->>>>>>> Stashed changes
+    START_NUDGE_CALIBRATION: 0x64, CANCEL_NUDGE_CALIBRATION: 0x65,
     STATE: 0xD0, CALIBRATION_RESULT: 0xD1, FW_INFO: 0xD2, DIAGNOSTICS: 0xD3, CALIBRATION_PROGRESS: 0xD4,
     NUDGE_CALIBRATION: 0xD5, OK: 0xDF, ERROR: 0xFE,
   });
@@ -152,6 +149,20 @@ test("encodeSetDeadzoneOverride: flag bits and fixed 9-byte length", () => {
 test("encodeSetNudgeSettings: f32 enter, f32 exit, u32 ms, little-endian", () => {
   assert.deepEqual(P.encodeSetNudgeSettings(0.5, 0.125, 300),
                    concat(f32le(0.5), f32le(0.125), u32le(300)));
+});
+
+test("nudge time limits match the device (MIN_NUDGE_TIME / MAX_NUDGE_TIME)", () => {
+  assert.equal(P.MIN_NUDGE_TIME_MS, 10);
+  assert.equal(P.MAX_NUDGE_TIME_MS, 1000);
+});
+
+test("nudgeTimeError: accepts 10 to 1000, refuses the rest with the range named", () => {
+  for (const ok of [10, 100, 1000]) assert.equal(P.nudgeTimeError(ok), null);
+  for (const bad of [0, 9, 1001, 2000, -5, 100.5, NaN, Infinity]) {
+    const msg = P.nudgeTimeError(bad);
+    assert.equal(typeof msg, "string", String(bad));
+    assert.match(msg, /10 to 1000/);
+  }
 });
 
 test("encodeSetInputMode: one byte, 0 = mouse, 1 = XAC", () => {
@@ -371,14 +382,9 @@ test("parseDiscovery: truncated payloads throw", () => {
 });
 
 // ---------------------------------------------------------------- decodeState
-<<<<<<< Updated upstream
-// calibration_service.hpp build_state_payload(): 80 bytes, little-endian
-// (79 from firmware without the nudge on/off switch):
-=======
-// calibration_service.hpp build_state_payload(): 82 bytes, little-endian
-// (81 from firmware without nudge calibration, 80 without the XAC side switch
-// either, 79 without the nudge on/off switch either):
->>>>>>> Stashed changes
+// calibration_service.hpp build_state_payload(): 81 bytes, little-endian
+// (80 from firmware without nudge calibration, 79 without the nudge on/off
+// switch either):
 //   off  0..23  f32 center_x, center_y, center_noise_radius, center_deadzone,
 //                   center_manual_offset_x, center_manual_offset_y
 //   off 24..55  f32 range_min_x, range_max_x, range_min_y, range_max_y,
@@ -393,18 +399,11 @@ test("parseDiscovery: truncated payloads throw", () => {
 //   off 74..77  u32 nudge_time_ms
 //   off 78      u8  input_mode (0 mouse, 1 XAC)
 //   off 79      u8  nudge_enabled (0/1; absent in the 79-byte form)
-<<<<<<< Updated upstream
+//   off 80      u8  nudge_calibrated (0/1; absent in the 79/80-byte forms)
 
-// `nudge` undefined builds the older 79-byte form.
-function statePayload({ hasCenter, hasRange, mode, nudge }) {
-=======
-//   off 80      u8  xac_side (0 right, 1 left; absent in the 79/80-byte forms)
-//   off 81      u8  nudge_calibrated (0/1; absent in the 79/80/81-byte forms)
-
-// `nudge` undefined builds the older 79-byte form, `side` undefined the
-// 80-byte form, `calibrated` undefined the 81-byte form.
-function statePayload({ hasCenter, hasRange, mode, nudge, side, calibrated }) {
->>>>>>> Stashed changes
+// `nudge` undefined builds the older 79-byte form, `calibrated` undefined the
+// 80-byte form.
+function statePayload({ hasCenter, hasRange, mode, nudge, calibrated }) {
   return concat(
     // center block (all values exactly representable as f32)
     f32le(0.5), f32le(-0.5), f32le(0.015625), f32le(0.03125), f32le(0.25), f32le(-0.25),
@@ -417,13 +416,8 @@ function statePayload({ hasCenter, hasRange, mode, nudge, side, calibrated }) {
     // nudge + mode
     f32le(0.2), f32le(0.1), u32le(250),
     bytes(mode),
-<<<<<<< Updated upstream
-    nudge === undefined ? bytes() : bytes(nudge));
-=======
     nudge === undefined ? bytes() : bytes(nudge),
-    side === undefined ? bytes() : bytes(side),
     calibrated === undefined ? bytes() : bytes(calibrated));
->>>>>>> Stashed changes
 }
 
 test("decodeState: 79-byte layout, both manual deadzones present, XAC mode", () => {
@@ -467,11 +461,7 @@ test("decodeState: only one override present", () => {
 
 test("decodeState: short payload throws, longer payload is tolerated", () => {
   const ok = statePayload({ hasCenter: true, hasRange: true, mode: 0 });
-<<<<<<< Updated upstream
-  assert.throws(() => P.decodeState(ok.subarray(0, 78)), /malformed STATE reply \(78 B, expected 79 or 80\)/);
-=======
-  assert.throws(() => P.decodeState(ok.subarray(0, 78)), /malformed STATE reply \(78 B, expected 79 to 82\)/);
->>>>>>> Stashed changes
+  assert.throws(() => P.decodeState(ok.subarray(0, 78)), /malformed STATE reply \(78 B, expected 79 to 81\)/);
   const longer = P.decodeState(concat(ok, bytes(1, 0xAA)));
   assert.equal(longer.nudgeTimeMs, 250);
   assert.equal(longer.nudgeEnabled, true);
@@ -494,62 +484,21 @@ test("decodeState: 79-byte STATE from older firmware decodes nudgeEnabled as nul
   assert.equal(s.inputMode, 1);
 });
 
-<<<<<<< Updated upstream
-=======
-test("decodeState: 81-byte layout carries xac_side as the last byte", () => {
-  const left = statePayload({ hasCenter: false, hasRange: false, mode: 1, nudge: 1, side: 1 });
-  assert.equal(left.length, 81);
-  const s = P.decodeState(left);
-  assert.equal(s.xacSide, P.XAC_SIDE.LEFT);
-  assert.equal(s.nudgeEnabled, true);
-  assert.equal(s.inputMode, 1);
-  assert.equal(P.decodeState(statePayload({ hasCenter: false, hasRange: false, mode: 1, nudge: 0, side: 0 })).xacSide,
-               P.XAC_SIDE.RIGHT);
-});
-
-test("decodeState: 82-byte layout carries nudge_calibrated as the last byte", () => {
-  const yes = statePayload({ hasCenter: false, hasRange: false, mode: 0, nudge: 1, side: 0, calibrated: 1 });
-  assert.equal(yes.length, 82);
+test("decodeState: 81-byte layout carries nudge_calibrated as the last byte", () => {
+  const yes = statePayload({ hasCenter: false, hasRange: false, mode: 0, nudge: 1, calibrated: 1 });
+  assert.equal(yes.length, 81);
   assert.equal(P.decodeState(yes).nudgeCalibrated, true);
-  assert.equal(P.decodeState(yes).xacSide, P.XAC_SIDE.RIGHT);
-  const no = statePayload({ hasCenter: false, hasRange: false, mode: 0, nudge: 0, side: 1, calibrated: 0 });
+  assert.equal(P.decodeState(yes).nudgeEnabled, true);
+  const no = statePayload({ hasCenter: false, hasRange: false, mode: 0, nudge: 0, calibrated: 0 });
   assert.equal(P.decodeState(no).nudgeCalibrated, false);
-  assert.equal(P.decodeState(no).xacSide, P.XAC_SIDE.LEFT);
+  assert.equal(P.decodeState(no).nudgeEnabled, false);
 });
 
-test("decodeState: 81-byte and shorter STATE from older firmware decode nudgeCalibrated as null", () => {
-  assert.equal(P.decodeState(statePayload({ hasCenter: true, hasRange: true, mode: 0, nudge: 1, side: 0 })).nudgeCalibrated, null);
+test("decodeState: 80- and 79-byte STATE from older firmware decode nudgeCalibrated as null", () => {
+  assert.equal(P.decodeState(statePayload({ hasCenter: true, hasRange: true, mode: 0, nudge: 1 })).nudgeCalibrated, null);
   assert.equal(P.decodeState(statePayload({ hasCenter: true, hasRange: true, mode: 0 })).nudgeCalibrated, null);
 });
 
-test("decodeState: 80- and 79-byte STATE from older firmware decode xacSide as null", () => {
-  assert.equal(P.decodeState(statePayload({ hasCenter: true, hasRange: true, mode: 1, nudge: 1 })).xacSide, null);
-  assert.equal(P.decodeState(statePayload({ hasCenter: true, hasRange: true, mode: 1 })).xacSide, null);
-});
-
-// ---------------------------------------------------------------- xacSideControls
-test("xacSideControls: highlights the side the device reports", () => {
-  const live = { connected: true, busy: false, haveState: true };
-  assert.deepEqual(P.xacSideControls({ ...live, xacSide: 0 }), { disabled: false, right: true, left: false, note: "" });
-  assert.deepEqual(P.xacSideControls({ ...live, xacSide: 1 }), { disabled: false, right: false, left: true, note: "" });
-});
-
-test("xacSideControls: firmware without the switch shows right, disabled, with a note", () => {
-  const c = P.xacSideControls({ connected: true, busy: false, haveState: true, xacSide: null });
-  assert.deepEqual(c, { disabled: true, right: true, left: false, note: P.XAC_SIDE_UNSUPPORTED_NOTE });
-});
-
-test("xacSideControls: disabled while disconnected, busy or before the first STATE", () => {
-  for (const ctx of [{ connected: false, busy: false, haveState: true },
-                     { connected: true, busy: true, haveState: true },
-                     { connected: true, busy: false, haveState: false }]) {
-    const c = P.xacSideControls({ ...ctx, xacSide: ctx.haveState ? 1 : null });
-    assert.equal(c.disabled, true, JSON.stringify(ctx));
-    assert.equal(c.note, "", JSON.stringify(ctx));
-  }
-});
-
->>>>>>> Stashed changes
 // ---------------------------------------------------------------- nudgeControls
 test("nudgeControls: checkbox follows the device; off greys out the tuning but keeps it", () => {
   const live = { connected: true, busy: false, haveState: true };

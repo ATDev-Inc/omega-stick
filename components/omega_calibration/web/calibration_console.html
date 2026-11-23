@@ -107,25 +107,15 @@
                                                             nudge clicks always
                                                             on, the checkbox is
                                                             shown disabled)
-<<<<<<< Updated upstream
-=======
-                      u8  xac_side                         (0 = right joystick,
-                                                            1 = left; firmware
-                                                            without the switch
-                                                            sends 80 bytes:
-                                                            always right, the
-                                                            buttons are shown
-                                                            disabled)
                       u8  nudge_calibrated                 (0/1: the nudge
                                                             settings came from
                                                             a nudge
                                                             calibration;
                                                             firmware without it
-                                                            sends 81 bytes and
+                                                            sends 80 bytes and
                                                             has no
                                                             START_NUDGE_
                                                             CALIBRATION)
->>>>>>> Stashed changes
       0x57 RESTART                (no payload) -- reply OK is sent first, then
                                    the device reboots ~750 ms later (USB
                                    re-enumerates; reconnect afterwards).
@@ -178,14 +168,6 @@
                                    Firmware before protocol v2 never replies:
                                    the console treats a timeout as "no live
                                    view" and falls back to printed prompts.
-<<<<<<< Updated upstream
-=======
-      0x63 SET_XAC_SIDE           u8 side (0 = right joystick, HID axes 0/1;
-                                   1 = left joystick, axes 2/3). Live, no
-                                   restart; SAVE_TO_FLASH persists it.
-                                   Reply: OK, or ERROR for any other value
-                                   or length. Firmware without the switch
-                                   does not answer it (see STATE's last byte).
       0x64 START_NUDGE_CALIBRATION (no payload) -- ASYNC: the device asks for
                                    3 nudges in each direction (forward,
                                    right, back, left), measures them, and
@@ -204,7 +186,6 @@
                                    nothing. Reply OK with u32 1 when one was
                                    running (its CANCELLED report follows),
                                    0 when none was.
->>>>>>> Stashed changes
       The OTA messages reply ERROR (function_not_supported) if the firmware
       was built without an OTA engine wired in.
       0xD2 FW_INFO  (reply to GET_FW_INFO) -- u8 pending_verify (0/1),
@@ -774,7 +755,7 @@
         </div>
         <div class="edit-row">
           <label for="nudgeTime">Nudge time window (ms)</label>
-          <input type="number" id="nudgeTime" step="10" min="0" max="2000" value="100">
+          <input type="number" id="nudgeTime" step="10" min="10" max="1000" value="100">
           <span class="muted">a rise slower than this is cursor movement; also the shortest hold, and how long a left click waits before it drags</span>
         </div>
         <div class="edit-row">
@@ -963,6 +944,21 @@
       <div id="log" class="log" aria-live="polite"></div>
     </div>
 
+    <div class="panel">
+      <h2>Keep a copy of this console</h2>
+      <p class="muted" style="margin: 0 0 6px;">
+        A saved copy opens from your computer with no internet and connects to the stick the same way.
+        It is not updated automatically.
+      </p>
+      <div class="edit-row">
+        <button id="saveCopyBtn">Save a copy of this page</button>
+      </div>
+      <p id="saveCopyNote" class="muted" aria-live="polite" style="margin: 6px 0 0;"></p>
+      <p class="muted" style="margin: 4px 0 0;">
+        <a id="saveCopyReleases" href="https://github.com/ATDev-Inc/omega-stick/releases" target="_blank" rel="noopener">Console and firmware releases on GitHub</a>
+      </p>
+    </div>
+
     <footer>
       Speaks a module-5 extension of the espp OT framing shared with the coredump and OTA
       consoles (magic "OT" + flags + module + type + len + payload + CRC-32; see this page's
@@ -1017,12 +1013,8 @@
     SET_NUDGE_ENABLED: 0x60,
     FINISH_CALIBRATION: 0x61,
     SET_POSITION_STREAM: 0x62,
-<<<<<<< Updated upstream
-=======
-    SET_XAC_SIDE: 0x63,
     START_NUDGE_CALIBRATION: 0x64,
     CANCEL_NUDGE_CALIBRATION: 0x65,
->>>>>>> Stashed changes
     STATE: 0xD0,
     CALIBRATION_RESULT: 0xD1,
     FW_INFO: 0xD2,
@@ -1179,25 +1171,14 @@
     return { id: MODULE_CALIBRATION, how: "missing", versionMismatch: false };
   }
 
-<<<<<<< Updated upstream
-  // Fixed 80-byte STATE struct; see calibration_service.hpp. The trailing u8
-  // nudge_enabled is newer than the rest: firmware without the nudge on/off
-  // switch sends 79 bytes, which decodes as nudgeEnabled null (nudge clicks
-  // are always on there; see nudgeControls). Bytes after it are ignored.
-  function decodeState(payload) {
-    if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79 or 80)");
-=======
-  // Fixed 82-byte STATE struct; see calibration_service.hpp. The trailing u8s
+  // Fixed 81-byte STATE struct; see calibration_service.hpp. The trailing u8s
   // are newer than the rest: firmware without the nudge on/off switch sends
   // 79 bytes, which decodes as nudgeEnabled null (nudge clicks are always on
-  // there; see nudgeControls), firmware without the XAC side switch sends
-  // 80 (or 79), which decodes as xacSide null (always the right joystick; see
-  // xacSideControls), and firmware without nudge calibration sends 81 (or
-  // fewer), which decodes as nudgeCalibrated null (see nudgeEnableAction).
+  // there; see nudgeControls), and firmware without nudge calibration sends 80
+  // (or 79), which decodes as nudgeCalibrated null (see nudgeEnableAction).
   // Bytes after them are ignored.
   function decodeState(payload) {
-    if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79 to 82)");
->>>>>>> Stashed changes
+    if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79 to 81)");
     const v = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
     let o = 0;
     const f32 = () => { const x = v.getFloat32(o, true); o += 4; return x; };
@@ -1220,11 +1201,7 @@
     s.nudgeTimeMs = u32();
     s.inputMode = u8();
     s.nudgeEnabled = o < payload.length ? u8() !== 0 : null;
-<<<<<<< Updated upstream
-=======
-    s.xacSide = o < payload.length ? u8() : null;
     s.nudgeCalibrated = o < payload.length ? u8() !== 0 : null;
->>>>>>> Stashed changes
     return s;
   }
 
@@ -1400,6 +1377,18 @@
     v.setFloat32(1, centerOn ? centerVal : 0, true);
     v.setFloat32(5, rangeOn ? rangeVal : 0, true);
     return payload;
+  }
+  // Bounds on the nudge time in ms: the same ones the device enforces
+  // (OmegaCalibration::MIN_NUDGE_TIME / MAX_NUDGE_TIME).
+  const MIN_NUDGE_TIME_MS = 10;
+  const MAX_NUDGE_TIME_MS = 1000;
+  // Returns null when timeMs is an acceptable nudge time, else a plain message.
+  function nudgeTimeError(timeMs) {
+    if (!Number.isInteger(timeMs) || timeMs < MIN_NUDGE_TIME_MS || timeMs > MAX_NUDGE_TIME_MS) {
+      return "Nudge time window must be a whole number of milliseconds from " +
+             MIN_NUDGE_TIME_MS + " to " + MAX_NUDGE_TIME_MS + ".";
+    }
+    return null;
   }
   function encodeSetNudgeSettings(enter, exit, timeMs) {
     const payload = new Uint8Array(12);
@@ -2250,6 +2239,84 @@
     return FEED_URL;
   }
 
+  // Whether the console page should register its offline service worker
+  // (site/console-sw.js, published as /omega-stick/console/sw.js). Only on the
+  // project's own Pages site over https at the console path: never from
+  // file://, a local server (the simulator end-to-end tests), or a fork.
+  // hasServiceWorker: whether the browser supports service workers.
+  const CONSOLE_PATH = PAGES_BASE + "console/";
+  function shouldRegisterConsoleSw(locationHref, hasServiceWorker) {
+    if (!hasServiceWorker) return false;
+    try {
+      const u = new URL(String(locationHref));
+      return u.protocol === "https:" && u.origin === PAGES_ORIGIN &&
+        (u.pathname === CONSOLE_PATH || u.pathname === CONSOLE_PATH + "index.html");
+    } catch (_) { return false; }
+  }
+
+  // "Save a copy of this page". Offered only when the page was served over
+  // http(s): from file:// the person already holds a copy and there is
+  // nothing to fetch.
+  const SAVE_COPY_NAME = "omega_stick_console.html";
+  function canSaveCopy(locationHref) {
+    try {
+      const p = new URL(String(locationHref)).protocol;
+      return p === "https:" || p === "http:";
+    } catch (_) { return false; }
+  }
+  // The address to fetch the pristine page source from: this page without its
+  // query string or hash. Null when the page was not served over http(s).
+  function saveCopyUrl(locationHref) {
+    if (!canSaveCopy(locationHref)) return null;
+    const u = new URL(String(locationHref));
+    u.search = "";
+    u.hash = "";
+    return u.href;
+  }
+  // True only when the text is really this console, so a captive portal or an
+  // error page is never saved under the console's name.
+  function looksLikeConsole(text) {
+    return typeof text === "string" &&
+      text.indexOf("<title>espp Omega Calibration Console") >= 0 &&
+      text.indexOf("OmegaProtocol") >= 0;
+  }
+  // How long "Save a copy" waits for the whole page, headers and body.
+  const SAVE_COPY_TIMEOUT_MS = 30000;
+  // Fetches a page and reads its whole body under one deadline. The timer
+  // stays armed until the body is complete, so a response that starts and
+  // then stalls is aborted too (the abort also cancels the body read) and the
+  // caller gets an AbortError instead of waiting for ever. Resolves to
+  // { ok, status, bytes }; bytes (an ArrayBuffer) only when ok.
+  // deps: { fetch, AbortController, setTimeout, clearTimeout }, injected so a
+  // test can stall a body.
+  async function fetchBytesWithDeadline(url, ms, deps) {
+    const ctl = new deps.AbortController();
+    const timer = deps.setTimeout(() => ctl.abort(), ms);
+    try {
+      const res = await deps.fetch(url, { cache: "no-store", signal: ctl.signal });
+      if (!res.ok) return { ok: false, status: res.status };
+      return { ok: true, status: res.status, bytes: await res.arrayBuffer() };
+    } finally { deps.clearTimeout(timer); }
+  }
+  // Plain wording for the outcome. kind: started | notconsole | http |
+  // offline | timeout | unreachable. "started" means the file was handed to
+  // the browser. The page cannot see whether the browser then saved it (a
+  // blocked or cancelled download reports nothing back), so the wording asks
+  // the person to check instead of claiming a saved file.
+  function describeSaveCopy(kind, status) {
+    switch (kind) {
+      case "started": return "The download of " + SAVE_COPY_NAME + " has started. Check that the file is in your Downloads folder. " +
+        "If it is not there, your browser may have blocked it: download the console from the releases page on GitHub instead.";
+      case "notconsole": return "The page that came back was not the console (a sign-in page or an error page, perhaps), so nothing was saved. " +
+        "Download the console from the releases page on GitHub instead.";
+      case "http": return "The server could not provide the page (error " + status + "), so nothing was saved. " +
+        "Download the console from the releases page on GitHub instead.";
+      case "offline": return "This computer is offline, so nothing was saved. Try again when you are connected, or use the releases page on GitHub.";
+      case "timeout": return "The page took too long to arrive, so nothing was saved. Try again, or download the console from the releases page on GitHub.";
+      default: return "The page could not be fetched, so nothing was saved. Try again, or download the console from the releases page on GitHub.";
+    }
+  }
+
   // Validates the parsed latest.json. Returns { ok, error, release } where
   // release is { version, tag, publishedAt, notesUrl, appUrl, size, sha256 }.
   function parseReleaseFeed(json, feedUrl) {
@@ -2646,7 +2713,8 @@
     SIM_PATTERNS, SIM_FAULTS, SIM_NEXT_IMAGE,
     encodeSimMessage, parseSimMessage, validateSimScript, createHidAccumulator,
     pickReconnectCandidate, autoReconnectStep,
-    FEED_URL, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
+    FEED_URL, RELEASES_URL, feedUrlFor, shouldRegisterConsoleSw, parseReleaseFeed, summarizeAvailability,
+    SAVE_COPY_NAME, SAVE_COPY_TIMEOUT_MS, canSaveCopy, saveCopyUrl, looksLikeConsole, fetchBytesWithDeadline, describeSaveCopy,
     OTA_SLOT_SIZE, CHIP_ID_ESP32S3, DEFAULT_PROJECT, KIND_LABEL,
     inspectImage, parseVersion, compareFirmware, buildFlashPlan, buildRevertPlan,
     decideOutcome, CONFIRM_CHECKS, judgeConfirmCheck, awaitSensorHealthy, runConfirmCheck, confirmFailureNotice,
@@ -2666,15 +2734,12 @@
     parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
     encodeSetManualOffset, encodeSetDeadzoneOverride,
     encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled,
+    MIN_NUDGE_TIME_MS, MAX_NUDGE_TIME_MS, nudgeTimeError,
     encodeSetPositionStream, buildSetPositionStream, parseCalibrationProgress, STAGE_NAME,
     NUDGE_SWITCH_UNSUPPORTED_NOTE, nudgeControls,
-<<<<<<< Updated upstream
-=======
-    XAC_SIDE_UNSUPPORTED_NOTE, xacSideControls,
     NUDGE_CAL_STATUS, NUDGE_ATTEMPT, NUDGE_DIRECTION, NUDGE_DIRECTION_TEXT, decodeNudgeCalibration,
     nudgeDirectionName, nudgeCalibrationView, nudgeEnableAction, nudgeCalibrationControls,
     NUDGE_CAL_UNSUPPORTED_NOTE, NUDGE_CAL_XAC_NOTE,
->>>>>>> Stashed changes
   };
   globalThis.OmegaProtocol = OmegaProtocol;
   if (typeof module !== "undefined" && module.exports) module.exports = OmegaProtocol;
@@ -2693,15 +2758,10 @@
     const {
       MAX_FRAME, MODULE_CALIBRATION, MODULE_DISCOVERY, T_LIST_MODULES, PROTOCOL_ID, PROTOCOL_VERSION, TYPE, INPUT_MODE,
       buildFrame, FrameParser, readU32, parseErrorReply, parseDiscovery, selectCalibrationModule, decodeState, decodeDiagnostics,
-      encodeSetManualOffset, encodeSetDeadzoneOverride, encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled,
-<<<<<<< Updated upstream
+      encodeSetManualOffset, encodeSetDeadzoneOverride, encodeSetNudgeSettings, encodeSetInputMode, encodeSetNudgeEnabled, nudgeTimeError,
       encodeSetPositionStream, parseCalibrationProgress,
       nudgeControls,
-=======
-      encodeSetXacSide, encodeSetPositionStream, parseCalibrationProgress,
-      nudgeControls, xacSideControls,
       NUDGE_CAL_STATUS, decodeNudgeCalibration, nudgeCalibrationView, nudgeEnableAction, nudgeCalibrationControls,
->>>>>>> Stashed changes
       inspectImage, buildFlashPlan, buildRevertPlan, decideOutcome, CONFIRM_CHECKS, runConfirmCheck, confirmFailureNotice, describeSensorState,
       calibrationNotice, describeCalibrationState,
       revertAvailability, describePrevState, reconnectDeadline, reconnectWaitText, resumesOnReconnect,
@@ -2709,7 +2769,8 @@
       RECONNECT_WINDOW_MS, classifyFetchError, describeFeedFailure, describeDownloadFailure,
       describeUpdateError, formatProgress, formatBytes,
       FIRST_FLASH_URL, NO_USB_UPDATES_NOTE, usbUpdatesUnavailable, decideOutcomeNoUpdates,
-      DEFAULT_PROJECT, RELEASES_URL, feedUrlFor, parseReleaseFeed, summarizeAvailability,
+      DEFAULT_PROJECT, RELEASES_URL, feedUrlFor, shouldRegisterConsoleSw, parseReleaseFeed, summarizeAvailability,
+      SAVE_COPY_NAME, SAVE_COPY_TIMEOUT_MS, canSaveCopy, saveCopyUrl, looksLikeConsole, fetchBytesWithDeadline, describeSaveCopy,
       SIM_PATTERNS, encodeSimMessage, parseSimMessage, validateSimScript, createHidAccumulator,
     } = globalThis.OmegaProtocol;
     const DISCOVERY_TIMEOUT_MS = 800;
@@ -2718,15 +2779,10 @@
       0x53: "SET_NUDGE_SETTINGS", 0x54: "SET_INPUT_MODE", 0x55: "SAVE_TO_FLASH",
       0x56: "START_CALIBRATION", 0x57: "RESTART", 0x58: "OTA_BEGIN", 0x59: "OTA_DATA",
       0x5A: "OTA_FINISH", 0x5B: "OTA_ABORT", 0x5C: "GET_FW_INFO", 0x5D: "MARK_VALID", 0x5E: "REVERT",
-<<<<<<< Updated upstream
       0x5F: "GET_DIAGNOSTICS", 0x60: "SET_NUDGE_ENABLED", 0x61: "FINISH_CALIBRATION", 0x62: "SET_POSITION_STREAM",
-      0xD0: "STATE", 0xD1: "CALIBRATION_RESULT", 0xD2: "FW_INFO", 0xD3: "DIAGNOSTICS", 0xD4: "CALIBRATION_PROGRESS", 0xDF: "OK", 0xFE: "ERROR",
-=======
-      0x5F: "GET_DIAGNOSTICS", 0x60: "SET_NUDGE_ENABLED", 0x61: "FINISH_CALIBRATION", 0x62: "SET_POSITION_STREAM", 0x63: "SET_XAC_SIDE",
       0x64: "START_NUDGE_CALIBRATION", 0x65: "CANCEL_NUDGE_CALIBRATION",
       0xD0: "STATE", 0xD1: "CALIBRATION_RESULT", 0xD2: "FW_INFO", 0xD3: "DIAGNOSTICS", 0xD4: "CALIBRATION_PROGRESS",
       0xD5: "NUDGE_CALIBRATION", 0xDF: "OK", 0xFE: "ERROR",
->>>>>>> Stashed changes
     };
     const CMD_TIMEOUT_MS = 5000;
     const SAVE_TIMEOUT_MS = 8000; // flash write may take longer than a live-apply
@@ -2744,19 +2800,15 @@
                       "offsetX", "offsetY", "applyOffsetBtn", "zeroOffsetBtn",
                       "centerDzEnable", "centerDzValue", "rangeDzEnable", "rangeDzValue", "applyDeadzoneBtn",
                       "nudgeEnabled", "nudgeEnabledNote", "nudgeEnter", "nudgeExit", "nudgeTime", "applyNudgeBtn",
-<<<<<<< Updated upstream
-                      "modeMouseBtn", "modeXacBtn",
-=======
                       "nudgeCalBtn", "nudgeCalNote", "nudgeCalPanel", "nudgeCalPrompt", "nudgeCalProgress", "nudgeCalMeter",
                       "nudgeCalFeedback", "nudgeCalCancelBtn", "nudgeCalSkipBtn",
-                      "modeMouseBtn", "modeXacBtn", "xacRightBtn", "xacLeftBtn", "xacSideNote",
->>>>>>> Stashed changes
+                      "modeMouseBtn", "modeXacBtn",
                       "recalibrateBtn", "recalInfo", "calNeededNotice",
                       "calStageLine", "calProgress", "calSectorCount", "calCanvas", "calInstruction", "calDoneBtn", "calDoneMsg",
                       "diagRefreshBtn", "diagInfo", "resetList",
                       "fwRunning", "fwPending", "markValidBtn", "fwControls", "fwNoUpdates", "fwNoUpdatesText", "fwNoUpdatesLink",
                       "fwVersion", "fwBuild", "fwIdf", "fwRunPart", "fwBootPart", "fwSha", "fwCopyBtn", "fwPrevSlot", "fwPrevVersion", "fwPrevBuild", "fwPrevState", "fwRevertBtn", "fwFile", "flashBtn", "fwProgress", "restartBtn",
-                      "latestCheckBtn", "latestInstallBtn", "latestAuto", "latestResult", "latestNotes",
+                      "saveCopyBtn", "saveCopyNote", "saveCopyReleases", "latestCheckBtn", "latestInstallBtn", "latestAuto", "latestResult", "latestNotes",
                       "fwDrop", "fwFileInfo", "confirmPanel", "confirmTitle", "confirmBody", "confirmOkBtn", "confirmCancelBtn",
                       "updateStatus", "updateSteps", "updateMessage", "updateDetail", "updateError", "fwReconnectBtn",
                       "fwRestartNowBtn", "fwFlashNote", "fwRevertNote",
@@ -3593,9 +3645,8 @@
       if (!Number.isFinite(exit) || exit < 0 || exit > 1) {
         logLine("err", "Nudge exit threshold must be a number in [0, 1]."); return;
       }
-      if (!Number.isFinite(timeMs) || timeMs < 0) {
-        logLine("err", "Nudge time window must be a non-negative number of milliseconds."); return;
-      }
+      const timeErr = nudgeTimeError(timeMs);
+      if (timeErr) { logLine("err", timeErr); return; }
       const payload = encodeSetNudgeSettings(enter, exit, timeMs);
       busy = true; updateUI(); setStatus("busy", "Applying nudge settings...");
       try {
@@ -4698,6 +4749,12 @@
       finally { clearTimeout(timer); }
     }
 
+    // Offline copy of the console after the first visit (hosted page only; the
+    // service worker only ever handles this page, never firmware files).
+    if (shouldRegisterConsoleSw(location.href, "serviceWorker" in navigator)) {
+      navigator.serviceWorker.register("sw.js").catch((e) => console.warn("Offline copy not available:", e));
+    }
+
     async function checkLatest(auto) {
       if (latestBusy) return;
       latestBusy = true; updateUI();
@@ -4734,6 +4791,46 @@
       }
     }
     els.latestCheckBtn.addEventListener("click", () => checkLatest(false));
+    // Save a copy of this page: fetch the pristine source again (never the live
+    // DOM), check it is really the console, and download it through a Blob.
+    let saveCopyBusy = false;
+    async function saveCopy() {
+      if (saveCopyBusy) return;
+      saveCopyBusy = true; els.saveCopyBtn.disabled = true;
+      els.saveCopyNote.textContent = "Fetching the page...";
+      let kind = "started", status = 0;
+      try {
+        // One deadline covers the headers and the whole body, so a response
+        // that stalls ends in a message and a working button, not a stuck one.
+        const res = await fetchBytesWithDeadline(saveCopyUrl(location.href), SAVE_COPY_TIMEOUT_MS, {
+          fetch: (u, o) => fetch(u, o), AbortController,
+          setTimeout: (f, ms) => setTimeout(f, ms), clearTimeout: (t) => clearTimeout(t),
+        });
+        if (!res.ok) { kind = "http"; status = res.status; }
+        else if (!looksLikeConsole(new TextDecoder().decode(res.bytes))) kind = "notconsole";
+        else {
+          // The fetched bytes go into the file unchanged.
+          const url = URL.createObjectURL(new Blob([res.bytes], { type: "text/html" }));
+          const a = document.createElement("a");
+          a.href = url; a.download = SAVE_COPY_NAME;
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 10000);
+        }
+      } catch (e) {
+        kind = classifyFetchError(e, navigator.onLine);
+      } finally {
+        // Always leave a message and a working button, whatever happened.
+        els.saveCopyNote.textContent = describeSaveCopy(kind, status);
+        saveCopyBusy = false; els.saveCopyBtn.disabled = false;
+      }
+    }
+    if (canSaveCopy(location.href)) {
+      els.saveCopyBtn.addEventListener("click", saveCopy);
+    } else {
+      els.saveCopyBtn.hidden = true;
+      els.saveCopyNote.textContent = "This is a saved copy of the console, so it may not be the newest one. " +
+        "Get the newest from the releases page on GitHub.";
+    }
     function maybeAutoCheck() {
       if (!usbUpdates) return;
       renderLatest();

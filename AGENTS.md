@@ -123,7 +123,7 @@ components/omega_calibration/ calibration maths, sensor fault monitor, persisted
                               the firmware health check, and the browser console (web/, protocol code in omega_protocol.js)
 components/omega_control/     pure, host-tested control-loop logic (nudge clicks, drift, sensor faults, output hold, the
                               recalibration gate) for both modes
-site/                         GitHub Pages landing page and first-flash page (ESP Web Tools), published by package_main.yml
+site/                         GitHub Pages landing page, first-flash page (ESP Web Tools) and console service worker, published by package_main.yml
 scripts/                      release_feed.mjs: builds latest.json, manifest.json and SHA256SUMS for the Pages site
 tests/host/                   desktop unit tests against the real espp code (stubs only for the OTA headers)
 tests/web/, tests/protocol/   Node tests for the console, and the golden frames shared with the host tests
@@ -133,7 +133,7 @@ sim/                          omega_sim, the desktop simulator: src/, OTA stubs,
 cmake/omega_host.cmake        shared desktop build of espp and the local components, used by tests/host and sim
 docs/                         PRD, requirements, decisions, compliance, status, and research snapshots
 files/                        source directory for the littlefs image flashed with the app
-models/                       STL files for the printed parts
+models/                       STL files and Fusion 360 source for the printed parts (CERN-OHL-P-2.0, models/LICENSE)
 partitions.csv                two OTA app slots of 1920 KB, littlefs 2 MB (calibration and settings files), coredump 64 KB
 version.txt                   firmware MAJOR.MINOR.PATCH, see "Versioning" below
 sdkconfig.defaults            project-wide config; sdkconfig itself is gitignored
@@ -177,7 +177,11 @@ espp.
   bounded: `SET_DEADZONE_OVERRIDE` rejects a center value above
   `OmegaCalibration::MAX_CENTER_DEADZONE` (0.5) or a range value above
   `MAX_RANGE_DEADZONE` (0.1), `OmegaStore` ignores an out-of-range saved
-  override at load, and the console checks the same limits.
+  override at load, and the console checks the same limits. Likewise
+  `SET_NUDGE_SETTINGS` rejects a nudge time outside `MIN_NUDGE_TIME` to
+  `MAX_NUDGE_TIME` (10 to 1000 ms), and `DeviceSettings::load` takes the default
+  for any saved value outside the range its handler enforces (a saved nudge
+  time above the maximum is held at the maximum instead).
 - **Nudge calibration** (`START_NUDGE_CALIBRATION`) runs inside `mouse_tick`
   through a `NudgeCalibrationGate`, like recalibration: the `NudgeCalibrator`
   in `omega_control.hpp` records three nudges each way while the output is

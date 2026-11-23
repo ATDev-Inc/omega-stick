@@ -220,8 +220,6 @@ public:
     settings_.nudge_enabled = enabled;
   }
 
-<<<<<<< Updated upstream
-=======
   /// Applies the outcome of a successful nudge calibration live: the three
   /// tuning values, nudge_calibrated set, and nudge clicks turned on (the
   /// person just calibrated them to use them). No change-notification is
@@ -236,14 +234,6 @@ public:
     settings_.nudge_enabled = true;
   }
 
-  /// Selects the XAC joystick (right or left) live. No change-notification is
-  /// fired: the XAC loop reads settings() every iteration.
-  void set_xac_side(XacSide side) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    settings_.xac_side = side;
-  }
-
->>>>>>> Stashed changes
   /// Sets the input mode live and fires on_mode_changed() (outside the
   /// lock) so the application can act on it -- see ModeChangedFn. Setting
   /// the mode that is already active does nothing.
@@ -267,6 +257,11 @@ public:
   /// calibration file has still been updated (ec then describes the
   /// settings failure).
   bool save_to_flash(std::error_code &ec) {
+    // Held across the snapshot and both file writes, so two callers (the
+    // console worker and the control loop's drift save) cannot interleave on
+    // the same temporary files. Separate from mutex_ so the live setters are
+    // not blocked behind flash I/O.
+    std::lock_guard<std::mutex> save_lock(save_mutex_);
     const Snapshot snap = snapshot();
     if (!OmegaCalibration::save(snap.center, snap.range, calibration_path_, ec)) {
       logger_.error("save_to_flash: calibration save failed: {}", ec.message());
@@ -282,6 +277,7 @@ public:
 
 private:
   mutable std::mutex mutex_;
+  std::mutex save_mutex_;
   CenterResult center_{};
   RangeResult range_{};
   void drop_out_of_range_override(std::optional<float> &value, float max, const char *name) {

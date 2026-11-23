@@ -1,5 +1,6 @@
 // OmegaCalibration::save/load and DeviceSettings::save/load round-trips.
 
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -211,6 +212,75 @@ TEST(settings_partial_file_falls_back_to_defaults) {
   CHECK_EQ(out.nudge_hold_time.count(), 100);
 }
 
+// Every key is range-checked on load; a bad value takes that key's default and
+// leaves the others as loaded.
+TEST(settings_load_replaces_each_bad_value_with_its_default) {
+  const char *const bad_values[] = {"nan", "inf", "-inf", "-1", "99999", "1e30"};
+  const char *const keys[] = {"manual_center_deadzone",
+                              "manual_range_deadzone",
+                              "nudge_distance_threshold",
+                              "nudge_exit_threshold",
+                              "nudge_hold_time_ms",
+                              "nudge_enabled",
+                              "input_mode"};
+  TempDir dir("settings_bad");
+  const auto path = dir.file("omega_settings.cfg");
+  for (const char *bad_key : keys) {
+    for (const char *bad : bad_values) {
+      {
+        std::ofstream out(path);
+        out << "manual_center_deadzone=0.12\nmanual_range_deadzone=0.03\n"
+               "nudge_distance_threshold=0.4\nnudge_exit_threshold=0.7\n"
+               "nudge_hold_time_ms=250\nnudge_enabled=0\ninput_mode=1\n";
+        out << bad_key << "=" << bad << "\n"; // later line wins
+      }
+      OmegaCalibration::DeviceSettings s;
+      std::error_code ec;
+      CHECK(OmegaCalibration::DeviceSettings::load(s, path, ec));
+      const std::string k = bad_key;
+      const OmegaCalibration::DeviceSettings d{};
+      CHECK_EQ(s.manual_center_deadzone.has_value(), k != "manual_center_deadzone");
+      CHECK_EQ(s.manual_range_deadzone.has_value(), k != "manual_range_deadzone");
+      CHECK_NEAR(s.nudge_distance_threshold,
+                 k == "nudge_distance_threshold" ? d.nudge_distance_threshold : 0.4f, 1e-6);
+      CHECK_NEAR(s.nudge_exit_threshold,
+                 k == "nudge_exit_threshold" ? d.nudge_exit_threshold : 0.7f, 1e-6);
+      // A nudge time that is too long is held at the maximum, not defaulted.
+      const std::string b = bad;
+      const int bad_hold = (b == "99999" || b == "1e30") ? 1000 : 100;
+      CHECK_EQ(s.nudge_hold_time.count(), k == "nudge_hold_time_ms" ? bad_hold : 250);
+      CHECK_EQ(s.nudge_enabled, k == "nudge_enabled" ? d.nudge_enabled : false);
+      CHECK(s.input_mode == (k == "input_mode" ? d.input_mode : OmegaCalibration::InputMode::XAC));
+    }
+  }
+}
+
+TEST(settings_load_rejects_undefined_modes_and_out_of_range_times) {
+  TempDir dir("settings_bad2");
+  const auto path = dir.file("omega_settings.cfg");
+  auto load = [&](const char *text) {
+    { std::ofstream(path) << text; }
+    OmegaCalibration::DeviceSettings s;
+    s.input_mode = OmegaCalibration::InputMode::XAC;
+    std::error_code ec;
+    CHECK(OmegaCalibration::DeviceSettings::load(s, path, ec));
+    return s;
+  };
+  CHECK(load("input_mode=7\n").input_mode == OmegaCalibration::InputMode::MOUSE);
+  CHECK(load("input_mode=0.5\n").input_mode == OmegaCalibration::InputMode::MOUSE);
+  CHECK_EQ(load("nudge_hold_time_ms=0\n").nudge_hold_time.count(), 100);
+  CHECK_EQ(load("nudge_hold_time_ms=9\n").nudge_hold_time.count(), 100);
+  CHECK_EQ(load("nudge_hold_time_ms=10\n").nudge_hold_time.count(), 10);
+  CHECK_EQ(load("nudge_hold_time_ms=1000\n").nudge_hold_time.count(), 1000);
+  // Earlier consoles accepted up to 2000 ms: such a value is held at the
+  // maximum, the closest allowed setting.
+  CHECK_EQ(load("nudge_hold_time_ms=1001\n").nudge_hold_time.count(), 1000);
+  CHECK_EQ(load("nudge_hold_time_ms=2000\n").nudge_hold_time.count(), 1000);
+  CHECK_EQ(load("nudge_hold_time_ms=-5\n").nudge_hold_time.count(), 100);
+  CHECK_NEAR(load("nudge_distance_threshold=0\n").nudge_distance_threshold, 0.5f, 1e-6);
+  CHECK(!load("nudge_enabled=2\n").nudge_enabled);
+}
+
 TEST(effective_values_prefer_manual_overrides) {
   const auto center = support::sample_center();
   const auto range = support::sample_range();
@@ -378,3 +448,98 @@ TEST(store_falls_back_to_defaults_on_newer_schema) {
   CHECK_EQ(store.settings().nudge_hold_time.count(), 100);
   CHECK_NEAR(store.center().center_x, OmegaCalibration::CenterResult{}.center_x, 1e-9);
 }
+
+namespace {
+std::string slurp(const std::filesystem::path &path) {
+  std::ifstream in(path);
+  return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+} // namespace
+
+TEST(failed_write_leaves_previous_file_and_no_temp) {
+  TempDir dir("atomic_write_fail");
+  const auto path = dir.file("omega_settings.cfg");
+  std::error_code ec;
+  OmegaCalibration::DeviceSettings settings;
+  settings.input_mode = OmegaCalibration::InputMode::XAC;
+  CHECK(OmegaCalibration::DeviceSettings::save(settings, path, ec));
+  const std::string before = slurp(path);
+  CHECK(!before.empty());
+
+  // A writer that fails partway, as a full filesystem would.
+  CHECK(!OmegaCalibration::write_file_atomically(path, ec, [](std::ostream &out) {
+    out << "schema=1\npartial";
+    out.setstate(std::ios::badbit);
+  }));
+  CHECK(support::is_error(ec, OmegaCalibration::Error::file_write_failed));
+  CHECK_EQ(slurp(path), before);
+  CHECK(!std::filesystem::exists(path.string() + ".tmp"));
+}
+
+TEST(failed_rename_leaves_no_temp_and_reports_error) {
+  TempDir dir("atomic_rename_fail");
+  // The destination is a non-empty directory, so the rename cannot succeed.
+  const auto path = dir.file("omega_calibration.cfg");
+  std::filesystem::create_directories(path);
+  { std::ofstream(path / "keep") << "x"; }
+  std::error_code ec;
+
+  CHECK(!OmegaCalibration::save(support::sample_center(), support::sample_range(), path, ec));
+  CHECK(static_cast<bool>(ec));
+  CHECK(std::filesystem::exists(path / "keep"));
+  CHECK(!std::filesystem::exists(path.string() + ".tmp"));
+}
+
+TEST(unopenable_temp_leaves_previous_file_intact) {
+  TempDir dir("atomic_open_fail");
+  const auto path = dir.file("omega_calibration.cfg");
+  std::error_code ec;
+  CHECK(OmegaCalibration::save(support::sample_center(), support::sample_range(), path, ec));
+  const std::string before = slurp(path);
+
+  // A directory squatting on the temp name makes the temp file unopenable.
+  std::filesystem::create_directories(path.string() + ".tmp");
+  CHECK(!OmegaCalibration::save(support::sample_center(), support::sample_range(), path, ec));
+  CHECK(support::is_error(ec, OmegaCalibration::Error::file_open_failed));
+  CHECK_EQ(slurp(path), before);
+}
+
+TEST(save_replaces_existing_file_and_leaves_no_temp) {
+  TempDir dir("atomic_replace");
+  const auto path = dir.file("omega_settings.cfg");
+  std::error_code ec;
+  OmegaCalibration::DeviceSettings first;
+  first.nudge_enabled = false;
+  CHECK(OmegaCalibration::DeviceSettings::save(first, path, ec));
+  OmegaCalibration::DeviceSettings second;
+  second.nudge_enabled = true;
+  second.input_mode = OmegaCalibration::InputMode::XAC;
+  CHECK(OmegaCalibration::DeviceSettings::save(second, path, ec));
+  CHECK(!std::filesystem::exists(path.string() + ".tmp"));
+
+  OmegaCalibration::DeviceSettings loaded;
+  CHECK(OmegaCalibration::DeviceSettings::load(loaded, path, ec));
+  CHECK(loaded.nudge_enabled);
+  CHECK(loaded.input_mode == OmegaCalibration::InputMode::XAC);
+}
+
+#ifndef _WIN32
+// Windows refuses to delete a file that is still open, so the temp file cannot
+// be made to vanish mid-write there; the logic is the same on every platform.
+TEST(missing_temp_never_deletes_the_destination) {
+  TempDir dir("atomic_temp_gone");
+  const auto path = dir.file("omega_settings.cfg");
+  std::error_code ec;
+  OmegaCalibration::DeviceSettings settings;
+  CHECK(OmegaCalibration::DeviceSettings::save(settings, path, ec));
+  const std::string before = slurp(path);
+
+  // Another writer committed (and so consumed) the shared temp file.
+  CHECK(!OmegaCalibration::write_file_atomically(path, ec, [&](std::ostream &out) {
+    out << "schema=1\n";
+    std::filesystem::remove(path.string() + ".tmp");
+  }));
+  CHECK(static_cast<bool>(ec));
+  CHECK_EQ(slurp(path), before);
+}
+#endif

@@ -11,6 +11,18 @@ what each part of the number means and how a release is cut.
 
 ### Added
 
+- **The hosted console works offline after the first visit.** Once you have
+  opened <https://atdev-inc.github.io/omega-stick/console/> with internet, the
+  page opens again with no internet, so you can still connect the stick and
+  recalibrate it. While online you always get the current page, and checking
+  for or installing a firmware update still needs internet. It takes effect
+  with the next full release, because the Pages site is only deployed then.
+  ([#121](https://github.com/ATDev-Inc/omega-stick/pull/121))
+- **Editable CAD source for the printed parts.** The Fusion 360 project
+  (`models/omega_stick.f3d`) is now published next to the STL files, and the
+  models and CAD source are licensed under CERN-OHL-P-2.0, so you can change
+  the parts and print your own versions.
+  ([#111](https://github.com/ATDev-Inc/omega-stick/pull/111))
 - **Calibration you can watch.** The console's Recalibration section now shows
   a live picture of the stick while a calibration runs: a dot for the sensor
   reading, the measured center and its noise circle, and a ring of 32
@@ -40,6 +52,14 @@ what each part of the number means and how a release is cut.
   the button still down, so you can highlight text or drag things in any
   direction. Easing the stick back towards center lets go. A quick push and
   release is still a plain click that does not move the cursor.
+- **Keep your own copy of the console.** The console has a new "Save a copy of
+  this page" button that downloads it as `omega_stick_console.html`, a single
+  file that opens from your computer with no internet and connects to the
+  stick the same way. It is not updated automatically, so the releases page is
+  the place for a newer one. Each GitHub release now also carries the console
+  as an `omega_stick_console.html` download, starting with the next full
+  release, so it no longer depends on the project website or on the browser.
+  ([#123](https://github.com/ATDev-Inc/omega-stick/pull/123))
 
 ### Changed
 
@@ -52,9 +72,21 @@ what each part of the number means and how a release is cut.
   set the enter threshold close to your own push (about 0.75 for a full one)
   so ordinary cursor movement is less likely to click. Hand-tuned values keep
   their meaning, but now respond to every push of that size.
+- **The joystick cap now screws on.** The cap could shift and fall off the
+  joystick while in use. The joystick and topper models now have a screw
+  thread; print both new parts together to get it. The holders and sockets
+  were also re-centered and adjusted for fit. Closes #113.
+  ([#116](https://github.com/ATDev-Inc/omega-stick/pull/116),
+  [#111](https://github.com/ATDev-Inc/omega-stick/pull/111))
 
 ### Fixed
 
+- **Chrome's "go to page" prompt now opens this project's console.** When the
+  stick was plugged in, Chrome offered espp's generic board console, whose
+  calibration link went to a page that does not exist on espp's site. The
+  stick now points Chrome straight at
+  https://atdev-inc.github.io/omega-stick/console/.
+  [#119](https://github.com/ATDev-Inc/omega-stick/pull/119).
 - **The sensor now averages the 32 samples it was asked for.** The TMAG5273
   driver wrote the averaging setting to the wrong bits of its configuration
   register, so the chip ran 16x averaging with a temperature-compensation mode
@@ -64,6 +96,34 @@ what each part of the number means and how a release is cut.
 - **The console frame log no longer dumps whole firmware chunks.** Two helpers
   named `hex` clashed, so with "Log frames" ticked every firmware update chunk
   was written in full into the log. Frames are shortened again. [#95](https://github.com/ATDev-Inc/omega-stick/pull/95).
+- **The downloadable programmers bundle the esptool the firmware was built
+  with.** They carried esptool 4.7.0, which does not understand the flash
+  arguments ESP-IDF 6 writes, so the Windows, macOS and Linux programmers
+  attached to a release could fail to flash. They now package esptool 5, read
+  from the build.
+- **Calibration and settings saves can no longer be cut short.** A power loss or USB unplug during a save used to be able to leave an empty or partial file, losing the calibration or the input mode and nudge settings. Both files are now written to a temporary file and renamed into place, so the previous file survives an interrupted save. Fixes #75 ([#97](https://github.com/ATDev-Inc/omega-stick/pull/97)).
+- **Idle drift correction no longer undoes a manual center trim.** The stick
+  rests at the measured center plus the trim, but drift correction blended the
+  measured center toward the raw reading, so a stick left idle slowly absorbed
+  the trim and the cursor creep it cancelled came back. It now blends toward
+  the raw reading less the trim, so the trim is kept. This changes input
+  behaviour and needs a hardware check.
+  ([#96](https://github.com/ATDev-Inc/omega-stick/pull/96))
+- **The nudge time is now limited to 10 to 1000 ms.** The console and the
+  device accepted any value: 0 let a single noisy reading fire a nudge click,
+  and a huge value silently turned nudging off. Both now refuse a time outside
+  that range, and the console says so. A stick that already has a longer time
+  saved (the console used to allow up to 2000 ms) now uses 1000 ms, and one
+  with a time under 10 ms saved uses the default, 100 ms. Either changes how
+  nudges feel on that stick, so this needs a hardware check. Closes #79.
+  ([#130](https://github.com/ATDev-Inc/omega-stick/pull/130))
+- **A damaged settings file can no longer set nonsense values.** Loading
+  `omega_settings.cfg` accepted `nan`, infinity, negative and out of range
+  numbers, and an `input_mode` that is neither mouse nor XAC. Each value is now
+  checked against the same range the console enforces, and a bad one falls back
+  to its default while the other settings are kept. A bad `nudge_enabled`
+  loads as off. Needs a hardware check. Closes #78.
+  ([#130](https://github.com/ATDev-Inc/omega-stick/pull/130))
 
 ## [0.1.1] - 2026-10-26
 

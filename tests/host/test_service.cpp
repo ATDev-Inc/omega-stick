@@ -93,11 +93,7 @@ TEST(service_get_state_encodes_snapshot) {
   CHECK_EQ(stream::get_u32(std::span<const uint8_t>(p).subspan(74)), 120u);
   CHECK_EQ(p[78], 1); // XAC
   CHECK_EQ(p[79], 0); // nudge clicks off (the default)
-<<<<<<< Updated upstream
-=======
-  CHECK_EQ(p[80], 0); // right XAC joystick (the default)
-  CHECK_EQ(p[81], 0); // nudge settings not calibrated (the default)
->>>>>>> Stashed changes
+  CHECK_EQ(p[80], 0); // nudge settings not calibrated (the default)
 }
 
 TEST(service_state_reports_nudge_enabled_as_the_last_byte) {
@@ -105,11 +101,7 @@ TEST(service_state_reports_nudge_enabled_as_the_last_byte) {
   fx.store.set_nudge_enabled(false);
   auto reply = fx.request(Msg::GetState);
   CHECK(is(reply, Msg::State));
-<<<<<<< Updated upstream
-  CHECK_EQ(reply.payload.size(), size_t{80});
-=======
-  CHECK_EQ(reply.payload.size(), size_t{82});
->>>>>>> Stashed changes
+  CHECK_EQ(reply.payload.size(), size_t{81});
   CHECK_EQ(reply.payload[79], 0);
 
   fx.store.set_nudge_enabled(true);
@@ -146,47 +138,6 @@ TEST(service_set_nudge_enabled_rejects_other_values_and_lengths) {
   CHECK(!fx.store.settings().nudge_enabled);
 }
 
-<<<<<<< Updated upstream
-=======
-TEST(service_state_reports_xac_side_at_offset_80) {
-  Fixture fx("svc_state_xac_side");
-  auto reply = fx.request(Msg::GetState);
-  CHECK(is(reply, Msg::State));
-  CHECK_EQ(reply.payload.size(), size_t{82});
-  CHECK_EQ(reply.payload[80], 0); // right by default
-
-  fx.store.set_xac_side(OmegaStore::XacSide::LEFT);
-  reply = fx.request(Msg::GetState);
-  CHECK_EQ(reply.payload[80], 1);
-}
-
-TEST(service_set_xac_side_switches_the_joystick_live) {
-  int mode_changes = 0;
-  Fixture fx("svc_xac_side", {.on_mode_changed = [&](OmegaStore::InputMode) { ++mode_changes; }});
-
-  auto reply = fx.request(Msg::SetXacSide, {1});
-  CHECK(is(reply, Msg::Ok));
-  CHECK_EQ(stream::get_u32(reply.payload), 0u);
-  CHECK(fx.store.settings().xac_side == OmegaStore::XacSide::LEFT);
-
-  CHECK(is(fx.request(Msg::SetXacSide, {0}), Msg::Ok));
-  CHECK(fx.store.settings().xac_side == OmegaStore::XacSide::RIGHT);
-  // Applied live: no restart through the mode-change path.
-  CHECK_EQ(mode_changes, 0);
-}
-
-TEST(service_set_xac_side_rejects_other_values_and_lengths) {
-  Fixture fx("svc_xac_side_bad");
-  for (const auto &payload : std::vector<std::vector<uint8_t>>{{}, {2}, {0xFF}, {0, 0}, {1, 1}}) {
-    const auto reply = fx.request(Msg::SetXacSide, payload);
-    CHECK(is(reply, Msg::Error));
-    CHECK_EQ(stream::get_u32(reply.payload), static_cast<uint32_t>(std::errc::invalid_argument));
-    CHECK(support::error_message(reply).find("SET_XAC_SIDE") != std::string::npos);
-  }
-  CHECK(fx.store.settings().xac_side == OmegaStore::XacSide::RIGHT);
-}
-
->>>>>>> Stashed changes
 TEST(service_set_manual_offset_updates_store_and_replies_ok) {
   int changed = 0;
   Fixture fx("svc_offset", {.on_calibration_changed = [&]() { ++changed; }});
@@ -306,6 +257,26 @@ TEST(service_set_nudge_settings_validates_ranges) {
   CHECK_NEAR(s.nudge_distance_threshold, 0.35f, 1e-6);
   CHECK_NEAR(s.nudge_exit_threshold, 0.65f, 1e-6);
   CHECK_EQ(s.nudge_hold_time.count(), 150);
+}
+
+TEST(service_set_nudge_settings_bounds_the_time) {
+  Fixture fx("svc_nudge_time");
+  auto build = [](uint32_t ms) {
+    std::vector<uint8_t> p;
+    support::put_f32(p, 0.35f);
+    support::put_f32(p, 0.65f);
+    stream::put_u32(p, ms);
+    return p;
+  };
+  CHECK(is(fx.request(Msg::SetNudgeSettings, build(150)), Msg::Ok));
+  for (const uint32_t bad : {0u, 9u, 1001u, 0xFFFFFFFFu}) {
+    CHECK(is(fx.request(Msg::SetNudgeSettings, build(bad)), Msg::Error));
+    CHECK_EQ(fx.store.settings().nudge_hold_time.count(), 150); // untouched
+  }
+  CHECK(is(fx.request(Msg::SetNudgeSettings, build(10)), Msg::Ok));
+  CHECK_EQ(fx.store.settings().nudge_hold_time.count(), 10);
+  CHECK(is(fx.request(Msg::SetNudgeSettings, build(1000)), Msg::Ok));
+  CHECK_EQ(fx.store.settings().nudge_hold_time.count(), 1000);
 }
 
 TEST(service_set_input_mode_switches_store_and_notifies) {
@@ -1669,16 +1640,16 @@ TEST(service_nudge_calibration_running_reports_go_quietly_final_ones_through_sen
   CHECK_EQ(frame->payload[0], 3);
 }
 
-TEST(service_state_reports_nudge_calibrated_at_offset_81) {
+TEST(service_state_reports_nudge_calibrated_at_offset_80) {
   Fixture fx("svc_state_nudge_cal");
   auto reply = fx.request(Msg::GetState);
-  CHECK_EQ(reply.payload.size(), size_t{82});
-  CHECK_EQ(reply.payload[81], 0);
+  CHECK_EQ(reply.payload.size(), size_t{81});
+  CHECK_EQ(reply.payload[80], 0);
   CHECK_EQ(reply.payload[79], 0);
 
   fx.store.set_nudge_calibration(0.3f, 0.35f, std::chrono::milliseconds(70));
   reply = fx.request(Msg::GetState);
-  CHECK_EQ(reply.payload[81], 1);
+  CHECK_EQ(reply.payload[80], 1);
   CHECK_EQ(reply.payload[79], 1); // a calibration turns nudge clicks on
   CHECK_NEAR(support::get_f32(reply.payload, 66), 0.3f, 1e-6);
   CHECK_NEAR(support::get_f32(reply.payload, 70), 0.35f, 1e-6);
