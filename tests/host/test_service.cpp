@@ -93,6 +93,7 @@ TEST(service_get_state_encodes_snapshot) {
   CHECK_EQ(stream::get_u32(std::span<const uint8_t>(p).subspan(74)), 120u);
   CHECK_EQ(p[78], 1); // XAC
   CHECK_EQ(p[79], 0); // nudge clicks off (the default)
+  CHECK_EQ(p[80], 0); // nudge settings not calibrated (the default)
 }
 
 TEST(service_state_reports_nudge_enabled_as_the_last_byte) {
@@ -100,7 +101,7 @@ TEST(service_state_reports_nudge_enabled_as_the_last_byte) {
   fx.store.set_nudge_enabled(false);
   auto reply = fx.request(Msg::GetState);
   CHECK(is(reply, Msg::State));
-  CHECK_EQ(reply.payload.size(), size_t{80});
+  CHECK_EQ(reply.payload.size(), size_t{81});
   CHECK_EQ(reply.payload[79], 0);
 
   fx.store.set_nudge_enabled(true);
@@ -1477,4 +1478,180 @@ TEST(service_position_lease_is_per_service) {
   CHECK(!cdc.notify_position(live));
   CHECK(!vendor_sent.empty());
   CHECK(cdc_sent.empty());
+}
+
+// ---- nudge calibration ------------------------------------------------------
+
+namespace {
+
+/// A service wired to a real NudgeCalibrationGate-like pair of hooks.
+struct NudgeFixture {
+  TempDir dir{"svc_nudge_cal"};
+  OmegaStore store{{.calibration_path = dir.file("c.cfg"), .settings_path = dir.file("s.cfg")}};
+  std::vector<uint8_t> sent;
+  std::vector<uint8_t> unsolicited;
+  bool busy{false};
+  int starts{0};
+  int cancels{0};
+  CalibrationService svc{{.store = store,
+                          .send =
+                              [this](std::span<const uint8_t> f) {
+                                sent.insert(sent.end(), f.begin(), f.end());
+                                return true;
+                              },
+                          .send_unsolicited =
+                              [this](std::span<const uint8_t> f) {
+                                unsolicited.insert(unsolicited.end(), f.begin(), f.end());
+                                return true;
+                              },
+                          .start_nudge_calibration =
+                              [this](std::error_code &ec) {
+                                ++starts;
+                                if (busy) {
+                                  ec = std::make_error_code(std::errc::device_or_resource_busy);
+                                  return false;
+                                }
+                                busy = true;
+                                return true;
+                              },
+                          .cancel_nudge_calibration =
+                              [this] {
+                                ++cancels;
+                                const bool was = busy;
+                                busy = false;
+                                return was;
+                              }}};
+
+  stream::Frame request(Msg type, std::vector<uint8_t> payload = {}) {
+    sent.clear();
+    CHECK(svc.handle_frame(static_cast<uint8_t>(type), payload));
+    auto reply = support::decode_one(sent);
+    CHECK(reply.has_value());
+    return *reply;
+  }
+};
+
+uint32_t error_code_of(const stream::Frame &f) { return stream::get_u32(f.payload); }
+
+} // namespace
+
+TEST(service_start_nudge_calibration_is_accepted_once_then_busy) {
+  NudgeFixture fx;
+  auto reply = fx.request(Msg::StartNudgeCalibration);
+  CHECK(is(reply, Msg::Ok));
+  CHECK_EQ(stream::get_u32(reply.payload), 0u);
+  CHECK_EQ(fx.starts, 1);
+
+  reply = fx.request(Msg::StartNudgeCalibration);
+  CHECK(is(reply, Msg::Error));
+  CHECK_EQ(error_code_of(reply), static_cast<uint32_t>(std::errc::device_or_resource_busy));
+  CHECK(support::error_message(reply).find("START_NUDGE_CALIBRATION") != std::string::npos);
+}
+
+TEST(service_start_nudge_calibration_is_refused_in_xac_mode_without_asking_the_loop) {
+  NudgeFixture fx;
+  fx.store.set_input_mode(OmegaStore::InputMode::XAC);
+  const auto reply = fx.request(Msg::StartNudgeCalibration);
+  CHECK(is(reply, Msg::Error));
+  CHECK_EQ(error_code_of(reply), static_cast<uint32_t>(std::errc::operation_not_permitted));
+  CHECK(support::error_message(reply).find("mouse mode") != std::string::npos);
+  CHECK_EQ(fx.starts, 0);
+}
+
+TEST(service_nudge_calibration_messages_reject_a_payload_and_need_their_hooks) {
+  NudgeFixture fx;
+  for (const Msg m : {Msg::StartNudgeCalibration, Msg::CancelNudgeCalibration}) {
+    const auto reply = fx.request(m, {0});
+    CHECK(is(reply, Msg::Error));
+    CHECK_EQ(error_code_of(reply), static_cast<uint32_t>(std::errc::invalid_argument));
+  }
+  CHECK_EQ(fx.starts, 0);
+  CHECK_EQ(fx.cancels, 0);
+
+  Fixture bare("svc_nudge_cal_nohook");
+  for (const Msg m : {Msg::StartNudgeCalibration, Msg::CancelNudgeCalibration}) {
+    const auto reply = bare.request(m);
+    CHECK(is(reply, Msg::Error));
+    CHECK_EQ(error_code_of(reply), static_cast<uint32_t>(std::errc::function_not_supported));
+  }
+}
+
+TEST(service_cancel_nudge_calibration_reports_whether_one_was_running) {
+  NudgeFixture fx;
+  auto reply = fx.request(Msg::CancelNudgeCalibration);
+  CHECK(is(reply, Msg::Ok));
+  CHECK_EQ(stream::get_u32(reply.payload), 0u);
+
+  CHECK(is(fx.request(Msg::StartNudgeCalibration), Msg::Ok));
+  reply = fx.request(Msg::CancelNudgeCalibration);
+  CHECK(is(reply, Msg::Ok));
+  CHECK_EQ(stream::get_u32(reply.payload), 1u);
+  CHECK_EQ(fx.cancels, 2);
+}
+
+TEST(service_nudge_calibration_payload_layout) {
+  CalibrationService::NudgeCalibrationReport r;
+  r.status = CalibrationService::NudgeCalibrationReport::Status::SUCCEEDED;
+  r.accepted = 12;
+  r.total = 12;
+  r.expected_direction = 0;
+  r.last_attempt = CalibrationService::NudgeCalibrationReport::Attempt::ACCEPTED;
+  r.last_direction = 1;
+  r.ready = true;
+  r.magnitude = 0.25f;
+  r.enter_threshold = 0.35f;
+  r.exit_threshold = 0.4f;
+  r.hold_time_ms = 80;
+  r.message = "hi";
+  const auto p = CalibrationService::build_nudge_calibration_payload(r);
+  CHECK_EQ(p.size(), CalibrationService::kNudgeCalibrationFixedSize + 2);
+  CHECK_EQ(p[0], 1);
+  CHECK_EQ(p[1], 12);
+  CHECK_EQ(p[2], 12);
+  CHECK_EQ(p[3], 0);
+  CHECK_EQ(p[4], 1);
+  CHECK_EQ(p[5], 1);
+  CHECK_EQ(p[6], 0x01);
+  CHECK_NEAR(support::get_f32(p, 7), 0.25f, 1e-6);
+  CHECK_NEAR(support::get_f32(p, 11), 0.35f, 1e-6);
+  CHECK_NEAR(support::get_f32(p, 15), 0.4f, 1e-6);
+  CHECK_EQ(stream::get_u32(std::span<const uint8_t>(p).subspan(19)), 80u);
+  CHECK_EQ(std::string(p.begin() + 23, p.end()), std::string("hi"));
+}
+
+TEST(service_nudge_calibration_running_reports_go_quietly_final_ones_through_send) {
+  NudgeFixture fx;
+  CalibrationService::NudgeCalibrationReport r;
+  r.total = 12;
+  fx.svc.notify_nudge_calibration(r); // RUNNING
+  CHECK(fx.sent.empty());
+  auto frame = support::decode_one(fx.unsolicited);
+  CHECK(frame.has_value());
+  CHECK(frame->is_reply());
+  CHECK_EQ(frame->type, static_cast<uint8_t>(Msg::NudgeCalibration));
+
+  fx.unsolicited.clear();
+  r.status = CalibrationService::NudgeCalibrationReport::Status::CANCELLED;
+  r.message = "stopped";
+  fx.svc.notify_nudge_calibration(r);
+  CHECK(fx.unsolicited.empty());
+  frame = support::decode_one(fx.sent);
+  CHECK(frame.has_value());
+  CHECK_EQ(frame->payload[0], 3);
+}
+
+TEST(service_state_reports_nudge_calibrated_at_offset_80) {
+  Fixture fx("svc_state_nudge_cal");
+  auto reply = fx.request(Msg::GetState);
+  CHECK_EQ(reply.payload.size(), size_t{81});
+  CHECK_EQ(reply.payload[80], 0);
+  CHECK_EQ(reply.payload[79], 0);
+
+  fx.store.set_nudge_calibration(0.3f, 0.35f, std::chrono::milliseconds(70));
+  reply = fx.request(Msg::GetState);
+  CHECK_EQ(reply.payload[80], 1);
+  CHECK_EQ(reply.payload[79], 1); // a calibration turns nudge clicks on
+  CHECK_NEAR(support::get_f32(reply.payload, 66), 0.3f, 1e-6);
+  CHECK_NEAR(support::get_f32(reply.payload, 70), 0.35f, 1e-6);
+  CHECK_EQ(stream::get_u32(std::span<const uint8_t>(reply.payload).subspan(74)), 70u);
 }

@@ -120,12 +120,15 @@ struct EspPorts : espp::omega_control::Ports {
   std::atomic<bool> &needs_calibration;   ///< D26 hold; a successful sweep clears it
   /// The sweep opens its FINISH_CALIBRATION window here and polls it.
   espp::omega_control::RecalibrationGate &recalibration_gate;
+  /// Freed on a nudge calibration's final report.
+  espp::omega_control::NudgeCalibrationGate &nudge_calibration_gate;
 
   EspPorts(espp::TMAG5273 &tmag_, espp::OmegaStore &store_, espp::Joystick &js_,
            espp::UsbDevice &usb_, espp::CalibrationService &vendor_, espp::CalibrationService &cdc_,
            const bool &sensor_read_ok_, const uint8_t &sensor_conversion_count_,
            SensorFaultStatus &sensor_status_, std::atomic<bool> &needs_calibration_,
-           espp::omega_control::RecalibrationGate &recalibration_gate_)
+           espp::omega_control::RecalibrationGate &recalibration_gate_,
+           espp::omega_control::NudgeCalibrationGate &nudge_calibration_gate_)
       : tmag(tmag_)
       , store(store_)
       , js(js_)
@@ -136,7 +139,8 @@ struct EspPorts : espp::omega_control::Ports {
       , sensor_conversion_count(sensor_conversion_count_)
       , sensor_status(sensor_status_)
       , needs_calibration(needs_calibration_)
-      , recalibration_gate(recalibration_gate_) {}
+      , recalibration_gate(recalibration_gate_)
+      , nudge_calibration_gate(nudge_calibration_gate_) {}
 
   void send_mouse(const espp::omega_control::MouseReport &r) override {
     espp::MouseInputReport<0, 3, true> mouse;
@@ -271,6 +275,32 @@ struct EspPorts : espp::omega_control::Ports {
   }
 
   void sensor_observed_healthy() override { sensor_status.observed_healthy(); }
+
+  // A successful nudge calibration is applied and saved before the console
+  // hears of it, so the STATE it reads back already has the new settings.
+  void
+  nudge_calibration_report(const espp::OmegaCalibration::NudgeCalibrationReport &report) override {
+    using Status = espp::OmegaCalibration::NudgeCalibrationReport::Status;
+    if (report.status == Status::SUCCEEDED) {
+      store.set_nudge_calibration(report.enter_threshold, report.exit_threshold,
+                                  std::chrono::milliseconds(report.hold_time_ms));
+      printf("Nudge calibration: enter %.3f, exit %.3f, window %u ms; nudge clicks on\n",
+             report.enter_threshold, report.exit_threshold,
+             static_cast<unsigned>(report.hold_time_ms));
+      std::error_code save_ec;
+      if (!store.save_to_flash(save_ec)) {
+        printf("WARNING: nudge calibration applied but saving to flash failed: %s\n",
+               save_ec.message().c_str());
+      }
+    } else if (report.status != Status::RUNNING) {
+      printf("Nudge calibration ended: %s\n", report.message.c_str());
+    }
+    calibration_vendor.notify_nudge_calibration(report);
+    calibration_cdc.notify_nudge_calibration(report);
+    if (report.status != Status::RUNNING) {
+      nudge_calibration_gate.finish();
+    }
+  }
 
   espp::omega_control::Clock::time_point now() override {
     return espp::omega_control::Clock::now();
@@ -774,6 +804,12 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
   // mid-sweep is refused rather than queued.
   espp::omega_control::RecalibrationGate recalibration_gate;
 
+  // START/CANCEL_NUDGE_CALIBRATION take the same route: the service only
+  // raises a flag, and the polling loop hands it to mouse_tick, which runs the
+  // calibration on this task between its sensor reads. Busy until the final
+  // report, so a second start is refused.
+  espp::omega_control::NudgeCalibrationGate nudge_calibration_gate;
+
   // D22 rule 1: raised by CalibrationService (Config::output_hold) from an
   // accepted OTA_BEGIN, and before any console-initiated reboot; lowered when
   // an upload ends without one. Written on the dispatcher tasks, read once per
@@ -928,6 +964,12 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
             },
         .finish_calibration =
             [&recalibration_gate]() { return recalibration_gate.request_finish(); },
+        .start_nudge_calibration =
+            [&nudge_calibration_gate](std::error_code &start_ec) {
+              return nudge_calibration_gate.request_start(start_ec);
+            },
+        .cancel_nudge_calibration =
+            [&nudge_calibration_gate]() { return nudge_calibration_gate.request_cancel(); },
         .restart = []() { esp_restart(); },
         .ota = ota_engine,
         .diagnostics = make_diagnostics,
@@ -1011,7 +1053,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     // Nudge-click state, drift compensation and the recalibration hand-off
     // live in omega_control (see components/omega_control).
     EspPorts ports(tmag, store, js, usb, calibration_vendor, calibration_cdc, sensor_read_ok,
-                   sensor_conversion_count, sensor_status, needs_calibration, recalibration_gate);
+                   sensor_conversion_count, sensor_status, needs_calibration, recalibration_gate,
+                   nudge_calibration_gate);
     espp::omega_control::MouseState state;
     state.common.center = center;
     state.common.range = range;
@@ -1042,7 +1085,9 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
                   .recalibration_requested = recal,
                   .output_hold = hold,
                   .needs_calibration = needs_calibration.load(),
-                  .settings = store.settings()},
+                  .settings = store.settings(),
+                  .nudge_calibration_start = nudge_calibration_gate.take_start(),
+                  .nudge_calibration_cancel = nudge_calibration_gate.take_cancel()},
                  ports);
       if (recal) {
         recalibration_gate.finish(); // the sweep ran inside the tick; accept new requests
@@ -1132,6 +1177,12 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
             },
         .finish_calibration =
             [&recalibration_gate]() { return recalibration_gate.request_finish(); },
+        .start_nudge_calibration =
+            [&nudge_calibration_gate](std::error_code &start_ec) {
+              return nudge_calibration_gate.request_start(start_ec);
+            },
+        .cancel_nudge_calibration =
+            [&nudge_calibration_gate]() { return nudge_calibration_gate.request_cancel(); },
         .restart = []() { esp_restart(); },
         .ota = ota_engine,
         .diagnostics = make_diagnostics,
@@ -1227,7 +1278,8 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     // ------------------------------------------------------------
 
     EspPorts ports(tmag, store, js, usb, calibration_vendor, calibration_cdc, sensor_read_ok,
-                   sensor_conversion_count, sensor_status, needs_calibration, recalibration_gate);
+                   sensor_conversion_count, sensor_status, needs_calibration, recalibration_gate,
+                   nudge_calibration_gate);
     espp::omega_control::XacState state;
     state.common.center = center;
     state.common.range = range;
@@ -1258,7 +1310,9 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
                 .recalibration_requested = recal,
                 .output_hold = hold,
                 .needs_calibration = needs_calibration.load(),
-                .settings = store.settings()},
+                .settings = store.settings(),
+                .nudge_calibration_start = nudge_calibration_gate.take_start(),
+                .nudge_calibration_cancel = nudge_calibration_gate.take_cancel()},
                ports);
       if (recal) {
         recalibration_gate.finish(); // the sweep ran inside the tick; accept new requests

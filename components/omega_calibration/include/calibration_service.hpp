@@ -162,6 +162,36 @@
 //                                 payload that is not exactly 4 bytes).
 //                                 Protocol version 2; older firmware ignores
 //                                 the frame (no reply).
+//   0x64 START_NUDGE_CALIBRATION : no payload. ASYNC, like START_CALIBRATION:
+//                                 asks the mouse loop to measure the
+//                                 person's nudges (NUDGE_CAL_REPEATS in each
+//                                 direction, see omega_control.hpp's
+//                                 NudgeCalibrator) and work the three nudge
+//                                 settings out of them. Output is neutral
+//                                 while it runs. Progress and the outcome
+//                                 arrive as unsolicited NUDGE_CALIBRATION
+//                                 frames; every accepted start ends in
+//                                 exactly one final one. On success the
+//                                 device applies the settings, sets
+//                                 nudge_calibrated, turns nudge clicks on
+//                                 and saves to flash itself. Reply: OK, or
+//                                 ERROR: invalid_argument with a payload,
+//                                 operation_not_permitted in XAC mode (nudge
+//                                 clicks are mouse-only),
+//                                 device_or_resource_busy while one is
+//                                 pending or running, function_not_supported
+//                                 when Config::start_nudge_calibration is
+//                                 unset. Older firmware ignores the frame
+//                                 (no reply); STATE's nudge_calibrated byte
+//                                 tells a host whether to expect one.
+//   0x65 CANCEL_NUDGE_CALIBRATION : no payload. Stops a pending or running
+//                                 nudge calibration without changing
+//                                 anything. Reply: OK with u32 1 when there
+//                                 was one (its CANCELLED report follows), 0
+//                                 when there was none; ERROR invalid_argument
+//                                 with a payload, function_not_supported
+//                                 when Config::cancel_nudge_calibration is
+//                                 unset.
 //
 // Message types & payloads (device -> host), same module, reply flag set:
 //   0xD3 DIAGNOSTICS : payload (see build_diagnostics_payload() below):
@@ -186,7 +216,7 @@
 //                                           older firmware ends the payload
 //                                           after the reset list, and hosts
 //                                           must ignore any bytes after it)
-//   0xD0 STATE - payload: fixed 80-byte little-endian struct, in this exact
+//   0xD0 STATE - payload: fixed 81-byte little-endian struct, in this exact
 //                order (see build_state_payload() below):
 //                  f32 center_x, center_y, center_noise_radius,
 //                  f32 center_deadzone                 (calibration-derived)
@@ -208,6 +238,15 @@
 //                                                        firmware sends 79
 //                                                        bytes, which hosts
 //                                                        read as enabled)
+//                  u8  nudge_calibrated                 (0/1: the nudge
+//                                                        settings came from a
+//                                                        nudge calibration;
+//                                                        added after
+//                                                        nudge_enabled: older
+//                                                        firmware sends 80
+//                                                        bytes and has no
+//                                                        START_NUDGE_
+//                                                        CALIBRATION)
 //   0xD2 FW_INFO : payload: u8 pending_verify (0/1), u8 session_active
 //                (0/1), then length-prefixed strings (u8 len + bytes, at
 //                most 255 bytes each, no terminator) in this order:
@@ -295,6 +334,34 @@
 //                and sampling. Outside a sweep it is sent only on a link
 //                whose SET_POSITION_STREAM lease is running, as stage 0,
 //                every POSITION_STREAM_PERIOD from the polling loop.
+//   0xD5 NUDGE_CALIBRATION - UNSOLICITED, on every link. Payload,
+//                little-endian, in this exact order (see
+//                build_nudge_calibration_payload(); 23 bytes + message):
+//                  u8  status          0 running, 1 succeeded, 2 failed,
+//                                      3 cancelled (1 to 3 are final: one per
+//                                      accepted START_NUDGE_CALIBRATION)
+//                  u8  accepted        nudges counted so far
+//                  u8  total           nudges needed in all (12 today)
+//                  u8  expected_direction  asked for next: 0 none, 1 left,
+//                                      2 right, 3 forward (away from the
+//                                      person), 4 back
+//                  u8  last_attempt    the last finished push: 0 none yet,
+//                                      1 counted, 2 wrong direction, 3 too
+//                                      small
+//                  u8  last_direction  that push's direction (same codes)
+//                  u8  flags           bit0 ready (the stick has rested long
+//                                      enough that the next push is measured)
+//                  f32 magnitude       mapped stick magnitude now, 0..~1
+//                  f32 nudge_enter_threshold  (status 1 only; else 0)
+//                  f32 nudge_exit_threshold   (status 1 only; else 0)
+//                  u32 nudge_time_ms          (status 1 only; else 0)
+//                  UTF-8 message       the rest of the payload: why, for
+//                                      status 2 and 3; empty otherwise
+//                Sent at the start, on every change and at least every
+//                50 ms while running (running reports may be dropped when a
+//                link has no room; final ones are sent like
+//                CalibrationResult). The message runs to the end of the
+//                payload, so a later field would need a new frame type.
 //
 // Calibration flow (protocol version 2): START_CALIBRATION -> OK, then
 // CALIBRATION_PROGRESS through stages 1 to 5 (fixed lengths, so a countdown
@@ -414,12 +481,16 @@ public:
     SetNudgeEnabled = 0x60,     ///< u8: turn nudge clicks off (0) or on (1)
     FinishCalibration = 0x61,   ///< end the running range sweep now and evaluate it
     SetPositionStream = 0x62,   ///< u32 lease_ms: stream live positions on this link (0 stops)
+    // nudge calibration
+    StartNudgeCalibration = 0x64,  ///< ASYNC: measure the person's nudges, derive the settings
+    CancelNudgeCalibration = 0x65, ///< stop a pending or running nudge calibration
     // device -> host
-    State = 0xD0,               ///< fixed 80-byte calibration + settings struct
+    State = 0xD0,               ///< fixed 81-byte calibration + settings struct
     CalibrationResult = 0xD1,   ///< UNSOLICITED: outcome of an async StartCalibration
     FwInfo = 0xD2,              ///< u8 pending_verify, u8 session_active, str project, str version
     Diagnostics = 0xD3,         ///< variable-length sensor fault status + reset log
     CalibrationProgress = 0xD4, ///< UNSOLICITED: sweep progress or live position
+    NudgeCalibration = 0xD5,    ///< UNSOLICITED: nudge calibration progress or outcome
     Ok = 0xDF,                  ///< u32 context-dependent success value
     Error = 0xFE,               ///< u32 informational code + authoritative UTF-8 message
   };
@@ -449,7 +520,7 @@ public:
 
   /// Wire size of the STATE payload (see the header comment for the exact
   /// field layout).
-  static constexpr size_t kStatePayloadSize = 80;
+  static constexpr size_t kStatePayloadSize = 81;
 
   /// One calibration progress report (the CALIBRATION_PROGRESS fields).
   using Progress = OmegaCalibration::Progress;
@@ -458,6 +529,13 @@ public:
   static constexpr size_t kProgressPayloadSize =
       1 + 1 + 4 + 4 + 2 * 4 + 3 * 4 + 4 * 4 + 4 + 1 + OmegaCalibration::RANGE_SECTORS * 4;
   static_assert(kProgressPayloadSize == 179);
+
+  /// One nudge calibration report (the NUDGE_CALIBRATION fields).
+  using NudgeCalibrationReport = OmegaCalibration::NudgeCalibrationReport;
+
+  /// Wire size of the NUDGE_CALIBRATION payload before its message.
+  static constexpr size_t kNudgeCalibrationFixedSize = 7 + 4 * 4;
+  static_assert(kNudgeCalibrationFixedSize == 23);
 
   /// How often the polling loop sends a live position on a link with a
   /// running SET_POSITION_STREAM lease.
@@ -541,6 +619,20 @@ public:
     /// flag the sweep polls (main.cpp: RecalibrationGate::request_finish()).
     /// When unset, FINISH_CALIBRATION replies ERROR (function_not_supported).
     std::function<bool()> finish_calibration{nullptr};
+    /// Optional: handles Msg::StartNudgeCalibration by asking the mouse loop
+    /// to run a nudge calibration. Like start_calibration it must return at
+    /// once (main.cpp: NudgeCalibrationGate::request_start()), and whatever
+    /// runs the calibration must call notify_nudge_calibration() on every
+    /// service with each report. Return false + `ec` to refuse (e.g. one is
+    /// already running). Not called in XAC mode, which the service refuses
+    /// itself. When unset, START_NUDGE_CALIBRATION replies ERROR
+    /// (function_not_supported).
+    std::function<bool(std::error_code &ec)> start_nudge_calibration{nullptr};
+    /// Optional: handles Msg::CancelNudgeCalibration. Returns whether a nudge
+    /// calibration was pending or running; must return at once
+    /// (NudgeCalibrationGate::request_cancel()). When unset,
+    /// CANCEL_NUDGE_CALIBRATION replies ERROR (function_not_supported).
+    std::function<bool()> cancel_nudge_calibration{nullptr};
     /// Reboot the device (RESTART message). Invoked ~750 ms after the OK reply
     /// from a detached thread. When unset, RESTART replies with ERROR.
     std::function<void()> restart{nullptr};
@@ -585,7 +677,9 @@ public:
       , diagnostics_(config.diagnostics)
       , output_hold_(config.output_hold)
       , restart_(config.restart)
-      , ota_(config.ota) {}
+      , ota_(config.ota)
+      , start_nudge_calibration_(config.start_nudge_calibration)
+      , cancel_nudge_calibration_(config.cancel_nudge_calibration) {}
 
   /// @brief The dispatcher module id this service answers on (Config::module;
   ///        kModule by default). The console discovers it by protocol id.
@@ -819,6 +913,51 @@ public:
     for (const float r : p.sector_max_radius) {
       put_f32(payload, r);
     }
+    return payload;
+  }
+
+  /**
+   * @brief Send an unsolicited NUDGE_CALIBRATION frame.
+   *
+   * Whatever runs the nudge calibration (main.cpp's Ports adapter) calls this
+   * on every service with each report. Running reports come 20 times a
+   * second and a refusal is dropped quietly, as for CALIBRATION_PROGRESS; a
+   * final report is sent like CalibrationResult, with a log line if refused.
+   */
+  void notify_nudge_calibration(const NudgeCalibrationReport &report) {
+    auto frame = build(Msg::NudgeCalibration, build_nudge_calibration_payload(report), module_id());
+    if (report.status == NudgeCalibrationReport::Status::RUNNING) {
+      send_quietly(frame);
+    } else {
+      logger_.info("notify_nudge_calibration status={}", static_cast<int>(report.status));
+      send(frame, /*unsolicited=*/true);
+    }
+  }
+
+  /// Encode a NudgeCalibrationReport into the NUDGE_CALIBRATION payload (see
+  /// the header comment for the exact field layout). The message is clipped
+  /// to the frame, on a UTF-8 boundary.
+  static std::vector<uint8_t> build_nudge_calibration_payload(const NudgeCalibrationReport &r) {
+    namespace stream = espp::stream_frame;
+    std::vector<uint8_t> payload;
+    payload.reserve(kNudgeCalibrationFixedSize + r.message.size());
+    payload.push_back(static_cast<uint8_t>(r.status));
+    payload.push_back(r.accepted);
+    payload.push_back(r.total);
+    payload.push_back(r.expected_direction);
+    payload.push_back(static_cast<uint8_t>(r.last_attempt));
+    payload.push_back(r.last_direction);
+    payload.push_back(r.ready ? 0x01 : 0);
+    put_f32(payload, r.magnitude);
+    put_f32(payload, r.enter_threshold);
+    put_f32(payload, r.exit_threshold);
+    stream::put_u32(payload, r.hold_time_ms);
+    size_t count = std::min(r.message.size(), stream::kMaxPayloadSize - payload.size());
+    while (count > 0 && count < r.message.size() &&
+           (static_cast<uint8_t>(r.message[count]) & 0xC0) == 0x80) {
+      --count;
+    }
+    payload.insert(payload.end(), r.message.begin(), r.message.begin() + count);
     return payload;
   }
 
@@ -1242,6 +1381,48 @@ protected:
       reply = build_ok();
       return true;
     }
+    case Msg::StartNudgeCalibration: {
+      if (!payload.empty()) {
+        reply =
+            build_error(std::errc::invalid_argument, "START_NUDGE_CALIBRATION takes no payload");
+        return true;
+      }
+      if (store_.settings().input_mode == InputMode::XAC) {
+        reply = build_error(std::errc::operation_not_permitted,
+                            "START_NUDGE_CALIBRATION: nudge clicks are only used in mouse mode");
+        return true;
+      }
+      if (!start_nudge_calibration_) {
+        reply = build_error(std::errc::function_not_supported,
+                            "START_NUDGE_CALIBRATION not wired on this build");
+        return true;
+      }
+      // Like start_calibration_, this only raises a flag the polling loop takes.
+      std::error_code cal_ec;
+      if (!start_nudge_calibration_(cal_ec)) {
+        reply = build_error(cal_ec, "START_NUDGE_CALIBRATION could not be started");
+        return true;
+      }
+      logger_.info("START_NUDGE_CALIBRATION accepted; running asynchronously");
+      reply = build_ok();
+      return true;
+    }
+    case Msg::CancelNudgeCalibration: {
+      if (!payload.empty()) {
+        reply =
+            build_error(std::errc::invalid_argument, "CANCEL_NUDGE_CALIBRATION takes no payload");
+        return true;
+      }
+      if (!cancel_nudge_calibration_) {
+        reply = build_error(std::errc::function_not_supported,
+                            "CANCEL_NUDGE_CALIBRATION not wired on this build");
+        return true;
+      }
+      const bool was_running = cancel_nudge_calibration_();
+      logger_.info("CANCEL_NUDGE_CALIBRATION ({})", was_running ? "stopping" : "none running");
+      reply = build_ok(was_running ? 1 : 0);
+      return true;
+    }
     case Msg::SetPositionStream: {
       if (payload.size() != 4) {
         reply = build_error(std::errc::invalid_argument, "SET_POSITION_STREAM needs u32 lease_ms");
@@ -1264,7 +1445,7 @@ protected:
     }
   }
 
-  /// Encode a Snapshot into the fixed 80-byte STATE payload (see the header
+  /// Encode a Snapshot into the fixed 81-byte STATE payload (see the header
   /// comment for the exact field order).
   static std::vector<uint8_t> build_state_payload(const OmegaStore::Snapshot &snap) {
     std::vector<uint8_t> payload;
@@ -1299,6 +1480,7 @@ protected:
     espp::stream_frame::put_u32(payload, static_cast<uint32_t>(settings.nudge_hold_time.count()));
     payload.push_back(static_cast<uint8_t>(settings.input_mode));
     payload.push_back(settings.nudge_enabled ? 1 : 0);
+    payload.push_back(settings.nudge_calibrated ? 1 : 0);
 
     return payload;
   }
@@ -1545,6 +1727,9 @@ private:
       return "undefined";
     }
   }
+  // Config::start_nudge_calibration and Config::cancel_nudge_calibration
+  std::function<bool(std::error_code &ec)> start_nudge_calibration_;
+  std::function<bool()> cancel_nudge_calibration_;
   std::mutex mutex_; // guards parser_, after_reply_, reply-building; not OmegaStore
   Stream parser_;
   std::function<void()>

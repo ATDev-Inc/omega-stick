@@ -174,11 +174,13 @@ struct SimPorts : espp::omega_control::Ports {
   SensorFaultStatus &sensor_status;
   std::atomic<bool> &needs_calibration;
   espp::omega_control::RecalibrationGate &recalibration_gate;
+  espp::omega_control::NudgeCalibrationGate &nudge_calibration_gate;
 
   SimPorts(Host &host_, espp::TMAG5273 &tmag_, FakeTmagBus &bus_, espp::OmegaStore &store_,
            espp::Joystick &js_, espp::CalibrationService &calibration_, const bool &ok_,
            const uint8_t &count_, SensorFaultStatus &status_, std::atomic<bool> &needs_,
-           espp::omega_control::RecalibrationGate &gate_)
+           espp::omega_control::RecalibrationGate &gate_,
+           espp::omega_control::NudgeCalibrationGate &nudge_gate_)
       : host(host_)
       , tmag(tmag_)
       , bus(bus_)
@@ -189,7 +191,8 @@ struct SimPorts : espp::omega_control::Ports {
       , sensor_conversion_count(count_)
       , sensor_status(status_)
       , needs_calibration(needs_)
-      , recalibration_gate(gate_) {}
+      , recalibration_gate(gate_)
+      , nudge_calibration_gate(nudge_gate_) {}
 
   void send_mouse(const espp::omega_control::MouseReport &r) override { host.on_mouse(r); }
   void send_xac(const espp::omega_control::XacReport &r) override { host.on_xac(r); }
@@ -295,6 +298,31 @@ struct SimPorts : espp::omega_control::Ports {
   void sensor_observed_healthy() override {
     sensor_status.observed_healthy();
     host.live.sensor_observed = true;
+  }
+
+  // As main.cpp, with one link (sim: the WebSocket).
+  void
+  nudge_calibration_report(const espp::OmegaCalibration::NudgeCalibrationReport &report) override {
+    using Status = espp::OmegaCalibration::NudgeCalibrationReport::Status;
+    if (report.status == Status::SUCCEEDED) {
+      store.set_nudge_calibration(report.enter_threshold, report.exit_threshold,
+                                  std::chrono::milliseconds(report.hold_time_ms));
+      host.console_text(format("Nudge calibration: enter %.3f, exit %.3f, window %u ms; nudge "
+                               "clicks on",
+                               report.enter_threshold, report.exit_threshold,
+                               static_cast<unsigned>(report.hold_time_ms)));
+      std::error_code save_ec;
+      if (!store.save_to_flash(save_ec)) {
+        host.console_text("WARNING: nudge calibration applied but saving to flash failed: " +
+                          save_ec.message());
+      }
+    } else if (report.status != Status::RUNNING) {
+      host.console_text("Nudge calibration ended: " + report.message);
+    }
+    calibration.notify_nudge_calibration(report);
+    if (report.status != Status::RUNNING) {
+      nudge_calibration_gate.finish();
+    }
   }
 
   espp::omega_control::Clock::time_point now() override { return steady_at(host.now_ns()); }
@@ -511,6 +539,7 @@ std::string boot(Host &host, int reset_reason) {
 
   // Recalibration hand-off and output holds (D22 rule 1), as in main.cpp.
   espp::omega_control::RecalibrationGate recalibration_gate;
+  espp::omega_control::NudgeCalibrationGate nudge_calibration_gate;
   std::atomic<int> output_holds{0};
 
   // ==========================================================================
@@ -529,6 +558,12 @@ std::string boot(Host &host, int reset_reason) {
             return recalibration_gate.request(start_ec);
           },
       .finish_calibration = [&recalibration_gate]() { return recalibration_gate.request_finish(); },
+      .start_nudge_calibration =
+          [&nudge_calibration_gate](std::error_code &start_ec) {
+            return nudge_calibration_gate.request_start(start_ec);
+          },
+      .cancel_nudge_calibration =
+          [&nudge_calibration_gate]() { return nudge_calibration_gate.request_cancel(); },
       .restart = [&host]() { host.request_restart("restart"); },
       .ota = ota,
       .diagnostics = make_diagnostics,
@@ -577,7 +612,7 @@ std::string boot(Host &host, int reset_reason) {
   live_joystick = &js;
 
   SimPorts ports(host, tmag, bus, store, js, calibration, sensor_read_ok, sensor_conversion_count,
-                 sensor_status, needs_calibration, recalibration_gate);
+                 sensor_status, needs_calibration, recalibration_gate, nudge_calibration_gate);
   espp::omega_control::MouseState mouse_state;
   mouse_state.common.center = center;
   mouse_state.common.range = range;
@@ -665,12 +700,16 @@ std::string boot(Host &host, int reset_reason) {
             needs_calibration.load() ? nullptr : &live_center));
       }
     }
+    const bool nudge_start = nudge_calibration_gate.take_start();
+    const bool nudge_cancel = nudge_calibration_gate.take_cancel();
     const espp::omega_control::StepInput input{.stick = sample,
                                                .now = steady_at(host.now_ns()),
                                                .recalibration_requested = recal,
                                                .output_hold = hold,
                                                .needs_calibration = needs_calibration.load(),
-                                               .settings = store.settings()};
+                                               .settings = store.settings(),
+                                               .nudge_calibration_start = nudge_start,
+                                               .nudge_calibration_cancel = nudge_cancel};
     if (xac_selection) {
       xac_tick(xac_state, input, ports);
     } else {

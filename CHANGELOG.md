@@ -35,6 +35,23 @@ what each part of the number means and how a release is cut.
   working; the console falls back to the printed prompts when the firmware
   does not stream progress.
   ([#103](https://github.com/ATDev-Inc/omega-stick/pull/103))
+- **Nudge clicks tune themselves to how you nudge.** The first time you turn
+  nudge clicks on in the console, it asks you to nudge the stick three times
+  in each direction (forward, right, back, left) and sets the enter threshold,
+  exit threshold and time window from how far and how quickly you actually
+  pushed. The enter threshold follows your typical push, so one gentle push
+  does not lower it for every direction, but a push much weaker than your
+  usual one will not click. The stick does not
+  move the cursor or click while it measures. A new "Calibrate nudge clicks"
+  button runs it again at any time. If it cannot finish (you cancel, or the
+  nudges were too small or slow to tell apart from moving the cursor),
+  nothing changes and you can turn nudge clicks on with the current values
+  instead. Mouse mode only; older firmware keeps the plain on/off switch.
+- **Drag with a held left click.** Push forward to click and keep the stick
+  pushed: after a moment the stick moves the cursor from where it was, with
+  the button still down, so you can highlight text or drag things in any
+  direction. Easing the stick back towards center lets go. A quick push and
+  release is still a plain click that does not move the cursor.
 - **Keep your own copy of the console.** The console has a new "Save a copy of
   this page" button that downloads it as `omega_stick_console.html`, a single
   file that opens from your computer with no internet and connects to the
@@ -46,6 +63,15 @@ what each part of the number means and how a release is cut.
 
 ### Changed
 
+- **Nudges are caught however they line up with the stick's timing.** A
+  nudge used to be measured in fixed blocks of time, and a push that happened
+  to fall across two blocks counted as two half-pushes, so the enter
+  threshold had to sit well below a real push. Nudges are now measured over
+  the most recent stretch of time on every reading, so the whole push counts:
+  clicks register more reliably and a little sooner, and nudge calibration can
+  set the enter threshold close to your own push (about 0.75 for a full one)
+  so ordinary cursor movement is less likely to click. Hand-tuned values keep
+  their meaning, but now respond to every push of that size.
 - **The joystick cap now screws on.** The cap could shift and fall off the
   joystick while in use. The joystick and topper models now have a screw
   thread; print both new parts together to get it. The holders and sockets

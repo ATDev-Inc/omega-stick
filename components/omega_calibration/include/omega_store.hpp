@@ -220,6 +220,20 @@ public:
     settings_.nudge_enabled = enabled;
   }
 
+  /// Applies the outcome of a successful nudge calibration live: the three
+  /// tuning values, nudge_calibrated set, and nudge clicks turned on (the
+  /// person just calibrated them to use them). No change-notification is
+  /// fired, as for set_nudge_settings(). Persist with save_to_flash().
+  void set_nudge_calibration(float enter_threshold, float exit_threshold,
+                             std::chrono::milliseconds time_window) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    settings_.nudge_distance_threshold = enter_threshold;
+    settings_.nudge_exit_threshold = exit_threshold;
+    settings_.nudge_hold_time = time_window;
+    settings_.nudge_calibrated = true;
+    settings_.nudge_enabled = true;
+  }
+
   /// Sets the input mode live and fires on_mode_changed() (outside the
   /// lock) so the application can act on it -- see ModeChangedFn. Setting
   /// the mode that is already active does nothing.

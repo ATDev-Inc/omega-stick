@@ -39,11 +39,14 @@
     SET_NUDGE_ENABLED: 0x60,
     FINISH_CALIBRATION: 0x61,
     SET_POSITION_STREAM: 0x62,
+    START_NUDGE_CALIBRATION: 0x64,
+    CANCEL_NUDGE_CALIBRATION: 0x65,
     STATE: 0xD0,
     CALIBRATION_RESULT: 0xD1,
     FW_INFO: 0xD2,
     DIAGNOSTICS: 0xD3,
     CALIBRATION_PROGRESS: 0xD4,
+    NUDGE_CALIBRATION: 0xD5,
     OK: 0xDF,
     ERROR: 0xFE,
   };
@@ -194,12 +197,14 @@
     return { id: MODULE_CALIBRATION, how: "missing", versionMismatch: false };
   }
 
-  // Fixed 80-byte STATE struct; see calibration_service.hpp. The trailing u8
-  // nudge_enabled is newer than the rest: firmware without the nudge on/off
-  // switch sends 79 bytes, which decodes as nudgeEnabled null (nudge clicks
-  // are always on there; see nudgeControls). Bytes after it are ignored.
+  // Fixed 81-byte STATE struct; see calibration_service.hpp. The trailing u8s
+  // are newer than the rest: firmware without the nudge on/off switch sends
+  // 79 bytes, which decodes as nudgeEnabled null (nudge clicks are always on
+  // there; see nudgeControls), and firmware without nudge calibration sends 80
+  // (or 79), which decodes as nudgeCalibrated null (see nudgeEnableAction).
+  // Bytes after them are ignored.
   function decodeState(payload) {
-    if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79 or 80)");
+    if (payload.length < 79) throw new Error("malformed STATE reply (" + payload.length + " B, expected 79 to 81)");
     const v = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
     let o = 0;
     const f32 = () => { const x = v.getFloat32(o, true); o += 4; return x; };
@@ -222,6 +227,7 @@
     s.nudgeTimeMs = u32();
     s.inputMode = u8();
     s.nudgeEnabled = o < payload.length ? u8() !== 0 : null;
+    s.nudgeCalibrated = o < payload.length ? u8() !== 0 : null;
     return s;
   }
 
@@ -242,6 +248,96 @@
       tuningDisabled: off,
       applyDisabled: !live || off,
       note: haveState && !known ? NUDGE_SWITCH_UNSUPPORTED_NOTE : "",
+    };
+  }
+
+  // ---------------------------------------------------------------------
+  // Nudge calibration (START_NUDGE_CALIBRATION / NUDGE_CALIBRATION). The
+  // device measures the nudges and works the settings out; the page only
+  // starts it, shows what each report says, and cancels it.
+  // ---------------------------------------------------------------------
+  const NUDGE_CAL_STATUS = { RUNNING: 0, SUCCEEDED: 1, FAILED: 2, CANCELLED: 3 };
+  const NUDGE_ATTEMPT = { NONE: 0, ACCEPTED: 1, WRONG_DIRECTION: 2, TOO_SMALL: 3 };
+  const NUDGE_DIRECTION = { NONE: 0, LEFT: 1, RIGHT: 2, FORWARD: 3, BACK: 4 };
+  // What each direction does once nudge clicks are on (omega_control.hpp).
+  const NUDGE_DIRECTION_TEXT = {
+    1: { name: "left", action: "scrolls up" },
+    2: { name: "right", action: "right-clicks" },
+    3: { name: "forward (away from you)", action: "left-clicks" },
+    4: { name: "back (toward you)", action: "scrolls down" },
+  };
+  // Decodes NUDGE_CALIBRATION: 23 fixed bytes, then the UTF-8 message.
+  function decodeNudgeCalibration(payload) {
+    if (payload.length < 23) throw new Error("malformed NUDGE_CALIBRATION (" + payload.length + " B, expected at least 23)");
+    const v = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    return {
+      status: payload[0], accepted: payload[1], total: payload[2],
+      expectedDirection: payload[3], lastAttempt: payload[4], lastDirection: payload[5],
+      ready: (payload[6] & 0x01) !== 0,
+      magnitude: v.getFloat32(7, true),
+      enterThreshold: v.getFloat32(11, true),
+      exitThreshold: v.getFloat32(15, true),
+      timeMs: v.getUint32(19, true),
+      message: new TextDecoder().decode(payload.subarray(23)),
+    };
+  }
+  function nudgeDirectionName(code) {
+    return NUDGE_DIRECTION_TEXT[code] ? NUDGE_DIRECTION_TEXT[code].name : "direction " + code;
+  }
+  // What the page says for a decoded report: `prompt` (the instruction now),
+  // `feedback` (how the last push went, "" for none), `done` (a final report)
+  // and `ok` (it succeeded).
+  function nudgeCalibrationView(r) {
+    const done = r.status !== NUDGE_CAL_STATUS.RUNNING;
+    let feedback = "";
+    if (r.lastAttempt === NUDGE_ATTEMPT.ACCEPTED) {
+      feedback = "Got it.";
+    } else if (r.lastAttempt === NUDGE_ATTEMPT.WRONG_DIRECTION) {
+      feedback = "That push went " + nudgeDirectionName(r.lastDirection) + ", so it did not count. Try again.";
+    } else if (r.lastAttempt === NUDGE_ATTEMPT.TOO_SMALL) {
+      feedback = "That push was too small to count. Push a little further.";
+    }
+    let prompt;
+    if (r.status === NUDGE_CAL_STATUS.SUCCEEDED) {
+      prompt = "Nudge clicks are calibrated and on: enter " + r.enterThreshold.toFixed(2) +
+               ", exit " + r.exitThreshold.toFixed(2) + ", window " + r.timeMs + " ms. They are saved on the device.";
+      feedback = "";
+    } else if (done) {
+      prompt = r.message || (r.status === NUDGE_CAL_STATUS.CANCELLED ? "Nudge calibration was cancelled." : "Nudge calibration failed.");
+      feedback = "";
+    } else {
+      const text = NUDGE_DIRECTION_TEXT[r.expectedDirection];
+      const perDirection = r.total >= 4 ? r.total / 4 : 1;
+      const ofThis = (r.accepted % perDirection) + 1;
+      const where = text ? text.name : nudgeDirectionName(r.expectedDirection);
+      prompt = r.ready
+        ? "Nudge " + where + " and let go (" + ofThis + " of " + perDirection + "). Once on, this " + (text ? text.action : "acts") + "."
+        : "Let go of the stick and wait a moment...";
+    }
+    return { prompt, feedback, done, ok: r.status === NUDGE_CAL_STATUS.SUCCEEDED };
+  }
+  // What ticking the "Nudge clicks" box does: "calibrate" the first time on
+  // firmware that reports nudgeCalibrated false in mouse mode, else "set"
+  // (SET_NUDGE_ENABLED as before). Older firmware (null) and XAC mode, where
+  // nudge clicks are not used, keep the plain switch.
+  function nudgeEnableAction({ enabling, nudgeCalibrated, inputMode }) {
+    return enabling && nudgeCalibrated === false && inputMode === INPUT_MODE.MOUSE ? "calibrate" : "set";
+  }
+  const NUDGE_CAL_UNSUPPORTED_NOTE = "This firmware cannot calibrate nudge clicks. Update the firmware to use it.";
+  const NUDGE_CAL_XAC_NOTE = "Nudge clicks are only used in mouse mode, so they are calibrated there.";
+  // The "Calibrate nudge clicks" button, for a decoded STATE and whether a
+  // calibration this page started is still running.
+  function nudgeCalibrationControls({ connected, busy, haveState, nudgeCalibrated, inputMode, calibrating }) {
+    const known = nudgeCalibrated === true || nudgeCalibrated === false;
+    const live = !!connected && !busy && !!haveState;
+    const xac = inputMode === INPUT_MODE.XAC;
+    let note = "";
+    if (haveState && !known) note = NUDGE_CAL_UNSUPPORTED_NOTE;
+    else if (haveState && xac) note = NUDGE_CAL_XAC_NOTE;
+    return {
+      disabled: !live || !known || xac || !!calibrating,
+      label: nudgeCalibrated === true ? "Recalibrate nudge clicks" : "Calibrate nudge clicks",
+      note,
     };
   }
 
@@ -1667,6 +1763,9 @@
     MIN_NUDGE_TIME_MS, MAX_NUDGE_TIME_MS, nudgeTimeError,
     encodeSetPositionStream, buildSetPositionStream, parseCalibrationProgress, STAGE_NAME,
     NUDGE_SWITCH_UNSUPPORTED_NOTE, nudgeControls,
+    NUDGE_CAL_STATUS, NUDGE_ATTEMPT, NUDGE_DIRECTION, NUDGE_DIRECTION_TEXT, decodeNudgeCalibration,
+    nudgeDirectionName, nudgeCalibrationView, nudgeEnableAction, nudgeCalibrationControls,
+    NUDGE_CAL_UNSUPPORTED_NOTE, NUDGE_CAL_XAC_NOTE,
   };
   globalThis.OmegaProtocol = OmegaProtocol;
   if (typeof module !== "undefined" && module.exports) module.exports = OmegaProtocol;
