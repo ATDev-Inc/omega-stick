@@ -74,9 +74,11 @@ what each part of the number means and how a release is cut.
   clicks register more reliably and a little sooner, and nudge calibration can
   set the enter threshold close to your own push (about 0.75 for a full one)
   so ordinary cursor movement is less likely to click. Hand-tuned values keep
-  their meaning, but now respond to every push of that size. A quick change
-  of direction, or the spring-back after a nudge, no longer counts as a nudge
-  and does not click.
+  their meaning, but now respond to every push of that size. Stopping a move
+  and nudging in a different direction right away (within the nudge time,
+  for a turn of more than about 60 degrees, so a 90 degree turn counts), a
+  quick change of direction, and the spring-back after a nudge no longer
+  count as a nudge and do not click.
   ([#131](https://github.com/ATDev-Inc/omega-stick/pull/131))
 - **The joystick cap now screws on.** The cap could shift and fall off the
   joystick while in use. The joystick and topper models now have a screw

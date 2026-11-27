@@ -12,8 +12,8 @@
     { "at_ms": 42000, "stick": [0, 1] },
     { "at_ms": 42100, "expect": { "mouse_moved": "none" } },
     { "at_ms": 44000, "stick": [0, 1] },
-    { "at_ms": 44800, "expect": { "mouse_moved": "none" } },
-    { "at_ms": 49000, "stick": [0, 0] },
-    { "at_ms": 50000, "stick": [0, 0] }
+    { "at_ms": 44990, "expect": { "mouse_moved": "none" } },
+    { "at_ms": 50000, "stick": [0, 0] },
+    { "at_ms": 51000, "stick": [0, 0] }
   ]
 }
