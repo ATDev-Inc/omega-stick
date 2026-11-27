@@ -5,6 +5,15 @@ on:
   # Also on the default branch, so the README badge reflects it.
   push:
     branches: [main]
+  # Nightly, off-peak: a longer run that keeps the evolved corpus between runs.
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Minutes to fuzz (values above 60 are capped at 60)"
+        type: number
+        default: 10
 
 permissions:
   contents: read
@@ -12,11 +21,37 @@ permissions:
 jobs:
   frame-fuzz:
     runs-on: ubuntu-latest
+    # Up to 60 minutes of fuzzing plus the build and cache steps.
+    timeout-minutes: 90
     steps:
       - name: Checkout repo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Choose the fuzz budget
+        id: budget
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_MINUTES: ${{ inputs.minutes }}
+        run: |
+          # 60 s for pull requests and pushes, 10 min nightly, and for a manual
+          # run the minutes input, capped at 60.
+          seconds=60
+          case "$EVENT_NAME" in
+            schedule) seconds=600 ;;
+            workflow_dispatch)
+              minutes="${INPUT_MINUTES%%.*}"
+              case "$minutes" in
+                ''|*[!0-9]*) minutes=10 ;;
+              esac
+              if [ "$minutes" -lt 1 ]; then minutes=1; fi
+              if [ "$minutes" -gt 60 ]; then minutes=60; fi
+              seconds=$((minutes * 60))
+              ;;
+          esac
+          echo "seconds=$seconds" >> "$GITHUB_OUTPUT"
+          echo "Fuzzing for $seconds seconds"
 
       - name: Install clang
         run: sudo apt-get update && sudo apt-get install -y clang libclang-rt-dev ninja-build
@@ -29,13 +64,32 @@ jobs:
       - name: Build
         run: cmake --build build-host --target omega_frame_fuzz
 
-      - name: Fuzz for 60 seconds
+      # The evolved inputs from earlier runs. libFuzzer writes new inputs to
+      # the first directory only, so the committed seeds stay untouched.
+      - name: Restore the evolved corpus
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz-corpus
+          key: frame-fuzz-corpus-${{ github.run_id }}
+          restore-keys: |
+            frame-fuzz-corpus-
+
+      - name: Fuzz
         env:
           ASAN_OPTIONS: halt_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          FUZZ_SECONDS: ${{ steps.budget.outputs.seconds }}
         run: |
-          build-host/omega_frame_fuzz tests/fuzz/corpus \
-            -max_total_time=60 -timeout=10 -rss_limit_mb=2048
+          mkdir -p fuzz-corpus
+          build-host/omega_frame_fuzz fuzz-corpus tests/fuzz/corpus \
+            -max_total_time="$FUZZ_SECONDS" -timeout=10 -rss_limit_mb=2048
+
+      - name: Save the evolved corpus
+        if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz-corpus
+          key: frame-fuzz-corpus-${{ github.run_id }}
 
       - name: Upload crash artifacts
         if: failure()
@@ -47,3 +101,75 @@ jobs:
             timeout-*
             oom-*
           if-no-files-found: ignore
+
+  # Opens or updates an issue when a scheduled or manual run on the default
+  # branch fails. Never runs for pull requests, pushes or other branches.
+  report:
+    needs: frame-fuzz
+    if: >-
+      ${{ always()
+      && needs.frame-fuzz.result == 'failure'
+      && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      - name: Report the failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -u
+          mkdir -p crashes
+          gh run download "$RUN_ID" --name fuzz-crashes --dir crashes || true
+          file=$(find crashes -type f \( -name 'crash-*' -o -name 'timeout-*' -o -name 'oom-*' \) | sort | head -n 1)
+
+          if [ -n "$file" ]; then
+            title="Fuzz crash: frame-fuzz"
+            name=$(basename "$file")
+            size=$(wc -c < "$file")
+            {
+              echo "The frame fuzzer failed on a scheduled or manual run."
+              echo
+              echo "Run: $RUN_URL"
+              echo "File: $name ($size bytes)"
+              echo
+              if [ "$size" -le 4096 ]; then
+                echo "Input, base64:"
+                echo
+                echo '```'
+                base64 -w0 "$file"
+                echo
+                echo '```'
+                echo
+                echo "Replay it with: base64 -d > $name, then build-host/omega_frame_fuzz $name"
+              else
+                echo "The input is larger than 4 KB: download it from the fuzz-crashes artifact of the run."
+              fi
+            } > body.md
+          else
+            title="Fuzz target broken: frame-fuzz"
+            {
+              echo "The fuzz job failed without leaving a crash, timeout or oom file (build or setup failure, or the run was killed)."
+              echo
+              echo "Run: $RUN_URL"
+            } > body.md
+          fi
+
+          label_args=()
+          if [ "$(gh label list --limit 200 --json name --jq 'map(select(.name == "fuzz")) | length')" -gt 0 ]; then
+            label_args=(--label fuzz)
+          fi
+
+          existing=$(gh issue list --state open --limit 100 --json number,title \
+            --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file body.md
+          else
+            gh issue create --title "$title" --body-file body.md "${label_args[@]}"
+          fi
