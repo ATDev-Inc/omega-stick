@@ -81,12 +81,14 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
   // Whole buffer, straight to the service and through the dispatcher.
   h.service.reset_parser();
+  h.dispatcher.reset();
   h.service.feed(input);
   h.dispatcher.feed(input);
 
   // Same bytes in input-derived chunks (1..16 bytes) to stress resync across
   // feed() boundaries.
   h.service.reset_parser();
+  h.dispatcher.reset();
   size_t pos = 0;
   while (pos < size) {
     const size_t chunk = std::min<size_t>(size - pos, 1 + (data[pos] & 0x0F));

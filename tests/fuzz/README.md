@@ -24,7 +24,10 @@ budget depends on the trigger:
 | manual (`workflow_dispatch`) | the `minutes` input, default 10; values above 60 are capped at 60 |
 
 Between runs the inputs libFuzzer found are kept in the Actions cache
-(`frame-fuzz-corpus-<run id>`, restored from the newest earlier entry). The
+(`frame-fuzz-corpus-<run id>-<attempt>`, restored from the newest earlier
+entry). After fuzzing, a non-pull-request run minimizes the evolved directory
+with `-merge=1` into a fresh one (keeping only inputs that add coverage) before
+saving, so the cache does not grow without bound. The
 fuzzer is started with the evolved directory `fuzz-corpus/` first and
 `tests/fuzz/corpus` second, so new inputs land in the cache and the committed
 seeds are never modified. A cache entry is only readable from its own branch
@@ -53,12 +56,17 @@ first, as above, to leave `tests/fuzz/corpus` untouched.
 
 ## Reproduce a crash
 
-CI uploads `crash-*`, `timeout-*` and `oom-*` files from the failed run. Rerun
-the fuzzer binary on one file to replay it:
+CI uploads `crash-*`, `timeout-*`, `oom-*` and `leak-*` files from the failed
+run. Rerun the fuzzer binary on one file to replay it:
 
 ```
 build-host/omega_frame_fuzz crash-<hash>
 ```
+
+The harness resets the service and dispatcher parsers before every input, so a
+single file reproduces on its own. The shared `OmegaStore` and its temp
+directory persist across inputs, so a crash that depends on saved state may need
+the evolved corpus as well.
 
 Once fixed, copy the file into `tests/fuzz/corpus/` as a regression seed. Do
 not name it `request_*.bin` or `reply_*.bin`: those names belong to the
@@ -67,12 +75,14 @@ recognise.
 
 ## Crash issues
 
-The `report` job runs only after a failed `frame-fuzz` job, only for `schedule`
-and `workflow_dispatch`, and only on the default branch, so a dispatch on a
-feature branch never opens, comments on or closes the shared issue. It is the
-only job with `issues: write`.
+The `report` job runs only after a failed `frame-fuzz` job, and only for a
+`schedule` run (always the default branch) or a `workflow_dispatch` run whose
+ref is the default branch, so a dispatch on a feature branch never opens,
+comments on or closes the shared issue. (The branch is not checked for
+`schedule`, whose event payload may lack the repository.) It is the only job
+with `issues: write`.
 
-- A crash, timeout or oom file: it opens `Fuzz crash: frame-fuzz`, or comments
+- A crash, timeout, oom or leak file (LeakSanitizer is on): it opens `Fuzz crash: frame-fuzz`, or comments
   on the open one, with the run URL, the file name and the input in base64 (when
   it is 4 KB or less; otherwise the input is in the `fuzz-crashes` artifact).
 - No such file: it opens or comments on `Fuzz target broken: frame-fuzz` with
