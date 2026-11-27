@@ -92,7 +92,7 @@ Every pull request runs:
 | [host_tests.yml](.github/workflows/host_tests.yml) | `host-tests` | the host unit tests above, plus the simulator's unit tests and scenarios, on gcc (coverage), clang (ASan/UBSan) and MSVC, all with `-Werror` |
 | [web_tests.yml](.github/workflows/web_tests.yml) | `web-tests` | the console's protocol tests above |
 | [e2e_tests.yml](.github/workflows/e2e_tests.yml) | `sim-console-e2e` | builds `omega_sim` and drives the console against it in headless Chrome (`tests/e2e/`) |
-| [fuzz.yml](.github/workflows/fuzz.yml) | `frame-fuzz` | libFuzzer on the frame parser: 60 s on pull requests and pushes, nightly and manual runs of up to 60 min with a cached evolved corpus, and an issue when a nightly run fails; see [tests/fuzz](tests/fuzz/README.md) |
+| [fuzz.yml](.github/workflows/fuzz.yml) | `frame-fuzz` | libFuzzer on the frame parser: 60 s on pull requests and pushes, nightly and manual runs of up to 60 min with a cached evolved corpus, and an issue when a nightly run or a manual run on `main` fails; see [tests/fuzz](tests/fuzz/README.md) |
 | [static_analysis.yml](.github/workflows/static_analysis.yml) | `static_analysis` | cppcheck, `--std=c++17`, global suppressions in [suppressions.txt](suppressions.txt) |
 | [security.yml](.github/workflows/security.yml) | `gitleaks`, `zizmor` | secret scan of the history and a lint of the workflows; also runs daily |
 | [size_delta.yml](.github/workflows/size_delta.yml) | `size_delta` | reporting only, not a required check |

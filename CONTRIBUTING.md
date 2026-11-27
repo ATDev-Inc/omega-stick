@@ -241,7 +241,7 @@ every pull request:
   (`web_tests.yml`), including golden frames shared with the C++ side.
 - **Fuzzing** of the frame parser and calibration service in
   [tests/fuzz](tests/fuzz/README.md), a short libFuzzer run on every PR and a
-  longer one nightly, with crashes filed as issues (`fuzz.yml`).
+  longer one nightly, which files any crash as an issue (`fuzz.yml`).
 - **Static analysis** with cppcheck (`static_analysis.yml`), a secret scan and a
   workflow lint (`security.yml`), and a binary size delta comment
   (`size_delta.yml`).

@@ -65,6 +65,10 @@ cmake --build build-host
 ctest --test-dir build-host --output-on-failure
 ```
 
+ctest also runs `omega_frame_replay`, which replays the fuzz seed corpus
+([tests/fuzz](../fuzz/README.md)) through the fuzz harness without libFuzzer and
+fails if a request seed gets no reply.
+
 Needs CMake 3.20+ and a C++20 compiler with `<format>` (GCC 13+, Clang 17+,
 MSVC 19.37+). On first configure each espp component is downloaded from the
 ESP component registry, pinned to the version in `dependencies.lock` and

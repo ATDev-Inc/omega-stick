@@ -259,7 +259,7 @@ node --test "tests/web/*.test.js"
 See [tests/host/README.md](tests/host/README.md) and
 [tests/web/README.md](tests/web/README.md) for what they cover. CI runs both,
 plus a short fuzzing pass over the frame parser on every pull request and a longer
-one nightly, with crashes filed as issues ([tests/fuzz](tests/fuzz/README.md)).
+one nightly, which files any crash as an issue ([tests/fuzz](tests/fuzz/README.md)).
 
 ## Repository layout
 
