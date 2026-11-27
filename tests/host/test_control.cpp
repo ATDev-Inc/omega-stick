@@ -1958,3 +1958,24 @@ TEST(control_nudge_ignores_a_fast_reversal_that_skips_center) {
   }
   CHECK(!any_click_or_wheel(reports));
 }
+
+TEST(control_nudge_ignores_a_smooth_swing_through_center_of_any_duration) {
+  for (int swing = 60; swing <= 400; swing += 20) {
+    oc::MouseState s;
+    int t = 0;
+    for (; t <= 500; t += 10) {
+      oc::mouse_step(s, input(-0.6f * static_cast<float>(t) / 500.0f, 0.0f, t));
+    }
+    for (int k = 0; k < 20; ++k, t += 10) {
+      oc::mouse_step(s, input(-0.6f, 0.0f, t));
+    }
+    const int t0 = t;
+    bool clicked = false;
+    for (; t <= t0 + swing + 200; t += 10) {
+      const float u = std::fmin(1.0f, static_cast<float>(t - t0) / static_cast<float>(swing));
+      const auto out = oc::mouse_step(s, input(-0.6f * std::cos(3.14159265f * u), 0.0f, t));
+      clicked = clicked || out.mouse.buttons != 0 || out.mouse.wheel != 0;
+    }
+    CHECK(!clicked);
+  }
+}
