@@ -506,7 +506,11 @@ public:
   /// incompatible wire format: bump kProtocolVersion instead.
   static constexpr const char *kProtocol = "omega.calibration";
   /// Version of the calibration protocol this build speaks. 2 added
-  /// FINISH_CALIBRATION, SET_POSITION_STREAM and CALIBRATION_PROGRESS.
+  /// FINISH_CALIBRATION, SET_POSITION_STREAM and CALIBRATION_PROGRESS, and
+  /// also START_NUDGE_CALIBRATION (0x64), CANCEL_NUDGE_CALIBRATION (0x65),
+  /// the unsolicited NUDGE_CALIBRATION frame (0xD5) and STATE's extra
+  /// nudge_calibrated byte. Version 2 has not been released (v0.1.1 predates
+  /// it), so these are part of it rather than a version 3.
   static constexpr uint16_t kProtocolVersion = 2;
 
   /// How long a queued reply is given to reach the wire before a reboot the
