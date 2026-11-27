@@ -39,8 +39,10 @@ int main(int argc, char **argv) {
       }
       const std::vector<char> bytes((std::istreambuf_iterator<char>(in)),
                                     std::istreambuf_iterator<char>());
-      // End of file sets eofbit only; badbit means a read error.
-      if (in.bad()) {
+      // A read error does not always set badbit (a locked file on Windows can
+      // read as empty), so also require every byte the file holds.
+      const auto size = entry.file_size(ec);
+      if (in.bad() || ec || bytes.size() != size) {
         std::fprintf(stderr, "cannot read %s\n", entry.path().string().c_str());
         return 1;
       }
