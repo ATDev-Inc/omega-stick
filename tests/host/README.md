@@ -198,8 +198,9 @@ the request/reply bytes with `tests/protocol/golden_frames.json`, which
 `tests/web/golden.test.js` also reads. After an intentional protocol change
 regenerate it with `OMEGA_WRITE_GOLDEN=1 build-host/omega_host_tests` and review
 the diff, then run `node scripts/fuzz_seeds.mjs` to refresh the fuzz seeds and
-commit both (the web tests fail while the seeds are out of sync). The ERROR message's platform-specific `std::errc` text is rewritten to
-a fixed string so the file is identical on every platform.
+commit both (the web tests fail while the seeds are out of sync). The ERROR
+message's platform-specific `std::errc` text is rewritten to a fixed string so
+the file is identical on every platform.
 
 ## Not covered here
 

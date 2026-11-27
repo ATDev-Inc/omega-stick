@@ -181,9 +181,9 @@ over widening the global list.
 5. Open a pull request and fill in the template. Say which hardware and which
    host OS you tested on, or say explicitly that you could not test on hardware.
    That is fine, just tell us so a maintainer can.
-6. CI runs a build, static analysis, the host tests, the web tests, a short fuzzing
-   pass and security scans on every PR (fuzzing also runs longer nightly). Build, static analysis and the tests
-   should pass.
+6. CI runs a build, static analysis, the host tests, the web tests, a short
+   fuzzing pass and security scans on every PR (fuzzing also runs longer
+   nightly). Build, static analysis and the tests should pass.
 
 Maintainers may ask for changes. Accessibility tradeoffs in particular tend to
 need discussion, because a change that helps one person's use case can make the
@@ -240,8 +240,8 @@ every pull request:
 - **Web console tests** in [tests/web](tests/web/README.md) under Node
   (`web_tests.yml`), including golden frames shared with the C++ side.
 - **Fuzzing** of the frame parser and calibration service in
-  [tests/fuzz](tests/fuzz/README.md), a short libFuzzer run on every PR and a longer one nightly, with crashes filed
-  as issues (`fuzz.yml`).
+  [tests/fuzz](tests/fuzz/README.md), a short libFuzzer run on every PR and a
+  longer one nightly, with crashes filed as issues (`fuzz.yml`).
 - **Static analysis** with cppcheck (`static_analysis.yml`), a secret scan and a
   workflow lint (`security.yml`), and a binary size delta comment
   (`size_delta.yml`).
