@@ -34,6 +34,13 @@ seeds are never modified. A cache entry is only readable from its own branch
 and the default branch, so pull requests start from what `main` saved. Pull
 request runs do not save their own entry.
 
+Runs that save (everything but pull requests) take turns per ref through the
+job's `concurrency` group, so a push to `main` during the nightly run waits
+instead of overwriting the cache with a corpus restored before the nightly's
+inputs existed. Pull requests are not serialized. GitHub keeps only one pending
+run per group: if three saving runs overlap, the middle pending one is
+cancelled. No inputs are lost, that run just does not happen.
+
 A failed nightly or manual run on the default branch also opens an issue, see
 [Crash issues](#crash-issues).
 
@@ -84,7 +91,8 @@ with `issues: write`.
 
 - A crash, timeout, oom or leak file (LeakSanitizer is on): it opens `Fuzz crash: frame-fuzz`, or comments
   on the open one, with the run URL, the file name and the input in base64 (when
-  it is 4 KB or less; otherwise the input is in the `fuzz-crashes` artifact).
+  it is 4 KB or less; otherwise the input is in the `fuzz-crashes-<attempt>` artifact; the name carries the run
+  attempt so a rerun's report reads its own files).
 - No such file: it opens or comments on `Fuzz target broken: frame-fuzz` with
   the run URL.
 

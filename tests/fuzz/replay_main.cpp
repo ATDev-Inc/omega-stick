@@ -33,8 +33,17 @@ int main(int argc, char **argv) {
         continue;
       }
       std::ifstream in(entry.path(), std::ios::binary);
+      if (!in) {
+        std::fprintf(stderr, "cannot open %s\n", entry.path().string().c_str());
+        return 1;
+      }
       const std::vector<char> bytes((std::istreambuf_iterator<char>(in)),
                                     std::istreambuf_iterator<char>());
+      // End of file sets eofbit only; badbit means a read error.
+      if (in.bad()) {
+        std::fprintf(stderr, "cannot read %s\n", entry.path().string().c_str());
+        return 1;
+      }
       const size_t before = omega_fuzz_reply_count;
       LLVMFuzzerTestOneInput(reinterpret_cast<const uint8_t *>(bytes.data()), bytes.size());
       // A request seed is a valid frame for a real handler: it must be answered.
