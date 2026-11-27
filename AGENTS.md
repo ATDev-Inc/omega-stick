@@ -52,7 +52,9 @@ against the C++ side, including `tests/protocol/golden_frames.json`, which the
 host tests generate, and cover the console's firmware-update logic and the
 release feed written by [scripts/release_feed.mjs](scripts/release_feed.mjs)
 (see [tests/web/README.md](tests/web/README.md)). After an intentional protocol change, regenerate it with
-`OMEGA_WRITE_GOLDEN=1 build-host/omega_host_tests` and review the diff.
+`OMEGA_WRITE_GOLDEN=1 build-host/omega_host_tests`, review the diff, then run
+`node scripts/fuzz_seeds.mjs` to refresh the fuzz seeds and commit both (the
+web tests fail while the seeds are out of sync).
 
 Desktop simulator (`omega_sim`, no board; same toolchain as the host tests).
 The host test build above already builds it and runs its unit tests and
@@ -90,7 +92,7 @@ Every pull request runs:
 | [host_tests.yml](.github/workflows/host_tests.yml) | `host-tests` | the host unit tests above, plus the simulator's unit tests and scenarios, on gcc (coverage), clang (ASan/UBSan) and MSVC, all with `-Werror` |
 | [web_tests.yml](.github/workflows/web_tests.yml) | `web-tests` | the console's protocol tests above |
 | [e2e_tests.yml](.github/workflows/e2e_tests.yml) | `sim-console-e2e` | builds `omega_sim` and drives the console against it in headless Chrome (`tests/e2e/`) |
-| [fuzz.yml](.github/workflows/fuzz.yml) | `frame-fuzz` | libFuzzer on the frame parser: 60 s on pull requests and pushes, nightly and manual runs of up to 60 min with a cached evolved corpus, and an issue when a nightly run fails; see [tests/fuzz](tests/fuzz/README.md) |
+| [fuzz.yml](.github/workflows/fuzz.yml) | `frame-fuzz` | libFuzzer on the frame parser: 60 s on pull requests and pushes, nightly and manual runs of up to 60 min with a cached evolved corpus, and an issue when a nightly run or a manual run on `main` fails; see [tests/fuzz](tests/fuzz/README.md) |
 | [static_analysis.yml](.github/workflows/static_analysis.yml) | `static_analysis` | cppcheck, `--std=c++17`, global suppressions in [suppressions.txt](suppressions.txt) |
 | [security.yml](.github/workflows/security.yml) | `gitleaks`, `zizmor` | secret scan of the history and a lint of the workflows; also runs daily |
 | [size_delta.yml](.github/workflows/size_delta.yml) | `size_delta` | reporting only, not a required check |
@@ -124,10 +126,11 @@ components/omega_calibration/ calibration maths, sensor fault monitor, persisted
 components/omega_control/     pure, host-tested control-loop logic (nudge clicks, drift, sensor faults, output hold, the
                               recalibration gate) for both modes
 site/                         GitHub Pages landing page, first-flash page (ESP Web Tools) and console service worker, published by package_main.yml
-scripts/                      release_feed.mjs: builds latest.json, manifest.json and SHA256SUMS for the Pages site
+scripts/                      release_feed.mjs: builds latest.json, manifest.json and SHA256SUMS for the Pages site;
+                              fuzz_seeds.mjs: regenerates the golden-derived fuzz seeds
 tests/host/                   desktop unit tests against the real espp code (stubs only for the OTA headers)
 tests/web/, tests/protocol/   Node tests for the console, and the golden frames shared with the host tests
-tests/fuzz/                   libFuzzer harness for the frame parser
+tests/fuzz/                   libFuzzer harness, seed corpus and corpus replay driver (replay_main.cpp, run by ctest) for the frame parser
 tests/e2e/                    manual end-to-end check of the console against omega_sim in headless Chrome (run by e2e_tests.yml)
 sim/                          omega_sim, the desktop simulator: src/, OTA stubs, scenarios/ (run by ctest), tests/
 cmake/omega_host.cmake        shared desktop build of espp and the local components, used by tests/host and sim

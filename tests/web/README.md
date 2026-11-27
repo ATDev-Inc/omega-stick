@@ -21,7 +21,11 @@ node --test "tests/web/*.test.js"
 - `golden.test.js`: checks the JS encoders, `FrameParser` and decoders against
   `tests/protocol/golden_frames.json`, which the C++ host test
   `test_golden_frames.cpp` generates from the real service. Regenerate it
-  from C++ with `OMEGA_WRITE_GOLDEN=1 build-host/omega_host_tests`, never by hand.
+  from C++ with `OMEGA_WRITE_GOLDEN=1 build-host/omega_host_tests`, never by hand,
+  then run `node scripts/fuzz_seeds.mjs` to refresh the fuzz seeds and commit both.
+- `fuzz_corpus.test.js`: the golden-derived seeds in `tests/fuzz/corpus/`
+  (`request_*.bin`, `reply_*.bin`) match `golden_frames.json`; it fails when they
+  are out of sync (fix with `node scripts/fuzz_seeds.mjs`).
 - `update.test.js`: the pure firmware-update logic in `omega_protocol.js`
   (`inspectImage`, `compareFirmware`, `buildFlashPlan`, `buildRevertPlan`,
   `decideOutcome`, `describeUpdateError`, `formatProgress`), the post-update
