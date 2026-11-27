@@ -45,6 +45,9 @@ jobs:
               case "$minutes" in
                 ''|*[!0-9]*) minutes=10 ;;
               esac
+              # More than two digits is over the cap; checked by length so a
+              # huge value cannot overflow the numeric test.
+              if [ "${#minutes}" -gt 2 ]; then minutes=60; fi
               if [ "$minutes" -lt 1 ]; then minutes=1; fi
               if [ "$minutes" -gt 60 ]; then minutes=60; fi
               seconds=$((minutes * 60))
@@ -70,7 +73,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: fuzz-corpus
-          key: frame-fuzz-corpus-${{ github.run_id }}
+          key: frame-fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             frame-fuzz-corpus-
 
@@ -84,6 +87,35 @@ jobs:
           build-host/omega_frame_fuzz fuzz-corpus tests/fuzz/corpus \
             -max_total_time="$FUZZ_SECONDS" -timeout=10 -rss_limit_mb=2048
 
+      # Keeps the cache small: -merge=1 into a fresh directory keeps only the
+      # inputs that add coverage. The committed seeds are listed first as a
+      # merge input only (never as the destination, so they are not modified);
+      # libFuzzer then keeps whichever file covers each feature, which may be a
+      # seed-sized input, so the result is the smallest set covering both. Skips
+      # cleanly when the fuzzer or the corpus is missing or the merge fails
+      # (the unmerged corpus is kept), so a fuzz crash still reaches the
+      # artifact upload and the report.
+      - name: Minimize the evolved corpus
+        if: ${{ always() && github.event_name != 'pull_request' }}
+        env:
+          ASAN_OPTIONS: halt_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          if [ ! -x build-host/omega_frame_fuzz ] || [ ! -d fuzz-corpus ]; then
+            echo "Nothing to minimize"
+            exit 0
+          fi
+          rm -rf fuzz-corpus-merged
+          mkdir fuzz-corpus-merged
+          if build-host/omega_frame_fuzz -merge=1 fuzz-corpus-merged tests/fuzz/corpus fuzz-corpus \
+              -timeout=10 -rss_limit_mb=2048 && [ -n "$(ls -A fuzz-corpus-merged)" ]; then
+            rm -rf fuzz-corpus
+            mv fuzz-corpus-merged fuzz-corpus
+          else
+            echo "Merge failed or was empty, keeping the unminimized corpus"
+          fi
+          ls fuzz-corpus | wc -l
+
       # Not from pull requests: their caches are scoped to the PR and would
       # only add churn. Pull requests still restore the default branch's.
       - name: Save the evolved corpus
@@ -91,7 +123,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: fuzz-corpus
-          key: frame-fuzz-corpus-${{ github.run_id }}
+          key: frame-fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload crash artifacts
         if: failure()
@@ -102,17 +134,22 @@ jobs:
             crash-*
             timeout-*
             oom-*
+            leak-*
           if-no-files-found: ignore
 
-  # Opens or updates an issue when a scheduled or manual run on the default
-  # branch fails. Never runs for pull requests, pushes or other branches.
+  # Opens or updates an issue when a scheduled run, or a manual run on the
+  # default branch, fails. Never runs for pull requests, pushes or manual runs
+  # on other branches. Scheduled runs always use the default branch, and their
+  # event payload may lack the repository, so the branch is checked only for
+  # manual runs.
   report:
     needs: frame-fuzz
     if: >-
       ${{ always()
       && needs.frame-fuzz.result == 'failure'
-      && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+      && (github.event_name == 'schedule'
+      || (github.event_name == 'workflow_dispatch'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -128,8 +165,13 @@ jobs:
         run: |
           set -u
           mkdir -p crashes
-          gh run download "$RUN_ID" --name fuzz-crashes --dir crashes || true
-          file=$(find crashes -type f \( -name 'crash-*' -o -name 'timeout-*' -o -name 'oom-*' \) | sort | head -n 1)
+          # The artifact is absent when the job failed before any crash file
+          # (gh then errors too), so a failure here is recorded, not fatal.
+          download_note="The crash artifact could not be found or downloaded."
+          if gh run download "$RUN_ID" --name fuzz-crashes --dir crashes; then
+            download_note="The crash artifact was downloaded but holds no crash, timeout, oom or leak file."
+          fi
+          file=$(find crashes -type f \( -name 'crash-*' -o -name 'timeout-*' -o -name 'oom-*' -o -name 'leak-*' \) | sort | head -n 1)
 
           if [ -n "$file" ]; then
             title="Fuzz crash: frame-fuzz"
@@ -157,7 +199,9 @@ jobs:
           else
             title="Fuzz target broken: frame-fuzz"
             {
-              echo "The fuzz job failed without leaving a crash, timeout or oom file (build or setup failure, or the run was killed)."
+              echo "The fuzz job failed without leaving a crash, timeout, oom or leak file (for example a build or setup failure)."
+              echo
+              echo "$download_note"
               echo
               echo "Run: $RUN_URL"
             } > body.md

@@ -23,17 +23,30 @@ export const PREFIXES = ["request_", "reply_"];
 const SEED_NAME = /^(request|reply)_[a-z0-9_]+.bin$/;
 
 // Deletes only ever happen in this one directory, so refuse to run if it is
-// not where the repository keeps its corpus.
+// not where the repository keeps its corpus. The repository root is found a
+// second way, by walking up from the corpus directory to the first .git, and
+// must agree with the one derived from this script's location.
+function refuse(why) {
+  console.error(`fuzz_seeds: refusing to run: ${why} (${corpusDir})`);
+  process.exit(2);
+}
+
 function assertCorpusDir() {
-  const ok =
-    path.basename(scriptDir) === "scripts" &&
-    corpusDir === path.join(root, "tests", "fuzz", "corpus") &&
-    fs.existsSync(goldenPath) &&
-    fs.existsSync(path.join(root, "tests", "fuzz", "frame_fuzz.cpp")) &&
-    (!fs.existsSync(corpusDir) || fs.realpathSync(corpusDir) === fs.realpathSync(path.join(root, "tests", "fuzz", "corpus")));
-  if (!ok || (fs.existsSync(corpusDir) && fs.lstatSync(corpusDir).isSymbolicLink())) {
-    console.error(`fuzz_seeds: refusing to run, ${corpusDir} is not the repository tests/fuzz/corpus`);
-    process.exit(2);
+  if (path.basename(scriptDir) !== "scripts") refuse("not run from the repository scripts directory");
+  if (!fs.existsSync(corpusDir)) refuse("tests/fuzz/corpus does not exist");
+  if (fs.lstatSync(corpusDir).isSymbolicLink()) refuse("the corpus directory is a link");
+  const realRoot = fs.realpathSync(root);
+  const realCorpus = fs.realpathSync(corpusDir);
+  if (realCorpus !== path.join(realRoot, "tests", "fuzz", "corpus")) refuse("not tests/fuzz/corpus of this repository");
+  let dir = path.dirname(realCorpus);
+  while (!fs.existsSync(path.join(dir, ".git"))) {
+    const up = path.dirname(dir);
+    if (up === dir) refuse("no .git above the corpus directory");
+    dir = up;
+  }
+  if (dir !== realRoot) refuse("the repository root found from the corpus differs from the script's");
+  if (!fs.existsSync(path.join(realRoot, "tests", "protocol", "golden_frames.json"))) {
+    refuse("tests/protocol/golden_frames.json is missing");
   }
 }
 
@@ -57,7 +70,6 @@ function main() {
   const check = process.argv.includes("--check");
   const golden = JSON.parse(fs.readFileSync(goldenPath, "utf8"));
   const want = expectedSeeds(golden);
-  fs.mkdirSync(corpusDir, { recursive: true });
   let problems = 0;
 
   for (const name of fs.readdirSync(corpusDir).sort()) {
@@ -72,7 +84,14 @@ function main() {
   }
   for (const [name, bytes] of [...want].sort()) {
     const file = path.join(corpusDir, name);
-    const have = fs.existsSync(file) ? fs.readFileSync(file) : null;
+    // Never write through a link or into a non-file.
+    let have = null;
+    try {
+      if (!fs.lstatSync(file).isFile()) refuse(`${name} exists and is not a regular file`);
+      have = fs.readFileSync(file);
+    } catch (e) {
+      if (e.code !== "ENOENT") throw e;
+    }
     if (have && have.equals(bytes)) continue;
     console.log(`${check ? (have ? "differs" : "missing") : "write"}: ${name}`);
     if (check) problems++;
