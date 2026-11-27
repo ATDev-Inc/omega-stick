@@ -110,12 +110,18 @@ inline constexpr float DRAG_DEADZONE = 0.1f;
 // A quick change of direction passes through center, and the rise from there
 // to the other side looks like a nudge; so does the spring overshoot after a
 // nudge is released. To tell them apart, mouse_step() remembers, for each of
-// the four directions, the last sample where the stick was out (at least
-// REVERSAL_OUT_MAGNITUDE, the rest level of NUDGE_CAL_REST_MAGNITUDE), and
-// refuses a nudge whose rise started within nudge_hold_time of such a sample
-// more than REVERSAL_MIN_ANGLE_COS away from it (over 60 degrees). A real push
-// from rest has no recent out sample on another side, and a diagonal push
-// jittering across a quadrant boundary stays within the angle.
+// the four directions, roughly the farthest-out sample (REVERSAL_OUT_MAGNITUDE
+// or more, the rest level of NUDGE_CAL_REST_MAGNITUDE) of the last
+// nudge_hold_time. A nudge is refused when one of those samples:
+//  - is at or before the start of the rise (the lowest sample in the trailing
+//    window), so a curved push cannot veto itself with its own path;
+//  - is no more than nudge_hold_time before it, so the veto expires;
+//  - is at least REVERSAL_OUT_MAGNITUDE farther out than where the rise
+//    started, so a stick resting off center does not veto itself; and
+//  - points more than 60 degrees (REVERSAL_MIN_ANGLE_COS) away from the
+//    current position, so a diagonal push jittering across a quadrant boundary
+//    still clicks.
+// A push from rest or from a small offset has no such sample, so it clicks.
 inline constexpr float REVERSAL_OUT_MAGNITUDE = 0.1f;
 inline constexpr float REVERSAL_MIN_ANGLE_COS = 0.5f;
 
@@ -616,12 +622,15 @@ struct MouseState {
     float magnitude{0.0f};
   };
   std::deque<MagnitudeSample> recent;
-  /// The last sample where the stick was out (REVERSAL_OUT_MAGNITUDE or more)
-  /// in each direction, indexed by NudgeDirection minus one. Expires by time,
-  /// so restart_nudge_history() leaves it alone.
+  /// Roughly the farthest-out sample (REVERSAL_OUT_MAGNITUDE or more) of the
+  /// last nudge_hold_time in each direction, indexed by NudgeDirection minus
+  /// one: a slot is replaced when it is empty, older than nudge_hold_time, or
+  /// the new sample is at least as far out. Expires by time, so
+  /// restart_nudge_history() leaves it alone.
   struct OutSample {
     Clock::time_point at{};
     float x{0.0f}, y{0.0f};
+    float magnitude{0.0f};
     bool valid{false};
   };
   std::array<OutSample, 4> last_out{};
@@ -677,16 +686,17 @@ inline void drag_delta(float ex, float ey, MouseReport &mouse) {
   mouse.dy = to_delta(ey * scale);
 }
 
-// True if the rise being measured began within `hold` of an out sample on
-// another side of center (see REVERSAL_OUT_MAGNITUDE). The comparison is made
-// at the start of the rise, not now, so the veto cannot lapse while the rise
-// is still inside the trailing window.
+// True if the rise being measured is a reversal: see REVERSAL_OUT_MAGNITUDE
+// for the conditions. The comparison is made at the start of the rise, not
+// now, so the veto cannot lapse while the rise is still inside the trailing
+// window.
 inline bool is_reversal(const MouseState &s, float x, float y, float mag,
                         std::chrono::milliseconds hold) {
-  const Clock::time_point rise_start = s.recent.front().at;
+  const MouseState::MagnitudeSample &start = s.recent.front();
   for (const auto &o : s.last_out) {
-    if (o.valid && rise_start - o.at <= hold &&
-        o.x * x + o.y * y < REVERSAL_MIN_ANGLE_COS * std::hypot(o.x, o.y) * mag) {
+    if (o.valid && o.at <= start.at && start.at - o.at <= hold &&
+        o.magnitude >= start.magnitude + REVERSAL_OUT_MAGNITUDE &&
+        o.x * x + o.y * y < REVERSAL_MIN_ANGLE_COS * o.magnitude * mag) {
       return true;
     }
   }
@@ -782,7 +792,11 @@ inline StepOutput mouse_step(MouseState &s, const StepInput &in) {
   }
 
   if (in.stick.read_ok && cur_mag >= REVERSAL_OUT_MAGNITUDE) {
-    s.last_out[static_cast<std::size_t>(classify_nudge(jx, jy)) - 1] = {in.now, jx, jy, true};
+    auto &slot = s.last_out[static_cast<std::size_t>(classify_nudge(jx, jy)) - 1];
+    if (!slot.valid || in.now - slot.at > nudge_settings.nudge_hold_time ||
+        cur_mag >= slot.magnitude) {
+      slot = {in.now, jx, jy, cur_mag, true};
+    }
   }
 
   // --- Per-report mouse update: runs every 10ms iteration ---

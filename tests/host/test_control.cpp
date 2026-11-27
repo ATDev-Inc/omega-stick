@@ -1893,6 +1893,8 @@ TEST(nudge_calibration_gate_cancel_after_finish_does_not_kill_the_next_start) {
   CHECK(gate.request_start(ec));
   CHECK(gate.take_start());
   gate.finish();
+  // Sequential behaviour only: the race (a finish() between request_cancel()'s
+  // load and store in the old gate) cannot be reproduced in a unit test.
   CHECK(!gate.request_cancel()); // too late: nothing to cancel
   CHECK(gate.request_start(ec));
   CHECK(gate.take_start());
@@ -1913,4 +1915,46 @@ TEST(nudge_calibration_gate_cancel_while_requested_is_taken_after_the_start) {
   CHECK(gate.busy()); // until finish()
   gate.finish();
   CHECK(!gate.busy());
+}
+
+// ---- reversal veto: only samples before the rise, clearly farther out --------
+
+TEST(control_nudge_clicks_a_curved_push_whose_path_leans_sideways_first) {
+  oc::MouseState s;
+  const float pts[][2] = {{0, 0},
+                          {0, 0},
+                          {0.15f, 0},
+                          {0.1f, FORWARD_Y * 0.4f},
+                          {0, FORWARD_Y * 0.7f},
+                          {0, FORWARD_Y * 0.9f}};
+  int t = 0;
+  for (const auto &p : pts) {
+    oc::mouse_step(s, input(p[0], p[1], t));
+    t += 10;
+  }
+  CHECK(s.nudge == NudgeDirection::FORWARD);
+}
+
+TEST(control_nudge_clicks_from_a_resting_offset_at_a_wide_angle_to_it) {
+  oc::MouseState s;
+  for (int t = 0; t <= 200; t += 10) {
+    oc::mouse_step(s, input(0.12f, 0.0f, t));
+  }
+  oc::mouse_step(s, input(0.12f, FORWARD_Y * 0.4f, 210));
+  oc::mouse_step(s, input(0.12f, FORWARD_Y * 0.8f, 220));
+  CHECK(s.nudge == NudgeDirection::FORWARD);
+}
+
+TEST(control_nudge_ignores_a_fast_reversal_that_skips_center) {
+  oc::MouseState s;
+  oc::mouse_step(s, calibrated_input(0.0f, 0.0f, 0));
+  int t = ease_to(s, -0.6f, 0.0f, 0);
+  std::vector<oc::MouseReport> reports;
+  t = hold_stick(s, reports, -0.6f, 0.0f, t, 100);
+  const float xs[] = {-0.1f, 0.4f, 0.6f, 0.6f, 0.6f};
+  for (const float x : xs) {
+    reports.push_back(oc::mouse_step(s, calibrated_input(x, 0.0f, t)).mouse);
+    t += 10;
+  }
+  CHECK(!any_click_or_wheel(reports));
 }
