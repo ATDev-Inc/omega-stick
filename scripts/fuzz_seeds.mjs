@@ -20,7 +20,7 @@ const goldenPath = path.join(root, "tests", "protocol", "golden_frames.json");
 const corpusDir = path.join(root, "tests", "fuzz", "corpus");
 
 export const PREFIXES = ["request_", "reply_"];
-const SEED_NAME = /^(request|reply)_[a-z0-9_]+.bin$/;
+const SEED_NAME = /^(request|reply)_[a-z0-9_]+\.bin$/;
 
 // Deletes only ever happen in this one directory, so refuse to run if it is
 // not where the repository keeps its corpus. The repository root is found a

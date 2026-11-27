@@ -115,6 +115,12 @@ jobs:
             echo "Merge failed or was empty, keeping the unminimized corpus"
           fi
           ls fuzz-corpus | wc -l
+          # An input that only crashes during the merge would otherwise pass:
+          # fail the job so the upload and the report pick the file up.
+          if ls crash-* leak-* timeout-* oom-* > /dev/null 2>&1; then
+            echo "::error::Crash, leak, timeout or oom file present after the merge"
+            exit 1
+          fi
 
       # Not from pull requests: their caches are scoped to the PR and would
       # only add churn. Pull requests still restore the default branch's.
