@@ -4,8 +4,9 @@
 #include <cstdint>
 
 #include "hid-rp-gamepad.hpp"
-// TODO: add config option for chosing L or R port joystick-- default to R or something
-//  untested code
+// A left or right stick setting (as in #114) is only needed if the XAC port the
+// stick is plugged into does not decide which thumbstick it drives. Not yet
+// confirmed on XAC hardware (see D3).
 
 namespace espp {
 
@@ -98,12 +99,12 @@ public:
   /**
    * @brief Set only the X axis using raw 8-bit data.
    */
-  constexpr void set_x(std::uint8_t x) { Base::set_joystick_axis(2, x); }
+  constexpr void set_x(std::uint8_t x) { Base::set_joystick_axis(0, x); }
 
   /**
    * @brief Set only the Y axis using raw 8-bit data.
    */
-  constexpr void set_y(std::uint8_t y) { Base::set_joystick_axis(3, y); }
+  constexpr void set_y(std::uint8_t y) { Base::set_joystick_axis(1, y); }
 
   /**
    * @brief Set a button.

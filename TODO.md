@@ -74,10 +74,11 @@ first-release list is the hardware pass.
 - [ ] `OmegaStore` saves in place (truncate, write), with no temporary file
       and rename, so a power loss mid-save can lose the file. Make the save
       atomic (noticed in #49).
-- [ ] XAC: confirm the port-to-axis mapping on a real Xbox Adaptive Controller,
-      then stop writing X/Y to all four axes. Closes #2.
-- [ ] XAC: the `TODO` in `components/xac/include/xac.hpp` asks for a left or
-      right stick option. Lands with the mapping fix or in M2.
+- [ ] XAC: confirm the port-to-axis mapping on a real Xbox Adaptive Controller.
+      The firmware now writes X/Y only (#133), expecting the XAC port to decide
+      the thumbstick. Closes #2.
+- [ ] XAC: a left or right stick setting (#114), only if the bench test shows
+      the port does not decide the thumbstick.
 - [ ] Status LED for sensor fault and update states (STA-1, STA-2). Still open
       under D21.
 - [ ] D22 rule 2: whether the reset log should judge a pending image's first

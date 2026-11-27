@@ -112,4 +112,14 @@ TEST(xac_stick_leaves_z_and_rz_centered) {
   CHECK(int(bytes[Y]) != center);
   CHECK_EQ(int(bytes[Z]), center);
   CHECK_EQ(int(bytes[RZ]), center);
+
+  // The raw 8-bit setters write X/Y too.
+  Report raw;
+  raw.set_x(std::uint8_t{0x20});
+  raw.set_y(std::uint8_t{0xE0});
+  const auto rb = raw.get_report();
+  CHECK_EQ(int(rb[X]), 0x20);
+  CHECK_EQ(int(rb[Y]), 0xE0);
+  CHECK_EQ(int(rb[Z]), center);
+  CHECK_EQ(int(rb[RZ]), center);
 }

@@ -11,10 +11,12 @@ what each part of the number means and how a release is cut.
 
 ### Changed
 
-- **In XAC mode the stick moves one thumbstick, not both.** The stick now
-  drives only the X/Y axes, and the XAC port you plug it into decides whether
-  it is the left or right thumbstick. Before, it also copied its movement onto
-  the second stick's axes. ([#133](https://github.com/ATDev-Inc/omega-stick/pull/133))
+- **In XAC mode the stick sends only its X/Y axes.** Before, it also copied
+  its movement onto the Z/RZ axes. The XAC port you plug it into is expected
+  to decide whether it is the left or right thumbstick; that is not yet
+  confirmed on XAC hardware. If your XAC setup relied on the copy, the stick
+  may stop moving after this update.
+  ([#133](https://github.com/ATDev-Inc/omega-stick/pull/133))
 
 ### Added
 
