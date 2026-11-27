@@ -52,7 +52,9 @@ against the C++ side, including `tests/protocol/golden_frames.json`, which the
 host tests generate, and cover the console's firmware-update logic and the
 release feed written by [scripts/release_feed.mjs](scripts/release_feed.mjs)
 (see [tests/web/README.md](tests/web/README.md)). After an intentional protocol change, regenerate it with
-`OMEGA_WRITE_GOLDEN=1 build-host/omega_host_tests` and review the diff.
+`OMEGA_WRITE_GOLDEN=1 build-host/omega_host_tests`, review the diff, then run
+`node scripts/fuzz_seeds.mjs` to refresh the fuzz seeds and commit both (the
+web tests fail while the seeds are out of sync).
 
 Desktop simulator (`omega_sim`, no board; same toolchain as the host tests).
 The host test build above already builds it and runs its unit tests and
@@ -124,10 +126,11 @@ components/omega_calibration/ calibration maths, sensor fault monitor, persisted
 components/omega_control/     pure, host-tested control-loop logic (nudge clicks, drift, sensor faults, output hold, the
                               recalibration gate) for both modes
 site/                         GitHub Pages landing page, first-flash page (ESP Web Tools) and console service worker, published by package_main.yml
-scripts/                      release_feed.mjs: builds latest.json, manifest.json and SHA256SUMS for the Pages site
+scripts/                      release_feed.mjs: builds latest.json, manifest.json and SHA256SUMS for the Pages site;
+                              fuzz_seeds.mjs: regenerates the golden-derived fuzz seeds
 tests/host/                   desktop unit tests against the real espp code (stubs only for the OTA headers)
 tests/web/, tests/protocol/   Node tests for the console, and the golden frames shared with the host tests
-tests/fuzz/                   libFuzzer harness for the frame parser
+tests/fuzz/                   libFuzzer harness, seed corpus and corpus replay driver (replay_main.cpp, run by ctest) for the frame parser
 tests/e2e/                    manual end-to-end check of the console against omega_sim in headless Chrome (run by e2e_tests.yml)
 sim/                          omega_sim, the desktop simulator: src/, OTA stubs, scenarios/ (run by ctest), tests/
 cmake/omega_host.cmake        shared desktop build of espp and the local components, used by tests/host and sim

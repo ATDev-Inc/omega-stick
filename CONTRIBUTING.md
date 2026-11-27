@@ -181,8 +181,8 @@ over widening the global list.
 5. Open a pull request and fill in the template. Say which hardware and which
    host OS you tested on, or say explicitly that you could not test on hardware.
    That is fine, just tell us so a maintainer can.
-6. CI runs a build, static analysis, the host tests, the web tests, a fuzzing
-   pass and security scans on every PR. Build, static analysis and the tests
+6. CI runs a build, static analysis, the host tests, the web tests, a short fuzzing
+   pass and security scans on every PR (fuzzing also runs longer nightly). Build, static analysis and the tests
    should pass.
 
 Maintainers may ask for changes. Accessibility tradeoffs in particular tend to
@@ -240,7 +240,8 @@ every pull request:
 - **Web console tests** in [tests/web](tests/web/README.md) under Node
   (`web_tests.yml`), including golden frames shared with the C++ side.
 - **Fuzzing** of the frame parser and calibration service in
-  [tests/fuzz](tests/fuzz/README.md), a short libFuzzer run (`fuzz.yml`).
+  [tests/fuzz](tests/fuzz/README.md), a short libFuzzer run on every PR and a longer one nightly, with crashes filed
+  as issues (`fuzz.yml`).
 - **Static analysis** with cppcheck (`static_analysis.yml`), a secret scan and a
   workflow lint (`security.yml`), and a binary size delta comment
   (`size_delta.yml`).
@@ -314,7 +315,9 @@ If you change the calibration store, the console protocol, the calibration
 file format, the control loop, or a driver's register handling, add or update a
 test alongside the change. Protocol changes must keep the C++ and JavaScript
 sides in step: regenerate `tests/protocol/golden_frames.json` (see
-tests/host/README.md) and the web tests will check the console against it.
+tests/host/README.md) and the web tests will check the console against it. Then
+run `node scripts/fuzz_seeds.mjs` to refresh the fuzz seeds and commit both; the
+web tests fail while the seeds are out of sync.
 
 **Known-bug tests.** A test registered with `XFAIL_TEST` documents behaviour
 that is currently wrong. It is expected to fail and does not turn the run red.
