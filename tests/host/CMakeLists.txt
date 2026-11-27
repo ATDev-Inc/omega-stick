@@ -90,6 +90,22 @@ target_link_libraries(omega_host_tests PRIVATE espp_host)
 # ---- compiler flags ---------------------------------------------------------
 omega_host_apply_flags(omega_host_tests)
 
+# ---- corpus replay (tests/fuzz) ----------------------------------------------
+# The fuzz harness without libFuzzer: replay_main.cpp feeds every file in the
+# committed corpus to LLVMFuzzerTestOneInput and checks that each request seed
+# draws a reply (OMEGA_FUZZ_COUNT_REPLIES, this target only). Builds with any
+# compiler, always.
+add_executable(omega_frame_replay
+  "${OMEGA_ROOT}/tests/fuzz/frame_fuzz.cpp"
+  "${OMEGA_ROOT}/tests/fuzz/replay_main.cpp")
+target_compile_definitions(omega_frame_replay PRIVATE OMEGA_FUZZ_COUNT_REPLIES)
+target_include_directories(omega_frame_replay PRIVATE
+  "${OMEGA_ROOT}/components/omega_calibration/include"
+  # calibration_service.hpp includes the ESP-only OTA headers.
+  "${CMAKE_CURRENT_SOURCE_DIR}/stubs")
+target_link_libraries(omega_frame_replay PRIVATE espp_host)
+omega_host_apply_flags(omega_frame_replay)
+
 # ---- libFuzzer harness (tests/fuzz) ------------------------------------------
 # Clang only; needs OMEGA_HOST_SANITIZE so espp_host carries the same
 # instrumentation. Not part of the default build or of ctest.
@@ -116,6 +132,9 @@ endif()
 enable_testing()
 add_test(NAME omega_host_tests COMMAND omega_host_tests)
 set_tests_properties(omega_host_tests PROPERTIES TIMEOUT 60)
+add_test(NAME omega_frame_replay
+  COMMAND omega_frame_replay "${OMEGA_ROOT}/tests/fuzz/corpus")
+set_tests_properties(omega_frame_replay PROPERTIES TIMEOUT 60)
 
 # The desktop simulator (sim/) shares espp_host and the flags above and adds its
 # own tests and headless scenarios to the same ctest run.

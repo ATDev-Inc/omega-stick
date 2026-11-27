@@ -18,6 +18,12 @@
 #include "dispatcher.hpp"
 #include "omega_store.hpp"
 
+#ifdef OMEGA_FUZZ_COUNT_REPLIES
+// Replay build only (tests/fuzz/replay_main.cpp): counts the replies the
+// service and the discovery module send, so a seed can be shown to reach a handler.
+size_t omega_fuzz_reply_count = 0;
+#endif
+
 namespace {
 
 struct Harness {
@@ -38,7 +44,13 @@ struct Harness {
       , store({.calibration_path = dir / "omega_calibration.cfg",
                .settings_path = dir / "omega_settings.cfg"})
       , service({.store = store,
-                 .send = [](std::span<const uint8_t>) { return true; },
+                 .send =
+                     [](std::span<const uint8_t>) {
+#ifdef OMEGA_FUZZ_COUNT_REPLIES
+                       ++omega_fuzz_reply_count;
+#endif
+                       return true;
+                     },
                  .start_calibration = [](std::error_code &) { return true; },
                  .log_level = espp::Logger::Verbosity::NONE}) {
     espp::OmegaCalibration::CenterResult center;
@@ -53,7 +65,11 @@ struct Harness {
     store.set_input_mode(espp::OmegaStore::InputMode::MOUSE);
     dispatcher.register_module(service);
     dispatcher.set_device_info("omega-stick", "fuzz");
-    dispatcher.serve_discovery([](std::span<const uint8_t>) {});
+    dispatcher.serve_discovery([](std::span<const uint8_t>) {
+#ifdef OMEGA_FUZZ_COUNT_REPLIES
+      ++omega_fuzz_reply_count;
+#endif
+    });
   }
 };
 
@@ -65,12 +81,14 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
   // Whole buffer, straight to the service and through the dispatcher.
   h.service.reset_parser();
+  h.dispatcher.reset();
   h.service.feed(input);
   h.dispatcher.feed(input);
 
   // Same bytes in input-derived chunks (1..16 bytes) to stress resync across
   // feed() boundaries.
   h.service.reset_parser();
+  h.dispatcher.reset();
   size_t pos = 0;
   while (pos < size) {
     const size_t chunk = std::min<size_t>(size - pos, 1 + (data[pos] & 0x0F));
