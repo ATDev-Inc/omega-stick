@@ -3712,7 +3712,11 @@
       busy = true; updateUI(); setStatus("busy", "Starting nudge calibration...");
       try {
         await transact(TYPE.START_NUDGE_CALIBRATION, null, [TYPE.OK], CMD_TIMEOUT_MS, 0);
-        logLine("sys", "Nudge calibration started. The stick does not move the cursor or click until it ends.");
+        // A refused start's FAILED report can beat the OK: then it has already
+        // ended, and "started" would read after its error.
+        if (nudgeCalRunning) {
+          logLine("sys", "Nudge calibration started. The stick does not move the cursor or click until it ends.");
+        }
       } catch (e) {
         logLine("err", "START_NUDGE_CALIBRATION failed: " + e.message);
         if (nudgeCalRunning) endNudgeCalibrationView("Nudge calibration could not start: " + e.message);
