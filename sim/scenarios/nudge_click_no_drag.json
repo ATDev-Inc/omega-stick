@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "name": "a held left click does not drag while the stick eases back to center",
+  "steps": [
+    { "at_ms": 0, "pattern": "calibrate" },
+    { "at_ms": 500, "action": "recalibrate" },
+    { "at_ms": 40000, "expect": { "calibrated": true } },
+    { "at_ms": 40500, "action": "set_nudge_enabled", "value": true },
+    { "at_ms": 41000, "stick": [0, 0] },
+    { "at_ms": 41100, "stick": [0, 1] },
+    { "at_ms": 41300, "expect": { "clicked": "left" } },
+    { "at_ms": 42000, "stick": [0, 1] },
+    { "at_ms": 42100, "expect": { "mouse_moved": "none" } },
+    { "at_ms": 44000, "stick": [0, 1] },
+    { "at_ms": 44800, "expect": { "mouse_moved": "none" } },
+    { "at_ms": 49000, "stick": [0, 0] },
+    { "at_ms": 50000, "stick": [0, 0] }
+  ]
+}
