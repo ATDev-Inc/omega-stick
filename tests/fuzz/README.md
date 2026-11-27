@@ -28,7 +28,8 @@ Between runs the inputs libFuzzer found are kept in the Actions cache
 fuzzer is started with the evolved directory `fuzz-corpus/` first and
 `tests/fuzz/corpus` second, so new inputs land in the cache and the committed
 seeds are never modified. A cache entry is only readable from its own branch
-and the default branch, so pull requests start from what `main` saved.
+and the default branch, so pull requests start from what `main` saved. Pull
+request runs do not save their own entry.
 
 A failed nightly or manual run on the default branch also opens an issue, see
 [Crash issues](#crash-issues).

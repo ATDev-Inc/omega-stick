@@ -84,8 +84,10 @@ jobs:
           build-host/omega_frame_fuzz fuzz-corpus tests/fuzz/corpus \
             -max_total_time="$FUZZ_SECONDS" -timeout=10 -rss_limit_mb=2048
 
+      # Not from pull requests: their caches are scoped to the PR and would
+      # only add churn. Pull requests still restore the default branch's.
       - name: Save the evolved corpus
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: fuzz-corpus
