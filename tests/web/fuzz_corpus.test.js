@@ -8,6 +8,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 
 const root = path.join(__dirname, "..", "..");
 const corpusDir = path.join(root, "tests", "fuzz", "corpus");
@@ -31,10 +32,31 @@ test("no stale golden-derived fuzz seeds", () => {
   assert.deepEqual(extra, [], `fuzz seeds with no golden frame (request_/reply_ names are reserved for generated seeds). ${HINT}`);
 });
 
-test("fuzz seed bytes match the golden frames", () => {
+test("fuzz seeds are regular files with the golden bytes", () => {
   for (const [name, bytes] of expected) {
     const file = path.join(corpusDir, name);
-    if (!fs.existsSync(file)) continue; // reported by the missing test
-    assert.ok(fs.readFileSync(file).equals(bytes), `${name} differs from golden_frames.json. ${HINT}`);
+    let st;
+    try {
+      st = fs.lstatSync(file);
+    } catch (e) {
+      assert.fail(`${name} is missing (${e.code}). ${HINT}`);
+    }
+    assert.ok(st.isFile(), `${name} is not a regular file (a link or directory). ${HINT}`);
+    let have;
+    try {
+      have = fs.readFileSync(file);
+    } catch (e) {
+      assert.fail(`${name} cannot be read (${e.code}). ${HINT}`);
+    }
+    assert.ok(have.equals(bytes), `${name} differs from golden_frames.json. ${HINT}`);
+  }
+});
+
+test("the seed generator refuses golden names that are not plain file names", async () => {
+  const { expectedSeeds } = await import(pathToFileURL(path.join(root, "scripts", "fuzz_seeds.mjs")).href);
+  assert.equal(expectedSeeds(golden).size, expected.size);
+  for (const bad of ["../evil", "a/b", "a\b", "..", "x.y", "UP PER", ""]) {
+    const g = { requests: [{ name: bad, frame_hex: "00" }], replies: [] };
+    assert.throws(() => expectedSeeds(g), /valid seed file name/, `name ${JSON.stringify(bad)} must be refused`);
   }
 });

@@ -55,7 +55,12 @@ export function expectedSeeds(golden) {
   const seeds = new Map();
   for (const [key, prefix] of [["requests", "request_"], ["replies", "reply_"]]) {
     for (const entry of golden[key]) {
-      seeds.set(`${prefix}${entry.name.toLowerCase()}.bin`, Buffer.from(entry.frame_hex, "hex"));
+      const name = `${prefix}${String(entry.name).toLowerCase()}.bin`;
+      // A golden name with a separator or ".." must never reach path.join.
+      if (!SEED_NAME.test(name) || path.basename(name) !== name) {
+        throw new Error(`golden frame name ${JSON.stringify(entry.name)} does not make a valid seed file name (${name})`);
+      }
+      seeds.set(name, Buffer.from(entry.frame_hex, "hex"));
     }
   }
   return seeds;
@@ -69,7 +74,13 @@ function main() {
   assertCorpusDir();
   const check = process.argv.includes("--check");
   const golden = JSON.parse(fs.readFileSync(goldenPath, "utf8"));
-  const want = expectedSeeds(golden);
+  let want;
+  try {
+    want = expectedSeeds(golden); // validates every name before anything is pruned or written
+  } catch (e) {
+    console.error(`fuzz_seeds: ${e.message}`);
+    process.exit(1);
+  }
   let problems = 0;
 
   for (const name of fs.readdirSync(corpusDir).sort()) {

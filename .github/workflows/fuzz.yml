@@ -23,6 +23,12 @@ jobs:
     runs-on: ubuntu-latest
     # Up to 60 minutes of fuzzing plus the build and cache steps.
     timeout-minutes: 90
+    # Runs that save the corpus cache (everything but pull requests) take turns
+    # per ref, so a later save cannot silently replace an earlier run's inputs.
+    # Pull requests do not save, so each gets its own group and runs freely.
+    concurrency:
+      group: ${{ github.event_name == 'pull_request' && format('frame-fuzz-pr-{0}', github.run_id) || format('frame-fuzz-corpus-{0}', github.ref) }}
+      cancel-in-progress: false
     steps:
       - name: Checkout repo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -117,8 +123,10 @@ jobs:
           ls fuzz-corpus | wc -l
           # An input that only crashes during the merge would otherwise pass:
           # fail the job so the upload and the report pick the file up.
-          if ls crash-* leak-* timeout-* oom-* > /dev/null 2>&1; then
-            echo "::error::Crash, leak, timeout or oom file present after the merge"
+          shopt -s nullglob
+          found=(crash-* leak-* timeout-* oom-*)
+          if [ "${#found[@]}" -gt 0 ]; then
+            echo "::error::Crash, leak, timeout or oom file present after the merge: ${found[*]}"
             exit 1
           fi
 
@@ -135,7 +143,8 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: fuzz-crashes
+          # Per attempt, so the report never reads an earlier attempt's files.
+          name: fuzz-crashes-${{ github.run_attempt }}
           path: |
             crash-*
             timeout-*
@@ -168,13 +177,14 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -u
           mkdir -p crashes
           # The artifact is absent when the job failed before any crash file
           # (gh then errors too), so a failure here is recorded, not fatal.
           download_note="The crash artifact could not be found or downloaded."
-          if gh run download "$RUN_ID" --name fuzz-crashes --dir crashes; then
+          if gh run download "$RUN_ID" --name "fuzz-crashes-$RUN_ATTEMPT" --dir crashes; then
             download_note="The crash artifact was downloaded but holds no crash, timeout, oom or leak file."
           fi
           file=$(find crashes -type f \( -name 'crash-*' -o -name 'timeout-*' -o -name 'oom-*' -o -name 'leak-*' \) | sort | head -n 1)
@@ -199,7 +209,7 @@ jobs:
                 echo
                 echo "Replay it with: base64 -d > $name, then build-host/omega_frame_fuzz $name"
               else
-                echo "The input is larger than 4 KB: download it from the fuzz-crashes artifact of the run."
+                echo "The input is larger than 4 KB: download it from the fuzz-crashes-$RUN_ATTEMPT artifact of the run."
               fi
             } > body.md
           else
@@ -218,8 +228,10 @@ jobs:
             label_args=(--label fuzz)
           fi
 
-          existing=$(gh issue list --state open --limit 100 --json number,title \
-            --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          # Search server-side so an older issue is found past the first page,
+          # then keep the exact title match.
+          existing=$(gh issue list --state open --search "\"$title\" in:title" --limit 20 \
+            --json number,title | jq -r --arg t "$title" 'map(select(.title == $t)) | .[0].number // empty')
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --body-file body.md
           else
