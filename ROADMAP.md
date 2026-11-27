@@ -51,8 +51,8 @@ A stick that can be handed to someone else for a session without a developer
 beside it.
 
 - Verify XAC mode on a real Xbox Adaptive Controller and pin down the
-  port-to-axis mapping, which today writes X/Y to all four axes. Closes
-  issue #2.
+  port-to-axis mapping. The firmware writes X/Y only, expecting the XAC port
+  to decide the thumbstick, which is not yet confirmed. Closes issue #2.
 - Done: the TMAG5273 driver defects (DEF-1 to DEF-3 in
   [requirements.md](docs/requirements.md#11-known-defects-to-fix-first)) and
   the three known-bug tests are fixed; what remains is confirming them on the
@@ -78,7 +78,8 @@ chosen so the stick works untouched.
 - Migration code for the saved-file schema when the first bump happens; the
   `schema=1` key is already written (PER-3).
 - On-device calibration gesture, for users who cannot reach the console (CAL-2).
-- XAC port selection (left or right stick) instead of the current fixed mapping.
+- XAC stick selection (left or right) in the firmware, only if the XAC port
+  turns out not to decide it.
 
 ### M3: USB identity and composite output, v0.3.0
 

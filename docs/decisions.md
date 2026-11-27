@@ -89,8 +89,10 @@ Caveat: `get_descriptor()` returns a fragment the caller must wrap in
 `GamepadInputReport` with 12 buttons, 8-bit axes (0 to 255; full deflection
 reaches 0 and 254, since hid-rp maps [-1, 1] to center 127 +/- 127), a hat, and
 triggers held at 0. It is carried in a gamepad-only descriptor, not alongside a
-mouse (see D2). `set_joystick` writes the stick X/Y onto all four axes (X, Y, Z,
-RZ) because the XAC's port-to-axis mapping is not yet confirmed. The gap is
+mouse (see D2). `set_joystick` writes the stick to X/Y only and keeps Z/RZ
+centered, on the expectation that the XAC port the stick is plugged into decides
+which XAC thumbstick it drives (2026-11-27, replacing a copy onto all four axes).
+That expectation is not yet confirmed on XAC hardware. The gap is
 tracked in [status.md](status.md#gaps-against-requirements-and-decisions).
 
 ## D4: Console support routes through the XAC USB-A port, not direct

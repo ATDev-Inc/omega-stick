@@ -32,7 +32,7 @@ the product must be, not where the work has reached.
 | Poll interval | OUT-5 ([requirements](requirements.md#4-host-output)) | 10 ms in both modes, not 1 ms |
 | On-device calibration gesture | CAL-2 ([requirements](requirements.md#2-calibration-and-centering)) | No stick gesture. Calibration runs only when requested from the console; a stick without a usable calibration holds its output neutral until then (D26) |
 | USB VID and PID | [D10](decisions.md#d10-free-pid-under-espressifs-vid-0x303a) | pid.codes VID `0x1209`, PID `0x0d32`, not an Espressif PID |
-| XAC hardware verification | [D3](decisions.md#d3-descriptor-shape-is-xy-zrz-4-bit-hat-n-buttons) | XAC mode is verified on real XAC hardware with a single joystick only, on the firmware in [#114](https://github.com/ATDev-Inc/omega-stick/pull/114), which is not merged; two joysticks at once are not verified (see the XAC row above). The port-to-axis mapping is unconfirmed, so stick X/Y is written to all four axes |
+| XAC hardware verification | [D3](decisions.md#d3-descriptor-shape-is-xy-zrz-4-bit-hat-n-buttons) | XAC mode is verified on real XAC hardware with a single joystick only, on the firmware in [#114](https://github.com/ATDev-Inc/omega-stick/pull/114), which is not merged; two joysticks at once are not verified (see the XAC row above). The firmware writes the stick to X/Y only, expecting the XAC port to decide which thumbstick it drives; that is unconfirmed on XAC hardware |
 
 ## Highest-value next action
 
