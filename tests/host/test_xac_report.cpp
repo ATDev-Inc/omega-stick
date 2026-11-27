@@ -100,3 +100,16 @@ TEST(xac_stick_x_moves_report_x) {
   CHECK_EQ(int(uy[Y]), int(Report::joystick_min));
   CHECK_EQ(int(uy[X]), int(c[X]));
 }
+
+TEST(xac_stick_leaves_z_and_rz_centered) {
+  Report r;
+  r.set_joystick(1.0f, -1.0f);
+  r.set_joystick(-0.5f, 0.75f);
+
+  const auto bytes = r.get_report();
+  const int center = Report::joystick_center;
+  CHECK(int(bytes[X]) != center);
+  CHECK(int(bytes[Y]) != center);
+  CHECK_EQ(int(bytes[Z]), center);
+  CHECK_EQ(int(bytes[RZ]), center);
+}

@@ -84,12 +84,10 @@ public:
     // ever handing it an out-of-range float.
     x = std::clamp(x, -1.0f, 1.0f);
     y = std::clamp(y, -1.0f, 1.0f);
-    // Base::set_right_joystick(x, y);
-    // Base::set_left_joystick(x, y);
-    Base::set_joystick_axis(0, x); // d-pad or nothing
-    Base::set_joystick_axis(1, y); // right stick x, left dpad
-    Base::set_joystick_axis(2, x); // right stick y
-    Base::set_joystick_axis(3, y); // left x, right d-pad
+    // X/Y only (hid-rp's left joystick, axes 0 and 1); Z/RZ stay centered.
+    // The XAC port the stick is plugged into is expected to decide which XAC
+    // thumbstick it drives. Not yet confirmed on XAC hardware (see D3).
+    Base::set_left_joystick(x, y);
   }
   constexpr void set_joystick(std::uint8_t x, std::uint8_t y) {
     Base::set_joystick_axis(0, x);
