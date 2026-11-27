@@ -47,11 +47,14 @@ what each part of the number means and how a release is cut.
   nudges were too small or slow to tell apart from moving the cursor),
   nothing changes and you can turn nudge clicks on with the current values
   instead. Mouse mode only; older firmware keeps the plain on/off switch.
+  ([#131](https://github.com/ATDev-Inc/omega-stick/pull/131))
 - **Drag with a held left click.** Push forward to click and keep the stick
-  pushed: after a moment the stick moves the cursor from where it was, with
-  the button still down, so you can highlight text or drag things in any
-  direction. Easing the stick back towards center lets go. A quick push and
-  release is still a plain click that does not move the cursor.
+  pushed: after a moment, steering sideways or further out moves the cursor
+  with the button still down, so you can highlight text or drag things.
+  Easing the stick back stops the cursor before the button lets go, so
+  returning to center does not drag. A quick push and release is still a
+  plain click that does not move the cursor.
+  ([#131](https://github.com/ATDev-Inc/omega-stick/pull/131))
 - **Keep your own copy of the console.** The console has a new "Save a copy of
   this page" button that downloads it as `omega_stick_console.html`, a single
   file that opens from your computer with no internet and connects to the
@@ -71,7 +74,12 @@ what each part of the number means and how a release is cut.
   clicks register more reliably and a little sooner, and nudge calibration can
   set the enter threshold close to your own push (about 0.75 for a full one)
   so ordinary cursor movement is less likely to click. Hand-tuned values keep
-  their meaning, but now respond to every push of that size.
+  their meaning, but now respond to every push of that size. Stopping a move
+  and nudging in a different direction right away (within the nudge time,
+  for a turn of more than about 60 degrees, so a 90 degree turn counts), a
+  quick change of direction, and the spring-back after a nudge no longer
+  count as a nudge and do not click.
+  ([#131](https://github.com/ATDev-Inc/omega-stick/pull/131))
 - **The joystick cap now screws on.** The cap could shift and fall off the
   joystick while in use. The joystick and topper models now have a screw
   thread; print both new parts together to get it. The holders and sockets

@@ -1055,7 +1055,9 @@ static bool run_omega_stick(std::mutex & /*m*/, std::condition_variable & /*cv*/
     EspPorts ports(tmag, store, js, usb, calibration_vendor, calibration_cdc, sensor_read_ok,
                    sensor_conversion_count, sensor_status, needs_calibration, recalibration_gate,
                    nudge_calibration_gate);
-    espp::omega_control::MouseState state;
+    // static: with its sample history the state is several KB, and this function
+    // runs once and never returns, so it need not take the task's stack.
+    static espp::omega_control::MouseState state;
     state.common.center = center;
     state.common.range = range;
     espp::omega_control::Clock::time_point next_position{}; // SET_POSITION_STREAM pacing

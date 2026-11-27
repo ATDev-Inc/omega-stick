@@ -97,11 +97,36 @@ inline constexpr bool INVERT_NUDGE_Y = false;
 //
 // A held left click (forward) drags: once it has been held for
 // nudge_hold_time, the stick moves the cursor relative to where it was then
-// (the anchor), so pushing, holding and steering highlights text, and easing
-// back towards center past the exit threshold lets go. Until then the anchor
-// follows the stick, so a plain push and release clicks without moving the
-// cursor. DRAG_DEADZONE keeps a hand holding the push still from creeping.
+// (the anchor), so pushing, holding and steering sideways or further out
+// highlights text. Easing back from the push stops the cursor (once the stick
+// is DRAG_DEADZONE short of the anchor's magnitude), so returning to center
+// never drags; the button stays down until the stick is at or below the exit
+// threshold, where it lets go. Pushing back out resumes dragging. Until the
+// hold has passed the anchor follows the stick, so a plain push and release
+// clicks without moving the cursor. DRAG_DEADZONE also keeps a hand holding
+// the push still from creeping.
 inline constexpr float DRAG_DEADZONE = 0.1f;
+
+// A quick change of direction passes through center, and the rise from there
+// to the other side looks like a nudge; so does the spring overshoot after a
+// nudge is released. To tell them apart, mouse_step() keeps the last
+// REVERSAL_HISTORY good samples and refuses a nudge when one of them:
+//  - was taken before the start of the rise (the lowest sample in the
+//    trailing window) and no more than nudge_hold_time before it, so a curved
+//    push cannot veto itself with its own path and the veto expires;
+//  - is at least REVERSAL_OUT_MAGNITUDE (the rest level of
+//    NUDGE_CAL_REST_MAGNITUDE) farther out than where the rise started, so a
+//    stick resting off center does not veto itself; and
+//  - points more than 60 degrees (REVERSAL_MIN_ANGLE_COS) away from the
+//    current position, so a diagonal push jittering across a quadrant boundary
+//    still clicks.
+// A push from rest or from a small offset has no such sample, so it clicks.
+// The look-back is exact, so a slow swing through center is refused as well as
+// a fast one. 256 samples cover twice MAX_NUDGE_TIME (1000 ms) at the 10 ms
+// poll; polling faster only shortens the look-back.
+inline constexpr std::size_t REVERSAL_HISTORY = 256;
+inline constexpr float REVERSAL_OUT_MAGNITUDE = 0.1f;
+inline constexpr float REVERSAL_MIN_ANGLE_COS = 0.5f;
 
 // The polling loop runs every 10ms. Emitting a wheel tick on every single
 // poll while a scroll nudge is held would scroll far too fast, so a tick is
@@ -600,6 +625,16 @@ struct MouseState {
     float magnitude{0.0f};
   };
   std::deque<MagnitudeSample> recent;
+  /// The last REVERSAL_HISTORY good samples, a ring buffer, for the reversal
+  /// veto (is_reversal()). restart_nudge_history() leaves it alone: it is what
+  /// catches the overshoot right after a release.
+  struct HistorySample {
+    Clock::time_point at{};
+    float x{0.0f}, y{0.0f}, magnitude{0.0f};
+  };
+  std::array<HistorySample, REVERSAL_HISTORY> history{};
+  std::size_t history_head{0}; ///< next slot to write
+  std::size_t history_count{0};
   /// When the held nudge started, and (left click) the stick position the
   /// drag moves the cursor relative to.
   Clock::time_point nudge_since{};
@@ -650,6 +685,25 @@ inline void drag_delta(float ex, float ey, MouseReport &mouse) {
   const float scale = (m - DRAG_DEADZONE) / m * SENSITIVITY;
   mouse.dx = to_delta(ex * scale);
   mouse.dy = to_delta(ey * scale);
+}
+
+// True if the rise being measured is a reversal: see REVERSAL_HISTORY for the
+// conditions. The look-back starts at the beginning of the rise, not now, so
+// the veto cannot lapse while the rise is still inside the trailing window.
+inline bool is_reversal(const MouseState &s, float x, float y, float mag,
+                        std::chrono::milliseconds hold) {
+  const MouseState::MagnitudeSample &start = s.recent.front();
+  for (std::size_t i = 0; i < s.history_count; ++i) {
+    const auto &p = s.history[(s.history_head + REVERSAL_HISTORY - 1 - i) % REVERSAL_HISTORY];
+    if (p.at < start.at - hold) {
+      break; // older samples are older still
+    }
+    if (p.at <= start.at && p.magnitude >= start.magnitude + REVERSAL_OUT_MAGNITUDE &&
+        p.x * x + p.y * y < REVERSAL_MIN_ANGLE_COS * p.magnitude * mag) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // Shared by both engines: feed the PRE-drift sample to the compensator,
@@ -726,7 +780,8 @@ inline StepOutput mouse_step(MouseState &s, const StepInput &in) {
     // Never on a failed read: the sensor fault monitor needs a few polls to
     // trip (D21), and a stale or bad sample must not click meanwhile.
     if (nudge_settings.nudge_enabled && in.stick.read_ok &&
-        rise >= nudge_settings.nudge_distance_threshold) {
+        rise >= nudge_settings.nudge_distance_threshold &&
+        !detail::is_reversal(s, jx, jy, cur_mag, nudge_settings.nudge_hold_time)) {
       s.nudge = classify_nudge(jx, jy);
       s.scroll_poll_count = 0;
       s.nudge_since = in.now;
@@ -737,6 +792,12 @@ inline StepOutput mouse_step(MouseState &s, const StepInput &in) {
     // Released: the next nudge has to rise from here.
     s.nudge = NudgeDirection::NONE;
     detail::restart_nudge_history(s, jx, jy, in.now);
+  }
+
+  if (in.stick.read_ok) {
+    s.history[s.history_head] = {in.now, jx, jy, cur_mag};
+    s.history_head = (s.history_head + 1) % REVERSAL_HISTORY;
+    s.history_count = std::min(s.history_count + 1, REVERSAL_HISTORY);
   }
 
   // --- Per-report mouse update: runs every 10ms iteration ---
@@ -763,8 +824,12 @@ inline StepOutput mouse_step(MouseState &s, const StepInput &in) {
     break;
   case NudgeDirection::FORWARD:
     // Left click held: drag relative to the anchor once settled (see DRAG_DEADZONE).
+    // Easing back from the push (short of the anchor's magnitude) does not
+    // drag; the exit threshold releases the button.
     if (settled) {
-      detail::drag_delta(jx - s.anchor_x, jy - s.anchor_y, mouse);
+      if (cur_mag >= std::hypot(s.anchor_x, s.anchor_y) - DRAG_DEADZONE) {
+        detail::drag_delta(jx - s.anchor_x, jy - s.anchor_y, mouse);
+      }
     } else {
       s.anchor_x = jx;
       s.anchor_y = jy;
@@ -899,6 +964,9 @@ inline void end_nudge_calibration(MouseState &s, Ports &ports, NudgeCalStatus st
                                   std::string message) {
   if (s.nudge_calibration.running()) {
     ports.nudge_calibration_report(s.nudge_calibration.stop(status, std::move(message)));
+    // Same fresh start as after a finished calibration (see mouse_tick()): the
+    // compensator's idle timer did not run while it was going.
+    s.common.drift.reset();
   }
 }
 
@@ -1163,37 +1231,56 @@ public:
   }
 
   /// Asks a pending or running calibration to stop. Returns whether there
-  /// was one (its CANCELLED report follows from the polling loop).
+  /// was one (its CANCELLED report follows from the polling loop). The request
+  /// is part of the state, so it cannot outlive the calibration it was for.
   bool request_cancel() {
-    if (state_.load() == State::Idle) {
-      return false;
+    State s = state_.load();
+    while (true) {
+      State next;
+      switch (s) {
+      case State::Requested:
+        next = State::RequestedCancel;
+        break;
+      case State::Running:
+        next = State::RunningCancel;
+        break;
+      case State::Idle:
+        return false;
+      default: // a cancel is already pending
+        return true;
+      }
+      if (state_.compare_exchange_weak(s, next)) {
+        return true;
+      }
     }
-    cancel_requested_.store(true);
-    return true;
   }
 
-  /// True exactly once per accepted start: moves it to running.
+  /// True exactly once per accepted start: moves it to running (still with its
+  /// cancel, if one was requested first).
   bool take_start() {
     State expected = State::Requested;
+    if (state_.compare_exchange_strong(expected, State::Running)) {
+      return true;
+    }
+    expected = State::RequestedCancel;
+    return state_.compare_exchange_strong(expected, State::RunningCancel);
+  }
+
+  /// True once per cancel request. The gate stays busy until finish().
+  bool take_cancel() {
+    State expected = State::RunningCancel;
     return state_.compare_exchange_strong(expected, State::Running);
   }
 
-  /// True once per cancel request.
-  bool take_cancel() { return cancel_requested_.exchange(false); }
-
   /// The calibration has sent its final report: accept a new start. A cancel
-  /// not yet taken belonged to this calibration and is dropped.
-  void finish() {
-    cancel_requested_.store(false);
-    state_.store(State::Idle);
-  }
+  /// not yet taken belonged to this calibration and goes with it.
+  void finish() { state_.store(State::Idle); }
 
   bool busy() const { return state_.load() != State::Idle; }
 
 private:
-  enum class State : uint8_t { Idle, Requested, Running };
+  enum class State : uint8_t { Idle, Requested, RequestedCancel, Running, RunningCancel };
   std::atomic<State> state_{State::Idle};
-  std::atomic<bool> cancel_requested_{false};
 };
 
 } // namespace espp::omega_control

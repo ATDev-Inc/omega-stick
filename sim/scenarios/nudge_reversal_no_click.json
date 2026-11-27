@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "name": "a quick change of direction does not click",
+  "steps": [
+    { "at_ms": 0, "pattern": "calibrate" },
+    { "at_ms": 500, "action": "recalibrate" },
+    { "at_ms": 40000, "expect": { "calibrated": true } },
+    { "at_ms": 40500, "action": "set_nudge_enabled", "value": true },
+    { "at_ms": 41000, "stick": [0, 0] },
+    { "at_ms": 41500, "stick": [-0.6, 0] },
+    { "at_ms": 42000, "stick": [-0.6, 0] },
+    { "at_ms": 42060, "stick": [0.6, 0] },
+    { "at_ms": 42500, "stick": [0.6, 0] },
+    { "at_ms": 43000, "stick": [0, 0] },
+    { "at_ms": 43500, "stick": [0, -0.6] },
+    { "at_ms": 44000, "stick": [0, -0.6] },
+    { "at_ms": 44060, "stick": [0, 0.6] },
+    { "at_ms": 44500, "stick": [0, 0.6] },
+    { "at_ms": 45000, "stick": [0, 0] },
+    { "at_ms": 46000, "expect": { "clicked": "none" } }
+  ]
+}

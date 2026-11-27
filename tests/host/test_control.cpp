@@ -1685,3 +1685,297 @@ TEST(control_held_right_click_and_scroll_still_do_not_move_the_cursor) {
     CHECK_EQ(out.mouse.dy, 0);
   }
 }
+
+// ---- left click: no drag on the way back ------------------------------------
+
+namespace {
+
+oc::StepInput calibrated_input(float x, float y, int ms) {
+  oc::StepInput in = input(x, y, ms);
+  in.settings.nudge_distance_threshold = 0.5f;
+  in.settings.nudge_exit_threshold = 0.45f;
+  in.settings.nudge_hold_time = milliseconds(100);
+  return in;
+}
+
+// Moves the stick in a straight line from (x0, y0) at t0 to (x1, y1) at t1, 10 ms
+// a poll, appending every report. Returns the next free time.
+int move_stick(oc::MouseState &s, std::vector<oc::MouseReport> &reports, float x0, float y0,
+               float x1, float y1, int t0, int t1) {
+  for (int t = t0 + 10; t <= t1; t += 10) {
+    const float f = static_cast<float>(t - t0) / static_cast<float>(t1 - t0);
+    reports.push_back(
+        oc::mouse_step(s, calibrated_input(x0 + (x1 - x0) * f, y0 + (y1 - y0) * f, t)).mouse);
+  }
+  return t1 + 10;
+}
+
+} // namespace
+
+TEST(control_left_click_does_not_drag_while_the_stick_returns_to_center) {
+  oc::MouseState s;
+  oc::mouse_step(s, calibrated_input(0.0f, 0.0f, 0));
+  std::vector<oc::MouseReport> reports;
+  move_stick(s, reports, 0.0f, 0.0f, 0.0f, FORWARD_Y * 0.9f, 0, 30);
+  CHECK(s.nudge == NudgeDirection::FORWARD);
+  // Held past nudge_hold_time, then eased back to center over 200 ms.
+  for (int t = 40; t <= 200; t += 10) {
+    reports.push_back(oc::mouse_step(s, calibrated_input(0.0f, FORWARD_Y * 0.9f, t)).mouse);
+  }
+  const std::size_t before_return = reports.size();
+  move_stick(s, reports, 0.0f, FORWARD_Y * 0.9f, 0.0f, 0.0f, 200, 400);
+  bool released = false;
+  for (std::size_t i = 0; i < reports.size(); ++i) {
+    if (reports[i].buttons == 0x01) {
+      CHECK_EQ(reports[i].dx, 0);
+      CHECK_EQ(reports[i].dy, 0);
+    } else if (i >= before_return) {
+      released = true;
+    }
+  }
+  CHECK(released);
+  CHECK(s.nudge == NudgeDirection::NONE);
+}
+
+TEST(control_left_click_still_drags_when_steered_sideways_or_further_out) {
+  oc::MouseState s;
+  oc::mouse_step(s, calibrated_input(0.0f, 0.0f, 0));
+  std::vector<oc::MouseReport> reports;
+  move_stick(s, reports, 0.0f, 0.0f, 0.0f, FORWARD_Y * 0.9f, 0, 30);
+  for (int t = 40; t <= 200; t += 10) {
+    oc::mouse_step(s, calibrated_input(0.0f, FORWARD_Y * 0.9f, t));
+  }
+  auto out = oc::mouse_step(s, calibrated_input(0.5f, FORWARD_Y * 0.9f, 210));
+  CHECK_EQ(out.mouse.buttons, 0x01);
+  CHECK(out.mouse.dx > 0);
+  // Eased back short of the push: no drag. Pushed out again: drags again.
+  out = oc::mouse_step(s, calibrated_input(0.0f, FORWARD_Y * 0.6f, 220));
+  CHECK_EQ(out.mouse.buttons, 0x01);
+  CHECK_EQ(out.mouse.dy, 0);
+  out = oc::mouse_step(s, calibrated_input(0.0f, FORWARD_Y * 1.3f, 230));
+  CHECK_EQ(out.mouse.buttons, 0x01);
+  CHECK(out.mouse.dy != 0);
+}
+
+// ---- fast reversals do not click --------------------------------------------
+
+namespace {
+
+// Eases the stick from rest to (x, y) over `ms`, slowly enough not to nudge.
+int ease_to(oc::MouseState &s, float x, float y, int t0, int ms = 400) {
+  std::vector<oc::MouseReport> r;
+  return move_stick(s, r, 0.0f, 0.0f, x, y, t0, t0 + ms);
+}
+
+bool any_click_or_wheel(const std::vector<oc::MouseReport> &reports) {
+  for (const auto &r : reports) {
+    if (r.buttons != 0 || r.wheel != 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Holds the stick at (x, y) for `ms` from t, appending the reports.
+int hold_stick(oc::MouseState &s, std::vector<oc::MouseReport> &reports, float x, float y, int t,
+               int ms) {
+  for (const int end = t + ms; t < end; t += 10) {
+    reports.push_back(oc::mouse_step(s, calibrated_input(x, y, t)).mouse);
+  }
+  return t;
+}
+
+} // namespace
+
+TEST(control_nudge_ignores_a_fast_left_to_right_reversal) {
+  oc::MouseState s;
+  oc::mouse_step(s, calibrated_input(0.0f, 0.0f, 0));
+  int t = ease_to(s, -0.6f, 0.0f, 0);
+  std::vector<oc::MouseReport> reports;
+  t = hold_stick(s, reports, -0.6f, 0.0f, t, 100);
+  t = move_stick(s, reports, -0.6f, 0.0f, 0.6f, 0.0f, t - 10, t + 50);
+  hold_stick(s, reports, 0.6f, 0.0f, t, 300);
+  CHECK(!any_click_or_wheel(reports));
+  CHECK(s.nudge == NudgeDirection::NONE);
+}
+
+TEST(control_nudge_ignores_a_fast_forward_to_back_reversal) {
+  oc::MouseState s;
+  oc::mouse_step(s, calibrated_input(0.0f, 0.0f, 0));
+  int t = ease_to(s, 0.0f, FORWARD_Y * 0.6f, 0);
+  std::vector<oc::MouseReport> reports;
+  t = hold_stick(s, reports, 0.0f, FORWARD_Y * 0.6f, t, 100);
+  t = move_stick(s, reports, 0.0f, FORWARD_Y * 0.6f, 0.0f, -FORWARD_Y * 0.6f, t - 10, t + 50);
+  hold_stick(s, reports, 0.0f, -FORWARD_Y * 0.6f, t, 300);
+  CHECK(!any_click_or_wheel(reports));
+}
+
+TEST(control_nudge_ignores_the_spring_overshoot_after_a_release) {
+  oc::MouseState s;
+  oc::mouse_step(s, calibrated_input(0.0f, 0.0f, 0));
+  std::vector<oc::MouseReport> reports;
+  move_stick(s, reports, 0.0f, 0.0f, 0.9f, 0.0f, 0, 30); // right click
+  CHECK(s.nudge == NudgeDirection::RIGHT);
+  for (int t = 40; t <= 200; t += 10) {
+    oc::mouse_step(s, calibrated_input(0.9f, 0.0f, t));
+  }
+  // Released, and the spring throws it 0.7 to the other side before it settles.
+  reports.clear();
+  int t = move_stick(s, reports, 0.9f, 0.0f, -0.7f, 0.0f, 200, 240);
+  hold_stick(s, reports, -0.7f, 0.0f, t, 200);
+  for (const auto &r : reports) {
+    CHECK_EQ(r.wheel, 0);
+  }
+  CHECK(s.nudge == NudgeDirection::NONE);
+}
+
+TEST(control_nudge_from_rest_still_clicks_and_a_diagonal_push_survives_boundary_jitter) {
+  {
+    oc::MouseState s;
+    oc::mouse_step(s, calibrated_input(0.0f, 0.0f, 0));
+    oc::mouse_step(s, calibrated_input(0.9f, 0.0f, 30));
+    CHECK(s.nudge == NudgeDirection::RIGHT);
+  }
+  // Toward (0.55, forward 0.55), wobbling a few degrees across the RIGHT/FORWARD boundary.
+  oc::MouseState s;
+  oc::mouse_step(s, calibrated_input(0.0f, 0.0f, 0));
+  const float xs[] = {0.2f, 0.45f, 0.58f, 0.52f};
+  const float ys[] = {0.2f, 0.45f, 0.52f, 0.58f};
+  bool clicked = false;
+  for (int i = 0; i < 4; ++i) {
+    const auto out = oc::mouse_step(s, calibrated_input(xs[i], FORWARD_Y * ys[i], 10 * (i + 1)));
+    clicked = clicked || out.mouse.buttons != 0;
+  }
+  CHECK(clicked);
+}
+
+TEST(control_nudge_works_again_once_the_reversal_window_has_passed) {
+  oc::MouseState s;
+  oc::mouse_step(s, calibrated_input(0.0f, 0.0f, 0));
+  int t = ease_to(s, -0.6f, 0.0f, 0);
+  std::vector<oc::MouseReport> reports;
+  t = move_stick(s, reports, -0.6f, 0.0f, 0.0f, 0.0f, t - 10, t + 50);
+  t = hold_stick(s, reports, 0.0f, 0.0f, t, 300); // rest longer than nudge_hold_time
+  CHECK(s.nudge == NudgeDirection::NONE);
+  const auto out = oc::mouse_step(s, calibrated_input(0.9f, 0.0f, t));
+  CHECK(s.nudge == NudgeDirection::RIGHT);
+  CHECK_EQ(out.mouse.buttons, 0x02);
+}
+
+// ---- nudge calibration end resets the drift compensator ---------------------
+
+TEST(control_cancelled_nudge_calibration_restarts_the_drift_idle_timer) {
+  FakePorts ports;
+  oc::MouseState s;
+  ports.clock = at(0);
+  oc::mouse_tick(s, input(0.0f, 0.0f, 0, false, 5.0f, 5.0f), ports); // idle since t = 0
+  oc::StepInput in = input(0.0f, 0.0f, 100, false, 5.0f, 5.0f);
+  in.nudge_calibration_start = true;
+  oc::mouse_tick(s, in, ports);
+  CHECK(s.nudge_calibration.running());
+  oc::mouse_tick(s, input(0.0f, 0.0f, 1500, false, 5.0f, 5.0f), ports);
+  ports.calls.clear();
+  // Cancelled more than the drift dwell (2 s) after the first tick.
+  in = input(0.0f, 0.0f, 2500, false, 5.0f, 5.0f);
+  in.nudge_calibration_cancel = true;
+  oc::mouse_tick(s, in, ports);
+  CHECK(!s.nudge_calibration.running());
+  CHECK_EQ(ports.count("apply_drift"), 0);
+  oc::mouse_tick(s, input(0.0f, 0.0f, 2510, false, 5.0f, 5.0f), ports);
+  CHECK_EQ(ports.count("apply_drift"), 0);
+}
+
+// ---- nudge calibration gate: cancel is part of the state --------------------
+
+TEST(nudge_calibration_gate_cancel_after_finish_does_not_kill_the_next_start) {
+  oc::NudgeCalibrationGate gate;
+  std::error_code ec;
+  CHECK(gate.request_start(ec));
+  CHECK(gate.take_start());
+  gate.finish();
+  // Sequential behaviour only: the race (a finish() between request_cancel()'s
+  // load and store in the old gate) cannot be reproduced in a unit test.
+  CHECK(!gate.request_cancel()); // too late: nothing to cancel
+  CHECK(gate.request_start(ec));
+  CHECK(gate.take_start());
+  CHECK(!gate.take_cancel());
+  CHECK(gate.busy());
+}
+
+TEST(nudge_calibration_gate_cancel_while_requested_is_taken_after_the_start) {
+  oc::NudgeCalibrationGate gate;
+  std::error_code ec;
+  CHECK(gate.request_start(ec));
+  CHECK(gate.request_cancel());
+  CHECK(gate.request_cancel()); // already pending
+  CHECK(!gate.take_cancel());   // not started yet
+  CHECK(gate.take_start());
+  CHECK(gate.take_cancel());
+  CHECK(!gate.take_cancel());
+  CHECK(gate.busy()); // until finish()
+  gate.finish();
+  CHECK(!gate.busy());
+}
+
+// ---- reversal veto: only samples before the rise, clearly farther out --------
+
+TEST(control_nudge_clicks_a_curved_push_whose_path_leans_sideways_first) {
+  oc::MouseState s;
+  const float pts[][2] = {{0, 0},
+                          {0, 0},
+                          {0.15f, 0},
+                          {0.1f, FORWARD_Y * 0.4f},
+                          {0, FORWARD_Y * 0.7f},
+                          {0, FORWARD_Y * 0.9f}};
+  int t = 0;
+  for (const float *p : pts) {
+    oc::mouse_step(s, input(p[0], p[1], t));
+    t += 10;
+  }
+  CHECK(s.nudge == NudgeDirection::FORWARD);
+}
+
+TEST(control_nudge_clicks_from_a_resting_offset_at_a_wide_angle_to_it) {
+  oc::MouseState s;
+  for (int t = 0; t <= 200; t += 10) {
+    oc::mouse_step(s, input(0.12f, 0.0f, t));
+  }
+  oc::mouse_step(s, input(0.12f, FORWARD_Y * 0.4f, 210));
+  oc::mouse_step(s, input(0.12f, FORWARD_Y * 0.8f, 220));
+  CHECK(s.nudge == NudgeDirection::FORWARD);
+}
+
+TEST(control_nudge_ignores_a_fast_reversal_that_skips_center) {
+  oc::MouseState s;
+  oc::mouse_step(s, calibrated_input(0.0f, 0.0f, 0));
+  int t = ease_to(s, -0.6f, 0.0f, 0);
+  std::vector<oc::MouseReport> reports;
+  t = hold_stick(s, reports, -0.6f, 0.0f, t, 100);
+  const float xs[] = {-0.1f, 0.4f, 0.6f, 0.6f, 0.6f};
+  for (const float x : xs) {
+    reports.push_back(oc::mouse_step(s, calibrated_input(x, 0.0f, t)).mouse);
+    t += 10;
+  }
+  CHECK(!any_click_or_wheel(reports));
+}
+
+TEST(control_nudge_ignores_a_smooth_swing_through_center_of_any_duration) {
+  for (int swing = 60; swing <= 400; swing += 20) {
+    oc::MouseState s;
+    int t = 0;
+    for (; t <= 500; t += 10) {
+      oc::mouse_step(s, input(-0.6f * static_cast<float>(t) / 500.0f, 0.0f, t));
+    }
+    for (int k = 0; k < 20; ++k, t += 10) {
+      oc::mouse_step(s, input(-0.6f, 0.0f, t));
+    }
+    const int t0 = t;
+    bool clicked = false;
+    for (; t <= t0 + swing + 200; t += 10) {
+      const float u = std::fmin(1.0f, static_cast<float>(t - t0) / static_cast<float>(swing));
+      const auto out = oc::mouse_step(s, input(-0.6f * std::cos(3.14159265f * u), 0.0f, t));
+      clicked = clicked || out.mouse.buttons != 0 || out.mouse.wheel != 0;
+    }
+    CHECK(!clicked);
+  }
+}
