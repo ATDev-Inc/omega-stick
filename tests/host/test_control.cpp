@@ -1928,7 +1928,7 @@ TEST(control_nudge_clicks_a_curved_push_whose_path_leans_sideways_first) {
                           {0, FORWARD_Y * 0.7f},
                           {0, FORWARD_Y * 0.9f}};
   int t = 0;
-  for (const auto &p : pts) {
+  for (const float *p : pts) {
     oc::mouse_step(s, input(p[0], p[1], t));
     t += 10;
   }
