@@ -91,8 +91,9 @@ with `issues: write`.
 
 - A crash, timeout, oom or leak file (LeakSanitizer is on): it opens `Fuzz crash: frame-fuzz`, or comments
   on the open one, with the run URL, the file name and the input in base64 (when
-  it is 4 KB or less; otherwise the input is in the `fuzz-crashes-<attempt>` artifact; the name carries the run
-  attempt so a rerun's report reads its own files).
+  it is 4 KB or less; otherwise the input is in the `fuzz-crashes-<attempt>` artifact). The fuzz job passes
+  the artifact name to the report job as an output, so a rerun of the whole workflow reads its own files and a
+  rerun of the report job alone still reads the files of the attempt that produced them.
 - No such file: it opens or comments on `Fuzz target broken: frame-fuzz` with
   the run URL.
 

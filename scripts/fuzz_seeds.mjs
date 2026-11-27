@@ -55,10 +55,16 @@ export function expectedSeeds(golden) {
   const seeds = new Map();
   for (const [key, prefix] of [["requests", "request_"], ["replies", "reply_"]]) {
     for (const entry of golden[key]) {
-      const name = `${prefix}${String(entry.name).toLowerCase()}.bin`;
+      if (typeof entry.name !== "string" || typeof entry.frame_hex !== "string") {
+        throw new Error(`golden frame ${JSON.stringify(entry)} needs a string name and frame_hex to make a valid seed file name`);
+      }
+      const name = `${prefix}${entry.name.toLowerCase()}.bin`;
       // A golden name with a separator or ".." must never reach path.join.
       if (!SEED_NAME.test(name) || path.basename(name) !== name) {
         throw new Error(`golden frame name ${JSON.stringify(entry.name)} does not make a valid seed file name (${name})`);
+      }
+      if (seeds.has(name)) {
+        throw new Error(`golden frame name ${JSON.stringify(entry.name)} repeats another one; not a valid seed file name`);
       }
       seeds.set(name, Buffer.from(entry.frame_hex, "hex"));
     }

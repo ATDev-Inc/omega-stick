@@ -55,8 +55,12 @@ test("fuzz seeds are regular files with the golden bytes", () => {
 test("the seed generator refuses golden names that are not plain file names", async () => {
   const { expectedSeeds } = await import(pathToFileURL(path.join(root, "scripts", "fuzz_seeds.mjs")).href);
   assert.equal(expectedSeeds(golden).size, expected.size);
-  for (const bad of ["../evil", "a/b", "a\b", "..", "x.y", "UP PER", ""]) {
+  for (const bad of ["../evil", "a/b", "a\\b", "..", "x.y", "UP PER", "", undefined, 7, null]) {
     const g = { requests: [{ name: bad, frame_hex: "00" }], replies: [] };
     assert.throws(() => expectedSeeds(g), /valid seed file name/, `name ${JSON.stringify(bad)} must be refused`);
   }
+  const missing = { requests: [{ frame_hex: "00" }], replies: [] };
+  assert.throws(() => expectedSeeds(missing), /valid seed file name/, "a missing name must be refused");
+  const twice = { requests: [{ name: "A", frame_hex: "00" }, { name: "a", frame_hex: "01" }], replies: [] };
+  assert.throws(() => expectedSeeds(twice), /valid seed file name/, "a repeated name must be refused");
 });

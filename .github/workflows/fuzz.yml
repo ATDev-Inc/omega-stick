@@ -23,6 +23,10 @@ jobs:
     runs-on: ubuntu-latest
     # Up to 60 minutes of fuzzing plus the build and cache steps.
     timeout-minutes: 90
+    # The crash artifact's name, for the report job. A rerun of the report job
+    # alone keeps this job's outputs from the attempt that produced the files.
+    outputs:
+      crash_artifact: ${{ steps.budget.outputs.artifact }}
     # Runs that save the corpus cache (everything but pull requests) take turns
     # per ref, so a later save cannot silently replace an earlier run's inputs.
     # Pull requests do not save, so each gets its own group and runs freely.
@@ -40,7 +44,9 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_MINUTES: ${{ inputs.minutes }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
+          echo "artifact=fuzz-crashes-$RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
           # 60 s for pull requests and pushes, 10 min nightly, and for a manual
           # run the minutes input, capped at 60.
           seconds=60
@@ -144,7 +150,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           # Per attempt, so the report never reads an earlier attempt's files.
-          name: fuzz-crashes-${{ github.run_attempt }}
+          name: ${{ steps.budget.outputs.artifact }}
           path: |
             crash-*
             timeout-*
@@ -177,14 +183,15 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RUN_ID: ${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
+          # From the fuzz job's own attempt, even when only this job is rerun.
+          ARTIFACT: ${{ needs.frame-fuzz.outputs.crash_artifact }}
         run: |
           set -u
           mkdir -p crashes
           # The artifact is absent when the job failed before any crash file
           # (gh then errors too), so a failure here is recorded, not fatal.
           download_note="The crash artifact could not be found or downloaded."
-          if gh run download "$RUN_ID" --name "fuzz-crashes-$RUN_ATTEMPT" --dir crashes; then
+          if [ -n "$ARTIFACT" ] && gh run download "$RUN_ID" --name "$ARTIFACT" --dir crashes; then
             download_note="The crash artifact was downloaded but holds no crash, timeout, oom or leak file."
           fi
           file=$(find crashes -type f \( -name 'crash-*' -o -name 'timeout-*' -o -name 'oom-*' -o -name 'leak-*' \) | sort | head -n 1)
@@ -209,7 +216,7 @@ jobs:
                 echo
                 echo "Replay it with: base64 -d > $name, then build-host/omega_frame_fuzz $name"
               else
-                echo "The input is larger than 4 KB: download it from the fuzz-crashes-$RUN_ATTEMPT artifact of the run."
+                echo "The input is larger than 4 KB: download it from the $ARTIFACT artifact of the run."
               fi
             } > body.md
           else
@@ -229,9 +236,12 @@ jobs:
           fi
 
           # Search server-side so an older issue is found past the first page,
-          # then keep the exact title match.
-          existing=$(gh issue list --state open --search "\"$title\" in:title" --limit 20 \
-            --json number,title | jq -r --arg t "$title" 'map(select(.title == $t)) | .[0].number // empty')
+          # then keep the exact title match. The search is its own assignment
+          # so a failure stops the step (bash -e) instead of looking like "no
+          # issue" and opening a duplicate.
+          found=$(gh issue list --state open --search "\"$title\" in:title" --limit 20 \
+            --json number,title)
+          existing=$(printf '%s' "$found" | jq -r --arg t "$title" 'map(select(.title == $t)) | .[0].number // empty')
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --body-file body.md
           else
