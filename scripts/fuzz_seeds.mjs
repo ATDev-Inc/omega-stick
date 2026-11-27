@@ -13,11 +13,29 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+// Everything is resolved from this file, never from the current directory.
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(scriptDir, "..");
 const goldenPath = path.join(root, "tests", "protocol", "golden_frames.json");
 const corpusDir = path.join(root, "tests", "fuzz", "corpus");
 
 export const PREFIXES = ["request_", "reply_"];
+const SEED_NAME = /^(request|reply)_[a-z0-9_]+.bin$/;
+
+// Deletes only ever happen in this one directory, so refuse to run if it is
+// not where the repository keeps its corpus.
+function assertCorpusDir() {
+  const ok =
+    path.basename(scriptDir) === "scripts" &&
+    corpusDir === path.join(root, "tests", "fuzz", "corpus") &&
+    fs.existsSync(goldenPath) &&
+    fs.existsSync(path.join(root, "tests", "fuzz", "frame_fuzz.cpp")) &&
+    (!fs.existsSync(corpusDir) || fs.realpathSync(corpusDir) === fs.realpathSync(path.join(root, "tests", "fuzz", "corpus")));
+  if (!ok || (fs.existsSync(corpusDir) && fs.lstatSync(corpusDir).isSymbolicLink())) {
+    console.error(`fuzz_seeds: refusing to run, ${corpusDir} is not the repository tests/fuzz/corpus`);
+    process.exit(2);
+  }
+}
 
 // Map of seed file name to expected bytes.
 export function expectedSeeds(golden) {
@@ -31,10 +49,11 @@ export function expectedSeeds(golden) {
 }
 
 export function isGoldenSeedName(name) {
-  return PREFIXES.some((p) => name.startsWith(p)) && name.endsWith(".bin");
+  return SEED_NAME.test(name);
 }
 
 function main() {
+  assertCorpusDir();
   const check = process.argv.includes("--check");
   const golden = JSON.parse(fs.readFileSync(goldenPath, "utf8"));
   const want = expectedSeeds(golden);
@@ -42,6 +61,9 @@ function main() {
   let problems = 0;
 
   for (const name of fs.readdirSync(corpusDir).sort()) {
+    // Plain files named request_*.bin / reply_*.bin directly in the corpus
+    // directory only. No recursion, no directories, no links.
+    if (!fs.lstatSync(path.join(corpusDir, name)).isFile()) continue;
     if (isGoldenSeedName(name) && !want.has(name)) {
       console.log(`${check ? "extra" : "remove"}: ${name}`);
       if (check) problems++;

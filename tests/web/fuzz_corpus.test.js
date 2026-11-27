@@ -19,7 +19,7 @@ const expected = new Map();
 for (const [key, prefix] of [["requests", "request_"], ["replies", "reply_"]]) {
   for (const e of golden[key]) expected.set(`${prefix}${e.name.toLowerCase()}.bin`, Buffer.from(e.frame_hex, "hex"));
 }
-const onDisk = fs.readdirSync(corpusDir).filter((n) => /^(request_|reply_).*\.bin$/.test(n));
+const onDisk = fs.readdirSync(corpusDir).filter((n) => /^(request|reply)_[a-z0-9_]+\.bin$/.test(n));
 
 test("every golden frame has a fuzz seed", () => {
   const missing = [...expected.keys()].filter((n) => !onDisk.includes(n));
