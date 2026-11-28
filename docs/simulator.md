@@ -224,7 +224,10 @@ calibration below the usable-to-noise ratio boots quiet, reports it in
 GET_DIAGNOSTICS, survives a failed sweep still quiet, and resumes after a good
 one. `nudge_switch_off.json` checks that nudge clicks are off on a fresh board (nudges only
 move the cursor), turns them on and off again, and checks the choice survives a
-saved restart. `update_never_confirmed.json` flashes a good image that nobody confirms and
+saved restart. `nudge_keeps_cursor_still.json` checks that the cursor does not move around a
+nudge: neither during a quick push and release, nor when the stick is held below the nudge
+exit threshold after the click, nor on the way back to rest; and that a fast push which is
+not a nudge still moves the cursor. `update_never_confirmed.json` flashes a good image that nobody confirms and
 checks that the deadline rolls it back. `update_crash_loop_after_confirm.json`
 confirms an image that then crash-loops and checks that the crash-loop handover
 sticks with no console attached.

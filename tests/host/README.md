@@ -50,7 +50,10 @@ no ESP-IDF and no hardware. They cover:
   bookkeeping, recalibration hand-off). Tests drive `mouse_step`/`xac_step` and
   `mouse_tick`/`xac_tick` with injected time and a fake `Ports` that records
   every call in order, including that a neutral report brackets every
-  recalibration so a held nudge button is released. Also the `output_hold`
+  recalibration so a held nudge button is released, and that the cursor
+  stays still around a nudge: movement is withheld while a fast push might
+  still become one (and sent afterwards if it does not), and nothing moves
+  while the stick returns to rest. Also the `output_hold`
   input (neutral report every tick, a held nudge released, a recalibration
   request pre-empted, no bogus nudge on release) in both modes, the
   `needs_calibration` input (D26: neutral output that a recalibration request

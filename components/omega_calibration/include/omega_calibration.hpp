@@ -374,11 +374,11 @@ public:
     // main.cpp) -- there is no physical switch, this is purely how far/how
     // long the stick has been pushed.
 
-    /// How much the stick's magnitude must CHANGE, measured once per
-    /// nudge_hold_time window, before a nudge is recognized ("nudge enter
-    /// threshold" / distance threshold). This is a DELTA (current magnitude
-    /// minus the magnitude at the start of the window), not an absolute
-    /// position.
+    /// How much the stick's magnitude must RISE within nudge_hold_time before
+    /// a nudge is recognized ("nudge enter threshold" / distance threshold).
+    /// This is a DELTA (current magnitude minus the magnitude the fast rise
+    /// started from), not an absolute position. It is checked on every poll
+    /// (see mouse_step in omega_control.hpp).
     float nudge_distance_threshold{0.5f};
 
     /// Absolute normalized magnitude the stick must fall back to (or below)
@@ -386,13 +386,17 @@ public:
     /// nudge_distance_threshold this IS an absolute position, not a delta --
     /// tune it against real-hardware testing rather than assuming it should
     /// be small; a held nudge is meant to persist for as long as the stick
-    /// stays meaningfully deflected.
+    /// stays meaningfully deflected. It is first checked once the nudge has
+    /// lasted nudge_hold_time, so a nudge that never goes past it is one
+    /// click of that length. After the release the cursor stays still until
+    /// the stick is back at rest.
     float nudge_exit_threshold{0.8f};
 
-    /// The polling window over which nudge_distance_threshold's magnitude
-    /// delta is measured ("nudge time") -- a coarser cadence than the
-    /// per-report polling loop, so a single noisy sample can't register as
-    /// a nudge.
+    /// The time limit within which the magnitude must rise by
+    /// nudge_distance_threshold ("nudge time"), and the shortest a nudge
+    /// click lasts. While a fast rise might still become a nudge, cursor
+    /// movement is withheld for at most this long. The control loop clamps
+    /// it to omega_control::NUDGE_MIN_TIME..NUDGE_MAX_TIME.
     std::chrono::milliseconds nudge_hold_time{100};
 
     /// Master switch for nudge clicks. When false the control loop never
